@@ -1,4 +1,428 @@
-"""One invariance equation, several charts: slow graph w(b) fixed point, fast graph b(w) IVP, jet charts at critical points, and the sounding dispatcher with seam certificates.  No magic tracers.  SPONG_FOUNDING Part II, sections 6-7.
+"""One invariance equation, several charts, one dispatcher.
 
-Phase 0 stub: interfaces land with their phase (see SPONG_FOUNDING Part IV).
+SPONG_FOUNDING Part II, sections 6-7.  In the deviation chart
+(b, w = a - a*(b)) the descent flow is
+
+    v_b = -P,   v_w = -2Aw + a*'·P,    P = u' + A'w² - 2Aw·a*'
+
+and an invariant manifold is a solution of the parametrization-free
+invariance equation, served by whichever chart is well-posed:
+
+  * SLOW GRAPH w(b) — shallow water (sounding κ = 2A/|u''| ≥ κ_hi):
+    Hadamard fixed point  w ← P·(a*' + w')/(2A), contraction rate ~1/κ,
+    first iterate w₁ = a*'u'/(2A).  The multiplicative form is REQUIRED
+    here (the divided ODE form is catastrophic cancellation in this zone).
+  * SLOW GRAPH ODE  dw/db = 2Aw/P - a*' — deep water, marched with Gauss.
+  * FAST GRAPH ODE  db/dw = P/(2Aw - a*'P) — steep segments (separatrix
+    launches, post-fold arcs), marched with Gauss.
+
+The CONTINUATION ENGINE walks a physical trajectory through chart pieces:
+it integrates the active chart until the velocity ratio says the other
+chart is better conditioned (a fold in the active one), switches, and
+continues — "there is no magic tracer; there is one invariance equation
+and a dispatcher."  Certificates per branch: angle-energy, seam residual
+(fixed point vs ODE in the overlap channel), Richardson endpoint
+agreement, capture/exit data.
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from . import gauss
+from .model import Model
+
+KAPPA_HI = 1e4          # shallow-water threshold (fixed point owns κ ≥ this)
+KAPPA_LO = 1e2          # channel floor for the seam certificate
+KAPPA_EXIT = 1e3        # shallow-zone exit (hysteresis: enter at HI, leave
+                        # below EXIT, so the zone loop cannot ping-pong)
+R_SWITCH = 20.0         # velocity-ratio chart handoff threshold
+MAX_SWITCHES = 12
+
+
+# --------------------------------------------------------------------- #
+# soundings, velocities, launch data                                     #
+# --------------------------------------------------------------------- #
+
+
+def sounding(m: Model, b):
+    """Depth gauge κ = 2A/|u''| — the leadsman's reading."""
+    return 2.0 * m.A(b) / np.maximum(np.abs(m.u_pp(b)), 1e-300)
+
+
+def velocities(m: Model, b, w):
+    """Descent velocities (v_b, v_w) in the deviation chart."""
+    Pv = m.P_of(b, w)
+    return -Pv, -2.0 * m.A(b) * w + m.a_star_p(b) * Pv
+
+
+def saddle_frame(m: Model, b_s: float, a_s: float):
+    """Exact-eigenvector launch data at a saddle, in chart components.
+
+    Returns dict with unstable/stable eigenvectors as (d_w, d_b) pairs:
+    d_w = v1 - a*'·v2, d_b = v2 for eigvec (v1, v2) of the Hessian.
+    Chart selection at launch uses these components (never the stiff-limit
+    formulas): the eigvecs are orthogonal, so at least one chart is
+    well-posed for each manifold at every saddle.
+    """
+    H = m.hessL(a_s, b_s)
+    lam, V = np.linalg.eigh(0.5 * (H + H.T))
+    asp = m.a_star_p(b_s)
+    out = {}
+    for name, idx in (("unstable", int(np.argmin(lam))),
+                      ("stable", int(np.argmax(lam)))):
+        v = V[:, idx]
+        out[name] = {"lam": lam[idx],
+                     "d_w": v[0] - asp * v[1],
+                     "d_b": v[1]}
+    return out
+
+
+# --------------------------------------------------------------------- #
+# slow-graph fixed point (shallow water)                                 #
+# --------------------------------------------------------------------- #
+
+
+def slow_fixed_point(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
+                     max_iter: int = 40):
+    """Hadamard graph transform on a grid: w ← P·(a*' + w')/(2A).
+
+    Returns (w, iterations, final relative change).  Converges at rate
+    ~1/κ; caller guarantees κ ≥ KAPPA_LO on the grid.
+    """
+    A, Ap = m.A(b_grid), m.Ap(b_grid)
+    asp = m.a_star_p(b_grid)
+    up = m.u_p(b_grid)
+
+    w = asp * up / (2.0 * A)                    # w₁, closed form
+    rel = np.inf
+    for it in range(1, max_iter + 1):
+        with np.errstate(over="ignore", invalid="ignore"):
+            wp = np.gradient(w, b_grid)
+            Pv = up + Ap * w**2 - 2.0 * A * w * asp
+            w_new = Pv * (asp + wp) / (2.0 * A)
+        if not np.all(np.isfinite(w_new)):
+            return w, it, np.inf        # diverged: caller must reject
+        rel = float(np.max(np.abs(w_new - w))
+                    / max(float(np.max(np.abs(w_new))), 1e-300))
+        w = w_new
+        if rel < tol:
+            break
+    return w, it, rel
+
+
+# --------------------------------------------------------------------- #
+# chart ODEs (right-hand sides + analytic Jacobians for Gauss stages)    #
+# --------------------------------------------------------------------- #
+
+
+def _P_and_derivs(m: Model, b, w):
+    A, Ap, App = m.A(b), m.Ap(b), m.App(b)
+    asp, aspp = m.a_star_p(b), m.a_star_pp(b)
+    Pv = m.u_p(b) + Ap * w**2 - 2.0 * A * w * asp
+    P_w = 2.0 * Ap * w - 2.0 * A * asp
+    P_b = m.u_pp(b) + App * w**2 - 2.0 * w * (Ap * asp + A * aspp)
+    return A, Ap, asp, aspp, Pv, P_w, P_b
+
+
+def slow_rhs(m: Model):
+    def F(b, w):
+        A, _, asp, _, Pv, _, _ = _P_and_derivs(m, b, float(w[0]))
+        return np.array([2.0 * A * w[0] / Pv - asp])
+
+    def J(b, w):
+        A, _, asp, _, Pv, P_w, _ = _P_and_derivs(m, b, float(w[0]))
+        return np.array([[2.0 * A / Pv - 2.0 * A * w[0] * P_w / Pv**2]])
+
+    return F, J
+
+
+def fast_rhs(m: Model):
+    def F(w, b):
+        A, _, asp, _, Pv, _, _ = _P_and_derivs(m, float(b[0]), w)
+        return np.array([Pv / (2.0 * A * w - asp * Pv)])
+
+    def J(w, b):
+        A, Ap, asp, aspp, Pv, P_w, P_b = _P_and_derivs(m, float(b[0]), w)
+        D = 2.0 * A * w - asp * Pv
+        D_b = 2.0 * Ap * w - aspp * Pv - asp * P_b
+        return np.array([[(P_b * D - Pv * D_b) / D**2]])
+
+    return F, J
+
+
+# --------------------------------------------------------------------- #
+# the continuation engine                                                #
+# --------------------------------------------------------------------- #
+
+
+@dataclass
+class Branch:
+    kind: str                    # 'unstable' | 'stable'
+    Y: np.ndarray                # polyline, shape (n, 2): columns (a, b)
+    term: str                    # 'capture' | 'box_exit' | 'abort_*'
+    certs: dict = field(default_factory=dict)
+    diag: dict = field(default_factory=dict)
+
+
+def _continue_curve(m: Model, b0: float, w0: float, flow: int,
+                    targets, box, ds: float, max_steps: int = 200000,
+                    cap_r: float = 2e-3, ds0: float | None = None,
+                    shallow_gate=None):
+    """Walk the trajectory through chart pieces.
+
+    flow: +1 descent (unstable branches), -1 ascent (separatrices).
+    targets: list of (a, b) capture points (adjacent minima) or [].
+    Returns (points, term_reason, n_switches, (b, w) final state).
+
+    Dispatcher contract, third handoff: on DESCENT, if the sounding rises
+    above KAPPA_HI while the trajectory is slaved to the valley floor
+    (|w - w1| small), the engine exits with 'enter_shallow' — the slow ODE
+    is the forbidden cancellation form there and the Hadamard fixed point
+    owns the regime.  Ascent never triggers this (a separatrix crossing
+    the backbone is not slaved).
+    """
+    sF, sJ = slow_rhs(m)
+    fF, fJ = fast_rhs(m)
+    b, w = float(b0), float(w0)
+    pts = [(float(m.a_star(b) + w), b)]
+
+    vb, vw = velocities(m, b, w)
+    vb, vw = flow * vb, flow * vw
+    chart = "slow" if abs(vw) <= R_SWITCH * abs(vb) else "fast"
+    switches = 0
+    # geometric launch ramp: begin at the launch scale, grow into ds, so
+    # polyline spacing is smooth and the angle-energy carries no launch kink
+    cur = ds if ds0 is None else min(ds, max(ds0, 1e-12))
+
+    for _ in range(max_steps):
+        vb, vw = velocities(m, b, w)
+        vb, vw = flow * vb, flow * vw
+        speed = max(abs(vb), abs(vw))
+        if speed < 1e-300:
+            return pts, "abort_stationary", switches, (b, w)
+
+        if chart == "slow" and abs(vw) > R_SWITCH * abs(vb):
+            chart, switches = "fast", switches + 1
+        elif chart == "fast" and abs(vb) > R_SWITCH * abs(vw):
+            chart, switches = "slow", switches + 1
+        if switches > MAX_SWITCHES:
+            return pts, "abort_switch_limit", switches, (b, w)
+
+        if flow > 0 and chart == "slow" and (
+                shallow_gate is None
+                or (b - shallow_gate[0]) * shallow_gate[1] >= 0):
+            kap = float(sounding(m, b))
+            if kap >= KAPPA_HI:
+                w1 = float(m.a_star_p(b) * m.u_p(b) / (2.0 * m.A(b)))
+                # hand off only ON the floor: the slow-ODE cancellation
+                # catastrophe exists only at w ≈ w*; off the floor the
+                # engine is well-posed and transverse contraction will
+                # deliver the trajectory here anyway
+                if abs(w - w1) <= 0.02 * abs(w1) + 1e-10 * (1 + abs(w)):
+                    return pts, "enter_shallow", switches, (b, w)
+
+        try:
+            if chart == "slow":
+                # constant CHORD length: the b-step shrinks by the slope
+                # factor so polyline density is uniform along the curve
+                h = cur / np.hypot(1.0, vw / vb) * (1.0 if vb > 0 else -1.0)
+                st = gauss.step(sF, b, [w], h, method="gl4", jac=sJ)
+                b, w = b + h, float(st.y1[0])
+            else:
+                h = cur / np.hypot(1.0, vb / vw) * (1.0 if vw > 0 else -1.0)
+                st = gauss.step(fF, w, [b], h, method="gl4", jac=fJ)
+                w, b = w + h, float(st.y1[0])
+            cur = min(ds, cur * 1.06)   # gentle: the angle-energy functional is
+            # a symmetric difference — 2nd-order on uniform spacing, only
+            # 1st-order under spacing jumps, so ramp adjacent steps slowly
+        except (np.linalg.LinAlgError, FloatingPointError):
+            return pts, "abort_step_failure", switches, (b, w)
+
+        if not (np.isfinite(b) and np.isfinite(w)):
+            return pts, "abort_nonfinite", switches, (b, w)
+
+        a = float(m.a_star(b) + w)
+        pts.append((a, b))
+
+        for (at, bt) in targets:
+            if (a - at) ** 2 + (b - bt) ** 2 < cap_r**2:
+                pts.append((at, bt))
+                return pts, "capture", switches, (b, w)
+
+        if not (box[0] <= a <= box[1] and box[2] <= b <= box[3]):
+            return pts, "box_exit", switches, (b, w)
+
+    return pts, "abort_max_steps", switches, (b, w)
+
+
+# --------------------------------------------------------------------- #
+# branch tracers                                                         #
+# --------------------------------------------------------------------- #
+
+
+def angle_energy(m: Model, Y: np.ndarray) -> float:
+    """E = Σ ½‖d_⊥‖²: the discrete integral-curve certificate (E = 0 ⟺
+    the polyline chords are everywhere parallel to ∇L)."""
+    E = 0.0
+    for k in range(1, len(Y) - 1):
+        d = Y[k + 1] - Y[k - 1]
+        g = m.gradL(Y[k, 0], Y[k, 1])
+        ng = float(np.hypot(g[0], g[1]))
+        nd = float(np.hypot(d[0], d[1]))
+        if ng < 1e-12 or nd < 1e-12:
+            continue
+        gh = g / ng
+        dp = d - (gh @ d) * gh
+        E += 0.5 * float(dp @ dp)
+    return E
+
+
+def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
+                   box=(-50.0, 50.0, -50.0, 50.0), n_grid: int = 4001,
+                   ds: float | None = None, cap_r: float = 2e-3) -> Branch:
+    """Unstable branch: saddle → adjacent minimum (or box exit).
+
+    Zone loop per the dispatcher contract: whenever the sounding says
+    shallow water and the trajectory is slaved, the Hadamard fixed point
+    owns the stretch; elsewhere the continuation engine owns it.  A branch
+    may alternate zones several times (a mild saddle whose journey passes
+    through stiff country and back).  Every junction records a seam
+    residual (fixed point vs engine at the handoff point).
+    """
+    a_t, b_t = target
+    span = b_t - b_saddle
+    sgn = 1.0 if span > 0 else -1.0
+    if ds is None:
+        ds = abs(span) / 4000.0
+
+    bg = np.linspace(b_saddle, b_t, n_grid)
+    kap = sounding(m, bg)
+    hstep = abs(span) / (n_grid - 1)
+
+    pts: list[tuple[float, float]] = []
+    certs: dict = {"seam_residuals": []}
+    diag: dict = {"kappa_saddle": float(kap[0]), "zones": [],
+                  "switches": 0}
+
+    def grid_index(b):
+        return int(round((b - b_saddle) / (b_t - b_saddle) * (n_grid - 1)))
+
+    # initial state
+    b_cur = float(b_saddle)
+    w_cur = 0.0
+    launch_scale = None
+
+    if kap[0] < KAPPA_HI:
+        # mild saddle: exact-eigenvector jet launch into the engine
+        a_s = float(m.a_star(b_saddle))
+        fr = saddle_frame(m, b_saddle, a_s)["unstable"]
+        d_b = fr["d_b"] if fr["d_b"] * span >= 0 else -fr["d_b"]
+        d_w = fr["d_w"] * (1 if fr["d_b"] * span >= 0 else -1)
+        if abs(d_b) < 1e-12:
+            return Branch("unstable", np.array([[a_s, b_saddle]]),
+                          "abort_not_graph", certs, diag)
+        db0 = 1e-6 * span
+        pts.append((a_s, b_saddle))
+        b_cur, w_cur = b_saddle + db0, (d_w / d_b) * db0
+        launch_scale = abs(db0)
+
+    term = None
+    for _zone in range(32):
+        i_cur = grid_index(b_cur)
+        if float(sounding(m, b_cur)) >= KAPPA_HI:
+            # ---- shallow water: Hadamard fixed point owns it ---------- #
+            # grid index always INCREASES toward the target (bg runs
+            # saddle -> target regardless of the sign of the span)
+            j = i_cur
+            while j < n_grid and kap[j] >= KAPPA_EXIT:
+                j += 1
+            j = min(max(j, 0), n_grid - 1)
+            n_pts = max(abs(j - i_cur) + 1, 8)
+            j = min(j, n_grid - 1)
+            b_zone = np.linspace(b_cur, bg[j], n_pts)
+            w_zone, iters, rel = slow_fixed_point(m, b_zone)
+            if rel > 1e-10 or not np.all(np.isfinite(w_zone)):
+                # SELF-CERTIFICATION FAILED: the sounding gauge 2A/|u''|
+                # spikes falsely at inflections of u (u'' = 0), where no
+                # real slaving exists.  Reject the zone and push the
+                # engine through the spike with the trigger gated off
+                # until past it.
+                diag["zones"].append(("shallow_rejected", b_cur,
+                                      float(bg[j]), iters))
+                shallow_gate = (float(bg[min(j, n_grid - 1)]), sgn)
+                tail, term_e, sw, (b_cur, w_cur) = _continue_curve(
+                    m, b_cur, w_cur, +1, [(a_t, b_t)], box, ds,
+                    cap_r=cap_r, ds0=launch_scale,
+                    shallow_gate=shallow_gate)
+                pts.extend(tail if not pts else tail[1:])
+                diag["switches"] += sw
+                launch_scale = ds
+                if term_e == "enter_shallow":
+                    continue
+                term = term_e
+                break
+            diag["zones"].append(("shallow", b_cur, float(bg[j]), iters))
+            # seam: fixed point vs incoming state at the junction
+            certs["seam_residuals"].append(abs(float(w_zone[0]) - w_cur))
+            a_zone = m.a_star(b_zone) + w_zone
+            pts.extend(zip(a_zone.tolist(), b_zone.tolist()))
+            b_cur, w_cur = float(b_zone[-1]), float(w_zone[-1])
+            launch_scale = hstep
+            if abs(b_cur - b_t) <= hstep * 1.5:
+                pts.append((a_t, b_t))
+                term = "capture"
+                break
+        else:
+            # ---- deep water / steep: the continuation engine ---------- #
+            tail, term_e, sw, (b_cur, w_cur) = _continue_curve(
+                m, b_cur, w_cur, +1, [(a_t, b_t)], box, ds,
+                cap_r=cap_r, ds0=launch_scale)
+            pts.extend(tail if not pts else tail[1:])
+            diag["switches"] += sw
+            diag["zones"].append(("engine", tail[0][1], b_cur, term_e))
+            launch_scale = ds
+            if term_e == "enter_shallow":
+                continue
+            term = term_e
+            break
+    else:
+        term = "abort_zone_limit"
+
+    Y = np.array(pts)
+    certs["angle_energy"] = angle_energy(m, Y)
+    certs["endpoint"] = tuple(Y[-1])
+    if certs["seam_residuals"]:
+        certs["seam_residual"] = max(certs["seam_residuals"])
+    diag["stiff_frac"] = float(np.mean(kap >= KAPPA_HI))
+    return Branch("unstable", Y, term, certs, diag)
+
+
+def trace_stable(m: Model, b_saddle: float, sign: int,
+                 box=(-25.0, 25.0, -12.0, 16.0), ds: float | None = None,
+                 delta: float = 1e-4) -> Branch:
+    """Stable branch (separatrix): saddle → box exit, ascent flow.
+
+    Fast-graph launch from the exact eigenvector jet; the continuation
+    engine handles any folds back to the slow chart.
+    """
+    a_s = float(m.a_star(b_saddle))
+    fr = saddle_frame(m, b_saddle, a_s)["stable"]
+    d_w = fr["d_w"] if sign * fr["d_w"] >= 0 else -fr["d_w"]
+    d_b = fr["d_b"] * (1 if sign * fr["d_w"] >= 0 else -1)
+    if abs(d_w) < 1e-12:
+        return Branch("stable", np.array([[a_s, b_saddle]]),
+                      "abort_not_graph")
+    if ds is None:
+        ds = (abs(box[1] - box[0]) + abs(box[3] - box[2])) / 30000.0
+
+    w0 = sign * delta
+    b0 = b_saddle + (d_b / d_w) * w0
+
+    pts, term, sw, _ = _continue_curve(m, b0, w0, -1, [], box, ds,
+                                       ds0=abs(delta))
+    Y = np.array([(a_s, b_saddle)] + pts)
+    certs = {"angle_energy": angle_energy(m, Y), "endpoint": tuple(Y[-1])}
+    return Branch("stable", Y, term, certs, {"switches": sw})

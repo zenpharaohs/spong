@@ -19,7 +19,7 @@ complete mathematical recital (§1–§11), the certificate semantics
 contracts, the architecture, and the migration plan from the MATLAB
 predecessor (`mse-bundle`).
 
-Status: **Phases 1–2 landed** — `spong.model` (exact coefficients, the (b, w)
+Status: **Phases 1–3 landed** — `spong.model` (exact coefficients, the (b, w)
 chart, closed-form level curves, Hessian identities) and `spong.sturm`
 (EXACT enumeration: primitive-PRS Sturm chains over dyadic-rational inputs,
 isolation, interval-sign classification, alternation invariant; the critical
@@ -28,7 +28,12 @@ certificates via stdlib rational arithmetic over the model's (dyadic float)
 coefficients; integrators are the two Gauss collocation methods — `spong.gauss` (Phase 2):
 IMM and IRK4-GL with block-Newton stages, collocation-polynomial dense
 output and event location, `richardson3` step control, and the anadromic
-reversal gap exported as a per-span certificate.
+reversal gap exported as a per-span certificate.  `spong.charts` (Phase 3):
+the Hadamard slow-graph fixed point, the fast-graph ODE, the chart-switching
+continuation engine with the shallow-water handoff (self-certifying zone
+rejection at false sounding spikes), seam residuals, and angle-energy
+certificates — the tricky d=11 branch traces at E ≤ 1e-12 and its
+separatrices at ≤ 1e-11 with the √d asymptote confirmed.
 
 Run the fast suite: `PYTHONPATH=src python -m pytest tests` (slow founding
 gates: add `-m slow`).

@@ -108,6 +108,12 @@ class Model:
         A, B = self.A(b), self.B(b)
         return self.Bp(b) / A - B * self.Ap(b) / A**2
 
+    def a_star_pp(self, b):
+        A, B = self.A(b), self.B(b)
+        Ap, Bp = self.Ap(b), self.Bp(b)
+        return ((self.Bpp(b) * A - B * self.App(b)) / A**2
+                - 2 * Ap * (Bp * A - B * Ap) / A**3)
+
     def L(self, a, b):
         return float(self.C) - 2 * a * self.B(b) + a**2 * self.A(b)
 
