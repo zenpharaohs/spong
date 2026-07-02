@@ -19,10 +19,17 @@ complete mathematical recital (§1–§11), the certificate semantics
 contracts, the architecture, and the migration plan from the MATLAB
 predecessor (`mse-bundle`).
 
-Status: **Phase 0** (scaffold).  Trusted core: Python stdlib + NumPy; exact
+Status: **Phase 1 landed** — `spong.model` (exact coefficients, the (b, w)
+chart, closed-form level curves, Hessian identities) and `spong.sturm`
+(EXACT enumeration: primitive-PRS Sturm chains over dyadic-rational inputs,
+isolation, interval-sign classification, alternation invariant; the critical
+set is roots(N) ∪ roots(B)).  Trusted core: Python stdlib + NumPy; exact
 certificates via stdlib rational arithmetic over the model's (dyadic float)
-coefficients; integrators are the two Gauss collocation methods (implicit
-midpoint and IRK4-GL) and nothing else.
+coefficients; integrators will be the two Gauss collocation methods (implicit
+midpoint and IRK4-GL) and nothing else (Phase 2).
+
+Run the fast suite: `PYTHONPATH=src python -m pytest tests` (slow founding
+gates: add `-m slow`).
 
 ## Layout
 
