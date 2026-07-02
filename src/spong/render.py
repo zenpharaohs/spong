@@ -188,10 +188,22 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
 
 def disk_view(p: Portrait, width=900, height=900, n_levels=24,
               title=None) -> str:
-    """The global portrait on the Poincaré disk: z → z/(1 + |z|).
+    """The global portrait on the Poincaré disk: z → z/√(1 + |z|²)
+    (the canonical Poincaré-compactification projection: gnomonic to the
+    hemisphere, viewed from above).
 
     Nothing is off-canvas, by theorem: separatrices run to the rim
     diagonals b = ±√d_eff·a; unbounded unstable branches to the b-poles.
+
+    GEOMETRY CAVEAT (not a defect — a theorem): no bounded single-chart
+    picture of the whole plane can be conformal (Liouville / Riemann
+    mapping: the plane is not conformally a disk), so angles — in
+    particular the orthogonality of invariant manifolds to level curves —
+    are NOT preserved here.  They are preserved exactly in the plane
+    view, and would be preserved in a conformal two-chart atlas (finite
+    chart = the plane view; rim chart = the inversion ζ = 1/z, conformal
+    onto a disk with the equatorial equilibria finite).  The ζ-chart view
+    is on the render backlog.
     """
     from .atlas import effective_degree
     m = p.model
@@ -200,8 +212,7 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
     cx, cy = width / 2, height / 2
 
     def to_px(a, b):
-        r = np.hypot(a, b)
-        f = 1.0 / (1.0 + r)
+        f = 1.0 / np.sqrt(1.0 + a * a + b * b)
         return (cx + a * f * R, cy - b * f * R)
 
     svg = _SVG(width, height)
