@@ -48,8 +48,52 @@ MAX_SWITCHES = 12
 
 
 def sounding(m: Model, b):
-    """Depth gauge κ = 2A/|u''| — the leadsman's reading."""
+    """Spectral ratio κ = 2A/|u''| — DIAGNOSTIC only (lies at u-inflections;
+    kept for reporting).  The dispatcher's depth gauge is depth_gauge()."""
     return 2.0 * m.A(b) / np.maximum(np.abs(m.u_pp(b)), 1e-300)
+
+
+def depth_gauge(m: Model, b, w):
+    """THE depth gauge: the slow-RHS cancellation ratio.
+
+        cond = (|2Aw| + |a*'·P|) / |2Aw − a*'·P|
+
+    (the RHS-term ratio, multiplied through by |P|).  This measures what
+    actually fails in shallow water — evaluation cancellation of
+    dw/db = 2Aw/P − a*', whose two terms balance exactly on the slaved
+    floor — rather than a spectral proxy.  On the floor it ≈ 2κ
+    generically, so thresholds carry over from the spectral gauge; at
+    u-inflections (where κ spikes falsely) the higher-order terms keep it
+    finite.  See docs/kahan_riccati.md, gauge slate item 4.
+    """
+    A = m.A(b)
+    asp = m.a_star_p(b)
+    Pv = m.u_p(b) + m.Ap(b) * w**2 - 2.0 * A * w * asp
+    t1 = np.abs(2.0 * A * w)
+    t2 = np.abs(asp * Pv)
+    num = t1 + t2
+    den = np.abs(2.0 * A * w - asp * Pv)
+    return num / np.maximum(den, 1e-16 * num + 1e-300)
+
+
+def depth_gauge_floor(m: Model, b):
+    """Depth gauge ON the slaved floor, in closed form:  2|a*'| / |w₁'|.
+
+    On the floor the slow-RHS denominator is the physical slaved slope, so
+    the cancellation ratio reduces to this analytic expression — which is
+    also what the pointwise depth_gauge reads at the CONVERGED floor.
+    (Evaluating depth_gauge at the first iterate w₁ instead systematically
+    underreads and desynchronizes the zone extents from the engine
+    trigger — measured as instant zone ping-pong.)  0/0 at critical
+    points themselves; callers fill those entries from neighbors.
+    """
+    A = m.A(b)
+    asp, aspp = m.a_star_p(b), m.a_star_pp(b)
+    up, upp = m.u_p(b), m.u_pp(b)
+    w1p = (aspp * up + asp * upp) / (2.0 * A) \
+        - asp * up * m.Ap(b) / (2.0 * A**2)
+    return 2.0 * np.abs(asp) / np.maximum(
+        np.abs(w1p), 1e-16 * np.abs(asp) + 1e-300)
 
 
 def velocities(m: Model, b, w):
@@ -193,6 +237,7 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     vb, vw = flow * vb, flow * vw
     chart = "slow" if abs(vw) <= R_SWITCH * abs(vb) else "fast"
     switches = 0
+    recent_b: list[float] = []          # stall detector window
     # geometric launch ramp: begin at the launch scale, grow into ds, so
     # polyline spacing is smooth and the angle-energy carries no launch kink
     cur = ds if ds0 is None else min(ds, max(ds0, 1e-12))
@@ -211,18 +256,41 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         if switches > MAX_SWITCHES:
             return pts, "abort_switch_limit", switches, (b, w)
 
-        if flow > 0 and chart == "slow" and (
+        if flow > 0 and (
                 shallow_gate is None
                 or (b - shallow_gate[0]) * shallow_gate[1] >= 0):
-            kap = float(sounding(m, b))
-            if kap >= KAPPA_HI:
+            # chart-agnostic: the fast chart can bang-bang across the
+            # floor (w overshooting ±ds) just as the slow chart can
+            # two-cycle — both are hover stalls of a non-L-stable
+            # discretization over shallow water
+            # Shallow-water handoff (floor gauge = the cancellation ratio
+            # ON the floor, closed form — honest at u-inflections).  Two
+            # ways in, both mandatory because Gauss methods are A-stable
+            # but NOT L-stable (R(-inf) = -1 for IMM, +1 for GL2): once
+            # |h·lambda| is huge the discrete flow stops contracting onto
+            # the floor.
+            #   (a) healthy approach: trajectory slaved within 5%;
+            #   (b) STALL: the discrete two-cycle/freeze at hover
+            #       altitude — detected as no net b-progress over a
+            #       window; the stalled tail is a discrete artifact and
+            #       is TRIMMED, its hover altitude becoming the seam
+            #       residual.
+            if float(depth_gauge_floor(m, np.array([b]))[0]) >= KAPPA_HI:
                 w1 = float(m.a_star_p(b) * m.u_p(b) / (2.0 * m.A(b)))
-                # hand off only ON the floor: the slow-ODE cancellation
-                # catastrophe exists only at w ≈ w*; off the floor the
-                # engine is well-posed and transverse contraction will
-                # deliver the trajectory here anyway
-                if abs(w - w1) <= 0.02 * abs(w1) + 1e-10 * (1 + abs(w)):
+                if abs(w - w1) <= 0.05 * abs(w1) + 1e-9 * (1 + abs(w)):
                     return pts, "enter_shallow", switches, (b, w)
+                recent_b.append(b)
+                if len(recent_b) > 12:
+                    recent_b.pop(0)
+                    if abs(b - recent_b[0]) < 1.0 * ds:
+                        # stalled: trim the hover tail
+                        n_trim = min(12, len(pts) - 1)
+                        del pts[-n_trim:]
+                        a_bk, b_bk = pts[-1]
+                        w_bk = a_bk - float(m.a_star(b_bk))
+                        return pts, "enter_shallow", switches, (b_bk, w_bk)
+            else:
+                recent_b.clear()
 
         try:
             if chart == "slow":
@@ -299,7 +367,10 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
         ds = abs(span) / 4000.0
 
     bg = np.linspace(b_saddle, b_t, n_grid)
-    kap = sounding(m, bg)
+    kap = depth_gauge_floor(m, bg)
+    # 0/0 at the saddle and target (critical points): fill from neighbors
+    kap[0], kap[-1] = kap[1], kap[-2]
+    kap = np.where(np.isfinite(kap), kap, np.inf)
     hstep = abs(span) / (n_grid - 1)
 
     pts: list[tuple[float, float]] = []
@@ -315,6 +386,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     w_cur = 0.0
     launch_scale = None
 
+    diag["kappa_spectral_saddle"] = float(sounding(m, b_saddle))
     if kap[0] < KAPPA_HI:
         # mild saddle: exact-eigenvector jet launch into the engine
         a_s = float(m.a_star(b_saddle))
@@ -332,7 +404,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     term = None
     for _zone in range(32):
         i_cur = grid_index(b_cur)
-        if float(sounding(m, b_cur)) >= KAPPA_HI:
+        g_cur = kap[min(max(i_cur, 0), n_grid - 1)]
+        if g_cur >= KAPPA_HI:
             # ---- shallow water: Hadamard fixed point owns it ---------- #
             # grid index always INCREASES toward the target (bg runs
             # saddle -> target regardless of the sign of the span)
