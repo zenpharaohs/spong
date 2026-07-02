@@ -113,12 +113,13 @@ the implementation.
 
 ### 3. Critical points and Hessian identities
 
-∇L = 0 ⟺ w = 0 and u′(b) = 0 ⟺ b is a real root of the exact polynomial
+∇L = 0 ⟺ w = 0 and u′(b) = 0, and u′ = B·N/A² with
 
-    N(b) = α′(b)β(b) − 2β′(b)α(b)         (deg ≤ 3d−1 generically)
+    N(b) = α′(b)β(b) − 2β′(b)α(b)         (deg ≤ 3d−2: leading term cancels)
 
-(the critical condition d/db[φ²/ψ] = 0 with the outer φ factor removed; zeros
-of φ are handled separately).  At any backbone point:
+so the critical b-values are the real roots of B UNION the real roots of N.
+At any backbone point (identities universal on the backbone, no critical-
+point substitution needed):
 
     H₁₁ = 2A,   H₁₂ = −2A·a*′,   H₂₂ = 2A·a*′² + u″
     H = 2A·nnᵀ + u″·e₂e₂ᵀ,   n = (1, −a*′)ᵀ (backbone normal)
@@ -127,8 +128,14 @@ of φ are handled separately).  At any backbone point:
 Consequences (all load-bearing):
 
 - **Classification is one-dimensional**: u″(b*) > 0 ⇒ minimum, < 0 ⇒ saddle;
-  no other types exist.  L is Morse ⟺ u is Morse ⟺ N is square-free.
-- **Alternation**: minima and saddles strictly alternate along b.
+  no other types exist (A > 0 ⇒ no maxima).  At a simple B-root,
+  N = −2B′A there, so u″ = −2B′²/A < 0 automatically: **every B-root is a
+  saddle** (det H = 2A·u″ = −4B′², the same universal identity).  L is
+  Morse ⟺ B·N is square-free with gcd(B, N) constant.
+- **Alternation**: the SIGNS of u″ alternate along b (1D Morse on u);
+  L-types follow u″ everywhere, and since B-roots force u″ < 0,
+  consecutive L-saddles occur legitimately.  Branch targeting therefore
+  aims at the nearest MINIMUM per side, not the nearest critical point.
 - **Eigenvectors**: exactly backbone-normal/-tangent only in the stiff limit
   u″/2A → 0; the first-order tilt is a*′u″/(2A(1+a*′²)).  Launch directions
   therefore always come from the exact eigenvector, never the limit formula.

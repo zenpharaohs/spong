@@ -53,21 +53,28 @@ instrument that will find and report it.  Sound either way.
 
 ## Theorem 2 (Backbone reduction — proved)
 
-**Statement (corrected 2026-07-02).**  All critical points of L lie on the
-backbone a = B/A, at roots of B·N (u′ = B·N/A²; N = α′β − 2β′α).  At
-N-roots, det H = 2A·u″ (the identity's derivation substitutes N(b*) = 0):
-u″ > 0 ⇔ minimum, u″ < 0 ⇔ saddle.  At B-roots (a = 0), H₂₂ = 0
-identically and det H = −4B′(b₀)² < 0: **every simple B-root is a 2D
-saddle regardless of u″**.  No other critical types exist (A > 0 ⇒ no
-maxima).  Alternation is a statement about u: the SIGNS of u″ alternate
-along b (1D Morse); L-types follow u at N-roots only, so consecutive
-L-saddles occur legitimately wherever a B-root falls at a u-minimum.
-L is Morse iff B·N is squarefree with gcd(B, N) constant.
+**Statement (corrected 2026-07-02, simplified same day).**  All critical
+points of L lie on the backbone a = B/A, at roots of B·N (u′ = B·N/A²;
+N = α′β − 2β′α).  The identities
 
-**Status: PROVED** (Hessian identities direct computation; the B-root
-case verified by exact index balance: strip-localized winding gives −1
-at every B-root).  Original min/saddle-alternation phrasing was FALSE in
-general — caught by the Poincaré–Hopf index certificate.
+    H₁₂ = −2A·a*′,   H₂₂ = 2A·a*′² + u″,   det H = 2A·u″
+
+hold at EVERY backbone point — no critical-point substitution required
+(verified symbolically and numerically at arbitrary non-critical b).
+Hence classification is uniformly one-dimensional: u″ > 0 ⇔ minimum,
+u″ < 0 ⇔ saddle.  At a simple B-root, N(b₀) = −2B′A, so
+u″ = B′N/A² = −2B′²/A < 0 automatically: **every simple B-root is a
+saddle**, with det H = 2A·u″ = −4B′² — the SAME identity, not an
+exception to it.  The SIGNS of u″ alternate along b (1D Morse on u);
+consecutive L-saddles occur wherever a B-root falls.  L is Morse iff B·N
+is squarefree with gcd(B, N) constant.
+
+**Status: PROVED.**  History: the original min/saddle-alternation
+phrasing was FALSE (caught by the Poincaré–Hopf index certificate); the
+first correction wrongly claimed det H = 2A·u″ fails at B-roots (caught
+in external review — Codex — by direct algebra: the identity is
+universal).  Strip-localized exact winding confirms index −1 at every
+B-root.
 
 ---
 

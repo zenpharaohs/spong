@@ -57,6 +57,7 @@ gates: add `-m slow`).
 
 ## Development
 
-Tests run with the shared environment (no fresh venvs, no editable installs):
+Tests run with any Python ≥ 3.10 that has numpy + pytest on path (no fresh
+venvs, no editable installs needed — point at your scientific environment):
 
-    PYTHONPATH=src python -m pytest tests
+    PYTHONPATH=src /path/to/sci-env/bin/python -m pytest tests

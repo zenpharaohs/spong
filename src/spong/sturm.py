@@ -307,12 +307,11 @@ def enumerate_critical_points(m: Model) -> Enumeration:
         if s is None or source == "both":
             kind, s2 = "degenerate", 0
         elif source == "B":
-            # At a B-root (a = 0): H22 = -2aB'' + a^2 A'' = 0 identically,
-            # so det H = -4 B'(b0)^2 < 0 REGARDLESS of u'': every simple
-            # B-root is a 2D SADDLE.  (The det H = 2A u'' identity holds
-            # only at N-roots — its derivation substitutes N(b*) = 0.)
-            # s2 still records the u-restriction sign for the alternation
-            # invariant, which is a statement about u, not about L-types.
+            # At a simple B-root, N(b0) = -2B'A, so u'' = B'N/A^2
+            # = -2B'^2/A < 0 AUTOMATICALLY: every simple B-root is a
+            # saddle by the same universal identity det H = 2A u''
+            # (= -4B'^2 here).  Forcing 'saddle' is a simplification of
+            # the sign evaluation, not an exception to the theorem.
             kind, s2 = "saddle", s
         else:
             kind, s2 = ("min" if s > 0 else "saddle"), s
