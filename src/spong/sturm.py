@@ -185,10 +185,16 @@ def isolate_roots(p: Poly) -> list[RootInterval]:
         mid = (lo + hi) / 2
         if P.eval_at(sf, mid) == 0:
             out.append(RootInterval(mid, mid, True))
-            # exclude the exact root by a punctured split
+            # Punctured split around the exact root.  The puncture must be
+            # CERTIFIED to contain only that root: shrink eps until the
+            # Sturm count across (left, right] is exactly 1 — otherwise a
+            # nearby root inside the puncture is silently lost (found the
+            # hard way: an exact root at 0 with a companion at ~2e-6,
+            # caught by the index-balance winding certificate).
             eps = (hi - lo) / 2**20
             left, right = mid - eps, mid + eps
-            while P.eval_at(sf, left) == 0 or P.eval_at(sf, right) == 0:
+            while (P.eval_at(sf, left) == 0 or P.eval_at(sf, right) == 0
+                   or var(left) - var(right) != 1):
                 eps /= 2
                 left, right = mid - eps, mid + eps
             rec(lo, left, v_lo, var(left))
@@ -300,6 +306,14 @@ def enumerate_critical_points(m: Model) -> Enumeration:
         af = float(P.eval_at(m.beta, cur.mid) / P.eval_at(m.alpha, cur.mid))
         if s is None or source == "both":
             kind, s2 = "degenerate", 0
+        elif source == "B":
+            # At a B-root (a = 0): H22 = -2aB'' + a^2 A'' = 0 identically,
+            # so det H = -4 B'(b0)^2 < 0 REGARDLESS of u'': every simple
+            # B-root is a 2D SADDLE.  (The det H = 2A u'' identity holds
+            # only at N-roots — its derivation substitutes N(b*) = 0.)
+            # s2 still records the u-restriction sign for the alternation
+            # invariant, which is a statement about u, not about L-types.
+            kind, s2 = "saddle", s
         else:
             kind, s2 = ("min" if s > 0 else "saddle"), s
         pts.append(CriticalPoint(bf, af, kind, source, cur, s2))
@@ -327,9 +341,12 @@ def enumerate_critical_points(m: Model) -> Enumeration:
 
     pts.sort(key=lambda p: (p.interval.lo, p.interval.hi))
 
-    # Alternation invariant (Theorem 2 corollary): min/saddle strictly
-    # alternate along b.  EXACT given the exact classification above.
-    kinds = [p.kind for p in pts if p.kind != "degenerate"]
-    alternates = all(kinds[i] != kinds[i + 1] for i in range(len(kinds) - 1))
+    # Alternation invariant (Theorem 2, corrected): the 1D Morse
+    # alternation is a statement about u — the SIGNS of u'' alternate
+    # along b.  L-types follow u at N-roots; B-roots are always 2D
+    # saddles, so consecutive L-saddles can legitimately occur.  EXACT.
+    signs = [p.u2_sign for p in pts if p.kind != "degenerate"]
+    alternates = all(signs[i] * signs[i + 1] < 0
+                     for i in range(len(signs) - 1))
 
     return Enumeration(tuple(pts), psi_ok, morse, alternates)

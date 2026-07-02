@@ -11,9 +11,12 @@ certificate ledger only when its status here is PROVED.
 
 **Statement.**  Let L(a,b) = C − 2aB(b) + a²A(b) be ψ-nice (A > 0 on ℝ) and
 Morse.  Then, for the descent flow ż = −∇L: every unstable branch of every
-saddle converges to the minimum adjacent to that saddle on the backbone, on
-the side selected by the b-component of the unstable eigenvector; every
-stable branch of every saddle escapes to infinity.  In particular there are
+saddle converges to the nearest MINIMUM on its side of the backbone (B-root
+saddles between it and the target are not attractors and do not capture),
+on the side selected by the b-component of the unstable eigenvector; every
+stable branch of every saddle escapes to infinity.  NOTE (2026-07-02): the
+B-root correction to Theorem 2 means "adjacent critical point" and
+"adjacent minimum" differ — branch targeting must skip B-saddles.  In particular there are
 no saddle-saddle connections in the finite plane, and the separatrix skeleton
 is combinatorially rigid across the ψ-nice Morse family.
 
@@ -50,14 +53,21 @@ instrument that will find and report it.  Sound either way.
 
 ## Theorem 2 (Backbone reduction — proved)
 
-**Statement.**  All critical points of L lie on the backbone a = B/A, at
-roots of N(b) = α′β − 2β′α; det H = 2A·u″ there; L is Morse iff u = C − B²/A
-is Morse; u″ > 0 ⇔ minimum, u″ < 0 ⇔ saddle; no other critical types exist;
-minima and saddles strictly alternate in b.
+**Statement (corrected 2026-07-02).**  All critical points of L lie on the
+backbone a = B/A, at roots of B·N (u′ = B·N/A²; N = α′β − 2β′α).  At
+N-roots, det H = 2A·u″ (the identity's derivation substitutes N(b*) = 0):
+u″ > 0 ⇔ minimum, u″ < 0 ⇔ saddle.  At B-roots (a = 0), H₂₂ = 0
+identically and det H = −4B′(b₀)² < 0: **every simple B-root is a 2D
+saddle regardless of u″**.  No other critical types exist (A > 0 ⇒ no
+maxima).  Alternation is a statement about u: the SIGNS of u″ alternate
+along b (1D Morse); L-types follow u at N-roots only, so consecutive
+L-saddles occur legitimately wherever a B-root falls at a u-minimum.
+L is Morse iff B·N is squarefree with gcd(B, N) constant.
 
-**Status: PROVED** (see the corrected Hessian theorem and determinant
-identity in the mse-bundle corrigendum and MORSE_TECHNOLOGY_INVENTORY,
-Section 0; numerically verified identities).
+**Status: PROVED** (Hessian identities direct computation; the B-root
+case verified by exact index balance: strip-localized winding gives −1
+at every B-root).  Original min/saddle-alternation phrasing was FALSE in
+general — caught by the Poincaré–Hopf index certificate.
 
 ---
 
