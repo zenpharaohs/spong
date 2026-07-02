@@ -19,7 +19,7 @@ complete mathematical recital (§1–§11), the certificate semantics
 contracts, the architecture, and the migration plan from the MATLAB
 predecessor (`mse-bundle`).
 
-Status: **Phases 1–4 landed** — `spong.model` (exact coefficients, the (b, w)
+Status: **Phases 1–5 landed — the instrument draws** — `spong.model` (exact coefficients, the (b, w)
 chart, closed-form level curves, Hessian identities) and `spong.sturm`
 (EXACT enumeration: primitive-PRS Sturm chains over dyadic-rational inputs,
 isolation, interval-sign classification, alternation invariant; the critical
@@ -38,7 +38,13 @@ separatrices at ≤ 1e-11 with the √d asymptote confirmed.  `spong.atlas`
 constant), the asymptote certificate, EXACT Poincaré–Hopf index balance
 (rational-rectangle winding via Sturm-certified axis crossings — additive
 over box subdivisions), genericity/degree-drop handling, and the §8b box
-contract.
+contract.  `spong.portrait` + `spong.render` (Phase 5): full assembly with
+the certificate ledger (every branch ships its angle-energy, seam, turn,
+adjacency, and asymptote residuals; the enumeration ships its EXACT
+certificates; the portrait ships its index balance), and pure-stdlib SVG
+rendering — spong's own closed-form contour layer (no fcontour, no
+marching squares), house palette, plane and Poincaré-disk views.  First
+portraits: [docs/gallery/](docs/gallery/).
 
 Run the fast suite: `PYTHONPATH=src python -m pytest tests` (slow founding
 gates: add `-m slow`).

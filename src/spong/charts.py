@@ -292,17 +292,38 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
             else:
                 recent_b.clear()
 
+        # curvature-adaptive chord: take the step; if the polyline turns
+        # more than TURN_MAX at the new vertex, revert, halve, retry —
+        # the zoom-proof guarantee enforced at trace time
+        TURN_MAX = np.cos(np.radians(0.75))
+        b_prev, w_prev = b, w
+        for _retry in range(7):
+            try:
+                if chart == "slow":
+                    h = cur / np.hypot(1.0, vw / vb) * (
+                        1.0 if vb > 0 else -1.0)
+                    st = gauss.step(sF, b_prev, [w_prev], h,
+                                    method="gl4", jac=sJ)
+                    b_new, w_new = b_prev + h, float(st.y1[0])
+                else:
+                    h = cur / np.hypot(1.0, vb / vw) * (
+                        1.0 if vw > 0 else -1.0)
+                    st = gauss.step(fF, w_prev, [b_prev], h,
+                                    method="gl4", jac=fJ)
+                    w_new, b_new = w_prev + h, float(st.y1[0])
+            except (np.linalg.LinAlgError, FloatingPointError):
+                return pts, "abort_step_failure", switches, (b_prev, w_prev)
+            if len(pts) >= 2 and np.isfinite(b_new) and np.isfinite(w_new):
+                a_new = float(m.a_star(b_new) + w_new)
+                d1 = np.array(pts[-1]) - np.array(pts[-2])
+                d2 = np.array([a_new, b_new]) - np.array(pts[-1])
+                n1, n2 = np.hypot(*d1), np.hypot(*d2)
+                if n1 > 1e-14 and n2 > 1e-14                         and (d1 @ d2) / (n1 * n2) < TURN_MAX                         and cur > ds / 128.0:
+                    cur *= 0.5
+                    continue
+            break
         try:
-            if chart == "slow":
-                # constant CHORD length: the b-step shrinks by the slope
-                # factor so polyline density is uniform along the curve
-                h = cur / np.hypot(1.0, vw / vb) * (1.0 if vb > 0 else -1.0)
-                st = gauss.step(sF, b, [w], h, method="gl4", jac=sJ)
-                b, w = b + h, float(st.y1[0])
-            else:
-                h = cur / np.hypot(1.0, vb / vw) * (1.0 if vw > 0 else -1.0)
-                st = gauss.step(fF, w, [b], h, method="gl4", jac=fJ)
-                w, b = w + h, float(st.y1[0])
+            b, w = b_new, w_new
             cur = min(ds, cur * 1.06)   # gentle: the angle-energy functional is
             # a symmetric difference — 2nd-order on uniform spacing, only
             # 1st-order under spacing jumps, so ramp adjacent steps slowly
@@ -317,7 +338,8 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
 
         for (at, bt) in targets:
             if (a - at) ** 2 + (b - bt) ** 2 < cap_r**2:
-                pts.append((at, bt))
+                if (a - at) ** 2 + (b - bt) ** 2 > 1e-24:
+                    pts.append((at, bt))
                 return pts, "capture", switches, (b, w)
 
         if not (box[0] <= a <= box[1] and box[2] <= b <= box[3]):
@@ -333,14 +355,27 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
 
 def angle_energy(m: Model, Y: np.ndarray) -> float:
     """E = Σ ½‖d_⊥‖²: the discrete integral-curve certificate (E = 0 ⟺
-    the polyline chords are everywhere parallel to ∇L)."""
+    the polyline chords are everywhere parallel to ∇L).
+
+    Noise-floor aware (§4 doctrine): each gradient component is a
+    cancellation of terms whose magnitudes set an evaluation floor
+    ~eps·(term scale); where ‖∇L‖ sits below that floor its DIRECTION is
+    numerically meaningless and the vertex is skipped — otherwise the
+    certificate measures its own evaluation noise, not the curve (seen
+    on far valley stretches where |∇L| ~ C_inf/b²).
+    """
     E = 0.0
+    eps = np.finfo(float).eps
     for k in range(1, len(Y) - 1):
+        a, b = Y[k, 0], Y[k, 1]
         d = Y[k + 1] - Y[k - 1]
-        g = m.gradL(Y[k, 0], Y[k, 1])
+        g = m.gradL(a, b)
         ng = float(np.hypot(g[0], g[1]))
         nd = float(np.hypot(d[0], d[1]))
-        if ng < 1e-12 or nd < 1e-12:
+        scale_a = 2.0 * (abs(a) * m.A(b) + abs(m.B(b)))
+        scale_b = 2.0 * abs(a) * abs(m.Bp(b)) + a * a * abs(m.Ap(b))
+        g_floor = 16.0 * eps * float(np.hypot(scale_a, scale_b))
+        if ng < max(1e-12, g_floor) or nd < 1e-14:
             continue
         gh = g / ng
         dp = d - (gh @ d) * gh
@@ -350,7 +385,8 @@ def angle_energy(m: Model, Y: np.ndarray) -> float:
 
 def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                    box=(-50.0, 50.0, -50.0, 50.0), n_grid: int = 4001,
-                   ds: float | None = None, cap_r: float = 2e-3) -> Branch:
+                   ds: float | None = None,
+                   cap_r: float | None = None) -> Branch:
     """Unstable branch: saddle → adjacent minimum (or box exit).
 
     Zone loop per the dispatcher contract: whenever the sounding says
@@ -365,6 +401,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     sgn = 1.0 if span > 0 else -1.0
     if ds is None:
         ds = abs(span) / 4000.0
+    if cap_r is None:
+        cap_r = 4.0 * ds             # capture connector ~ a few chords
 
     bg = np.linspace(b_saddle, b_t, n_grid)
     kap = depth_gauge_floor(m, bg)
@@ -441,11 +479,16 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             # seam: fixed point vs incoming state at the junction
             certs["seam_residuals"].append(abs(float(w_zone[0]) - w_cur))
             a_zone = m.a_star(b_zone) + w_zone
-            pts.extend(zip(a_zone.tolist(), b_zone.tolist()))
+            start = 0
+            if pts and abs(pts[-1][1] - float(b_zone[0])) < 1e-12 * (
+                    1 + abs(b_cur)):
+                start = 1                    # grid re-includes current point
+            pts.extend(zip(a_zone.tolist()[start:], b_zone.tolist()[start:]))
             b_cur, w_cur = float(b_zone[-1]), float(w_zone[-1])
             launch_scale = hstep
             if abs(b_cur - b_t) <= hstep * 1.5:
-                pts.append((a_t, b_t))
+                if (pts[-1][0] - a_t) ** 2 + (pts[-1][1] - b_t) ** 2 > 1e-24:
+                    pts.append((a_t, b_t))
                 term = "capture"
                 break
         else:
