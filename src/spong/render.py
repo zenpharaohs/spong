@@ -128,7 +128,8 @@ def contour_levels(m: Model, view, n_levels: int = 48):
 
 
 def plane_view(p: Portrait, view=None, width=1200, height=900,
-               n_levels: int = 48, n_grid: int = 1501, title=None) -> str:
+               n_levels: int = 48, n_grid: int = 1501, title=None,
+               overlays=None) -> str:
     """The portrait in the (a, b) plane.  Returns SVG text.
 
     Curves are computed on the compute box and CLIPPED to the view
@@ -174,6 +175,25 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
             svg.diamond(x, y, 6, PALETTE["bsaddle_stroke"])
         else:
             svg.triangle(x, y, 6, PALETTE["saddle_fill"])
+
+    # ---- overlays (demo consumers: optimizer trajectories etc.) -------- #
+    if overlays:
+        ly = 44
+        for ov in overlays:
+            Yov = np.asarray(ov["Y"], dtype=float)
+            X, Yb = Yov[:, 0], Yov[:, 1]
+            for i0, i1 in _clip_runs(X, Yb, view):
+                pts = [to_px(X[k], Yb[k]) for k in range(i0, i1)]
+                svg.polyline(pts, ov.get("color", "#3060ff"),
+                             ov.get("width", 1.6),
+                             opacity=ov.get("opacity", 0.95))
+            if len(Yov) and np.all(np.isfinite(Yov[0])):
+                x0, y0 = to_px(Yov[0, 0], Yov[0, 1])
+                svg.circle(x0, y0, 3.2, ov.get("color", "#3060ff"))
+            if ov.get("label"):
+                svg.text(width - 250, ly, ov["label"], size=11,
+                         color=ov.get("color", "#3060ff"))
+                ly += 15
 
     if title:
         svg.text(width / 2, 24, title, size=15, anchor="middle")
