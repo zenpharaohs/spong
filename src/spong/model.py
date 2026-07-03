@@ -36,6 +36,15 @@ def _ev(c: np.ndarray, x):
     return np.polynomial.polynomial.polyval(x, c)
 
 
+def horner(c: tuple, x: float) -> float:
+    """Pure-float Horner — the Tier-0 scalar fast path (0.33 µs vs 1.6 µs
+    through numpy's polyval on scalars; the engine loop lives here)."""
+    acc = 0.0
+    for v in reversed(c):
+        acc = acc * x + v
+    return acc
+
+
 @dataclass(frozen=True)
 class Model:
     """Single polynomial neuron: f target, g activation, mu moments."""
@@ -89,6 +98,17 @@ class Model:
         object.__setattr__(self, "_cbpp", _npc(P.deriv(P.deriv(b))))
         object.__setattr__(self, "_cn", _npc(n))
         object.__setattr__(self, "_cnp", _npc(P.deriv(n)))
+
+        # pure-float coefficient tuples for the scalar fast path
+        fl = lambda p: tuple(float(x) for x in p)
+        object.__setattr__(self, "_fa", fl(a))
+        object.__setattr__(self, "_fb", fl(b))
+        object.__setattr__(self, "_fap", fl(P.deriv(a)))
+        object.__setattr__(self, "_fbp", fl(P.deriv(b)))
+        object.__setattr__(self, "_fapp", fl(P.deriv(P.deriv(a))))
+        object.__setattr__(self, "_fbpp", fl(P.deriv(P.deriv(b))))
+        object.__setattr__(self, "_fn", fl(n))
+        object.__setattr__(self, "_fnp", fl(P.deriv(n)))
 
     # ---------------- floating evaluators (NumPy kernels) ---------------- #
 
@@ -146,6 +166,39 @@ class Model:
         h12 = -2 * self.Bp(b) + 2 * a * self.Ap(b)
         h22 = -2 * a * self.Bpp(b) + a**2 * self.App(b)
         return np.array([[h11, h12], [h12, h22]])
+
+    # ------------- scalar fast path (pure floats, no numpy) ------------- #
+
+    def sA(self, b):    return horner(self._fa, b)
+    def sAp(self, b):   return horner(self._fap, b)
+    def sApp(self, b):  return horner(self._fapp, b)
+    def sB(self, b):    return horner(self._fb, b)
+    def sBp(self, b):   return horner(self._fbp, b)
+    def sBpp(self, b):  return horner(self._fbpp, b)
+    def sN(self, b):    return horner(self._fn, b)
+    def sNp(self, b):   return horner(self._fnp, b)
+
+    def s_a_star(self, b):
+        return self.sB(b) / self.sA(b)
+
+    def s_a_star_p(self, b):
+        A = self.sA(b)
+        return self.sBp(b) / A - self.sB(b) * self.sAp(b) / (A * A)
+
+    def s_a_star_pp(self, b):
+        A, B = self.sA(b), self.sB(b)
+        Ap, Bp = self.sAp(b), self.sBp(b)
+        return ((self.sBpp(b) * A - B * self.sApp(b)) / (A * A)
+                - 2.0 * Ap * (Bp * A - B * Ap) / (A * A * A))
+
+    def s_u_p(self, b):
+        A = self.sA(b)
+        return self.sB(b) * self.sN(b) / (A * A)
+
+    def s_u_pp(self, b):
+        A, B, Nv = self.sA(b), self.sB(b), self.sN(b)
+        return ((self.sBp(b) * Nv + B * self.sNp(b)) / (A * A)
+                - 2.0 * B * Nv * self.sAp(b) / (A * A * A))
 
     def level_curve(self, c, b):
         """Closed-form level curve a_±(b; c); NaN where the level is absent."""

@@ -119,6 +119,40 @@ def step(F, x, y, h, method="gl4", jac=None) -> Step:
     return Step(x, h, y, y1, K)
 
 
+def gl4_scalar(f, j, x: float, y: float, h: float,
+               tol: float = 1e-13, maxit: int = 30) -> float:
+    """Tier-0 scalar GL4 step: pure floats, closed-form 2x2 stage Newton.
+
+    Identical mathematics to step(..., method='gl4') for scalar systems;
+    ~20x less interpreter overhead (no numpy objects in the loop).
+    """
+    c1, c2 = _GL2_C
+    (a11, a12), (a21, a22) = _GL2_A
+    x1, x2 = x + c1 * h, x + c2 * h
+    k = f(x, y)
+    K1 = K2 = k
+    for _ in range(maxit):
+        Y1 = y + h * (a11 * K1 + a12 * K2)
+        Y2 = y + h * (a21 * K1 + a22 * K2)
+        r1 = K1 - f(x1, Y1)
+        r2 = K2 - f(x2, Y2)
+        m_ = abs(K1)
+        if abs(K2) > m_:
+            m_ = abs(K2)
+        if (abs(r1) if abs(r1) > abs(r2) else abs(r2)) < tol * (1.0 + m_):
+            break
+        J1 = j(x1, Y1)
+        J2 = j(x2, Y2)
+        m11 = 1.0 - h * a11 * J1
+        m12 = -h * a12 * J1
+        m21 = -h * a21 * J2
+        m22 = 1.0 - h * a22 * J2
+        det = m11 * m22 - m12 * m21
+        K1 += (-m22 * r1 + m12 * r2) / det
+        K2 += (m21 * r1 - m11 * r2) / det
+    return y + h * 0.5 * (K1 + K2)
+
+
 @dataclass(frozen=True)
 class Trajectory:
     steps: tuple[Step, ...]

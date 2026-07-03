@@ -9,13 +9,6 @@ from spong import charts, model, sturm
 from tests.test_enumeration import TRICKY_F
 
 
-@pytest.fixture(scope="module")
-def tricky():
-    m = model.build(TRICKY_F, TRICKY_F, model.moments_uniform01(23))
-    e = sturm.enumerate_critical_points(m)
-    return m, e
-
-
 def _lowest_saddle_and_adjacent_min(e):
     saddles = sorted(e.saddles, key=lambda p: p.b)
     s = saddles[0]
@@ -91,6 +84,7 @@ def test_d2_all_unstable_branches():
 
 # ------------------ gate: fold handling, high degree ------------------- #
 
+@pytest.mark.slow
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_d17_zoo_clean_terminations(seed):
     """Every bounded unstable branch of a d=17 model terminates cleanly

@@ -8,12 +8,6 @@ from spong import model, portrait, render
 from tests.test_enumeration import TRICKY_F
 
 
-@pytest.fixture(scope="module")
-def tricky_portrait():
-    m = model.build(TRICKY_F, TRICKY_F, model.moments_uniform01(23))
-    return portrait.compute(m, view=(-1.5, 2.5, -4.0, 3.0))
-
-
 def test_ledger_complete_and_clean(tricky_portrait):
     p = tricky_portrait
     led = p.ledger

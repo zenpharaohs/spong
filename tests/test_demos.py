@@ -12,13 +12,6 @@ from demos import optimizers as opt
 from spong import model, sturm
 
 
-@pytest.fixture(scope="module")
-def d2():
-    m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
-    e = sturm.enumerate_critical_points(m)
-    return m, e
-
-
 def test_batch_gradient_matches_mean_field(d2):
     """E[batch gradient] -> model gradient (the moments story)."""
     m, _ = d2

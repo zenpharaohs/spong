@@ -40,6 +40,7 @@ KAPPA_EXIT = 1e3        # shallow-zone exit (hysteresis: enter at HI, leave
                         # below EXIT, so the zone loop cannot ping-pong)
 R_SWITCH = 20.0         # velocity-ratio chart handoff threshold
 MAX_SWITCHES = 12
+TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
 
 
 # --------------------------------------------------------------------- #
@@ -197,6 +198,78 @@ def fast_rhs(m: Model):
     return F, J
 
 
+# ---- Tier-0 scalar fast path (pure floats; the engine loop lives here) ---
+
+def _s_P(m: Model, b: float, w: float) -> float:
+    return (m.s_u_p(b) + m.sAp(b) * w * w
+            - 2.0 * m.sA(b) * w * m.s_a_star_p(b))
+
+
+def _s_velocities(m: Model, b: float, w: float):
+    Pv = _s_P(m, b, w)
+    return -Pv, -2.0 * m.sA(b) * w + m.s_a_star_p(b) * Pv
+
+
+def slow_rhs_s(m: Model):
+    def f(b, w):
+        A = m.sA(b)
+        asp = m.s_a_star_p(b)
+        Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
+        return 2.0 * A * w / Pv - asp
+
+    def j(b, w):
+        A = m.sA(b)
+        asp = m.s_a_star_p(b)
+        Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
+        P_w = 2.0 * m.sAp(b) * w - 2.0 * A * asp
+        return 2.0 * A / Pv - 2.0 * A * w * P_w / (Pv * Pv)
+
+    return f, j
+
+
+def fast_rhs_s(m: Model):
+    def f(w, b):
+        A = m.sA(b)
+        asp = m.s_a_star_p(b)
+        Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
+        return Pv / (2.0 * A * w - asp * Pv)
+
+    def j(w, b):
+        A, Ap = m.sA(b), m.sAp(b)
+        asp, aspp = m.s_a_star_p(b), m.s_a_star_pp(b)
+        Pv = m.s_u_p(b) + Ap * w * w - 2.0 * A * w * asp
+        P_b = (m.s_u_pp(b) + m.sApp(b) * w * w
+               - 2.0 * w * (Ap * asp + A * aspp))
+        D = 2.0 * A * w - asp * Pv
+        D_b = 2.0 * Ap * w - aspp * Pv - asp * P_b
+        return (P_b * D - Pv * D_b) / (D * D)
+
+    return f, j
+
+
+def _s_depth_gauge(m: Model, b: float, w: float) -> float:
+    A = m.sA(b)
+    asp = m.s_a_star_p(b)
+    Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
+    t1 = abs(2.0 * A * w)
+    t2 = abs(asp * Pv)
+    num = t1 + t2
+    den = abs(2.0 * A * w - asp * Pv)
+    lo = 1e-16 * num + 1e-300
+    return num / (den if den > lo else lo)
+
+
+def _s_depth_gauge_floor(m: Model, b: float) -> float:
+    A = m.sA(b)
+    asp, aspp = m.s_a_star_p(b), m.s_a_star_pp(b)
+    up, upp = m.s_u_p(b), m.s_u_pp(b)
+    w1p = (aspp * up + asp * upp) / (2.0 * A) \
+        - asp * up * m.sAp(b) / (2.0 * A * A)
+    lo = 1e-16 * abs(asp) + 1e-300
+    d = abs(w1p)
+    return 2.0 * abs(asp) / (d if d > lo else lo)
+
+
 # --------------------------------------------------------------------- #
 # the continuation engine                                                #
 # --------------------------------------------------------------------- #
@@ -228,12 +301,12 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     owns the regime.  Ascent never triggers this (a separatrix crossing
     the backbone is not slaved).
     """
-    sF, sJ = slow_rhs(m)
-    fF, fJ = fast_rhs(m)
+    sf, sj = slow_rhs_s(m)
+    ff, fj = fast_rhs_s(m)
     b, w = float(b0), float(w0)
-    pts = [(float(m.a_star(b) + w), b)]
+    pts = [(m.s_a_star(b) + w, b)]
 
-    vb, vw = velocities(m, b, w)
+    vb, vw = _s_velocities(m, b, w)
     vb, vw = flow * vb, flow * vw
     chart = "slow" if abs(vw) <= R_SWITCH * abs(vb) else "fast"
     switches = 0
@@ -243,7 +316,7 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     cur = ds if ds0 is None else min(ds, max(ds0, 1e-12))
 
     for _ in range(max_steps):
-        vb, vw = velocities(m, b, w)
+        vb, vw = _s_velocities(m, b, w)
         vb, vw = flow * vb, flow * vw
         speed = max(abs(vb), abs(vw))
         if speed < 1e-300:
@@ -275,8 +348,8 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
             #       window; the stalled tail is a discrete artifact and
             #       is TRIMMED, its hover altitude becoming the seam
             #       residual.
-            if float(depth_gauge_floor(m, np.array([b]))[0]) >= KAPPA_HI:
-                w1 = float(m.a_star_p(b) * m.u_p(b) / (2.0 * m.A(b)))
+            if _s_depth_gauge_floor(m, b) >= KAPPA_HI:
+                w1 = m.s_a_star_p(b) * m.s_u_p(b) / (2.0 * m.sA(b))
                 if abs(w - w1) <= 0.05 * abs(w1) + 1e-9 * (1 + abs(w)):
                     return pts, "enter_shallow", switches, (b, w)
                 recent_b.append(b)
@@ -287,53 +360,51 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                         n_trim = min(12, len(pts) - 1)
                         del pts[-n_trim:]
                         a_bk, b_bk = pts[-1]
-                        w_bk = a_bk - float(m.a_star(b_bk))
+                        w_bk = a_bk - m.s_a_star(b_bk)
                         return pts, "enter_shallow", switches, (b_bk, w_bk)
             else:
                 recent_b.clear()
 
         # curvature-adaptive chord: take the step; if the polyline turns
-        # more than TURN_MAX at the new vertex, revert, halve, retry —
-        # the zoom-proof guarantee enforced at trace time
-        TURN_MAX = np.cos(np.radians(0.75))
+        # more than the turn budget at the new vertex, revert, halve,
+        # retry — the zoom-proof guarantee enforced at trace time
         b_prev, w_prev = b, w
         for _retry in range(7):
             try:
                 if chart == "slow":
-                    h = cur / np.hypot(1.0, vw / vb) * (
+                    h = cur / (1.0 + (vw / vb) ** 2) ** 0.5 * (
                         1.0 if vb > 0 else -1.0)
-                    st = gauss.step(sF, b_prev, [w_prev], h,
-                                    method="gl4", jac=sJ)
-                    b_new, w_new = b_prev + h, float(st.y1[0])
+                    w_new = gauss.gl4_scalar(sf, sj, b_prev, w_prev, h)
+                    b_new = b_prev + h
                 else:
-                    h = cur / np.hypot(1.0, vb / vw) * (
+                    h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
                         1.0 if vw > 0 else -1.0)
-                    st = gauss.step(fF, w_prev, [b_prev], h,
-                                    method="gl4", jac=fJ)
-                    w_new, b_new = w_prev + h, float(st.y1[0])
-            except (np.linalg.LinAlgError, FloatingPointError):
+                    b_new = gauss.gl4_scalar(ff, fj, w_prev, b_prev, h)
+                    w_new = w_prev + h
+            except (ZeroDivisionError, FloatingPointError, OverflowError):
                 return pts, "abort_step_failure", switches, (b_prev, w_prev)
             if len(pts) >= 2 and np.isfinite(b_new) and np.isfinite(w_new):
-                a_new = float(m.a_star(b_new) + w_new)
-                d1 = np.array(pts[-1]) - np.array(pts[-2])
-                d2 = np.array([a_new, b_new]) - np.array(pts[-1])
-                n1, n2 = np.hypot(*d1), np.hypot(*d2)
-                if n1 > 1e-14 and n2 > 1e-14                         and (d1 @ d2) / (n1 * n2) < TURN_MAX                         and cur > ds / 128.0:
+                a_new = m.s_a_star(b_new) + w_new
+                p1, p0 = pts[-1], pts[-2]
+                d1a, d1b = p1[0] - p0[0], p1[1] - p0[1]
+                d2a, d2b = a_new - p1[0], b_new - p1[1]
+                n1 = (d1a * d1a + d1b * d1b) ** 0.5
+                n2 = (d2a * d2a + d2b * d2b) ** 0.5
+                if (n1 > 1e-14 and n2 > 1e-14
+                        and (d1a * d2a + d1b * d2b) / (n1 * n2) < TURN_MAX
+                        and cur > ds / 128.0):
                     cur *= 0.5
                     continue
             break
-        try:
-            b, w = b_new, w_new
-            cur = min(ds, cur * 1.06)   # gentle: the angle-energy functional is
-            # a symmetric difference — 2nd-order on uniform spacing, only
-            # 1st-order under spacing jumps, so ramp adjacent steps slowly
-        except (np.linalg.LinAlgError, FloatingPointError):
-            return pts, "abort_step_failure", switches, (b, w)
+        b, w = b_new, w_new
+        cur = min(ds, cur * 1.06)   # gentle ramp: the angle-energy
+        # functional is a symmetric difference — 2nd-order on uniform
+        # spacing, 1st-order under spacing jumps
 
         if not (np.isfinite(b) and np.isfinite(w)):
             return pts, "abort_nonfinite", switches, (b, w)
 
-        a = float(m.a_star(b) + w)
+        a = m.s_a_star(b) + w
         pts.append((a, b))
 
         for (at, bt) in targets:

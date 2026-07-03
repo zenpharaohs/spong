@@ -10,20 +10,6 @@ from spong import atlas, charts, model, sturm
 from tests.test_enumeration import TRICKY_F
 
 
-@pytest.fixture(scope="module")
-def tricky():
-    m = model.build(TRICKY_F, TRICKY_F, model.moments_uniform01(23))
-    e = sturm.enumerate_critical_points(m)
-    return m, e
-
-
-@pytest.fixture(scope="module")
-def d2():
-    m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
-    e = sturm.enumerate_critical_points(m)
-    return m, e
-
-
 # ---------------- gate: backbone-pole model (C_inf) ------------------- #
 
 @pytest.mark.parametrize("fix", ["d2", "tricky"])
