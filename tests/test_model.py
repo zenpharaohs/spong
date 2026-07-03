@@ -83,3 +83,11 @@ def test_P_is_minus_bdot(m):
 def test_normal_moments():
     mu = model.moments_normal01(8)
     assert [float(x) for x in mu] == [1, 0, 1, 0, 3, 0, 15, 0]
+
+
+def test_degree_one_model_native_coefficients_are_not_empty():
+    m = model.build([1, 2], [1, 2], model.moments_uniform01(3))
+    assert m.App(0.0) == pytest.approx(8 / 3)
+    assert m.Bpp(0.0) == pytest.approx(0.0)
+    assert m._fbpp == (0.0,)
+    assert m._fnp == (2 / 3,)

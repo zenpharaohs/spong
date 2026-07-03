@@ -1,9 +1,16 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "spong"
 version = "0.0.1"
 description = "Certified phase portraits of gradient descent on the MSE loss of a single scalar polynomial neuron"
 requires-python = ">=3.10"
 dependencies = ["numpy"]
+
+[project.scripts]
+spong-random-portrait = "spong.cli:main"
 
 [project.optional-dependencies]
 render = ["matplotlib"]

@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+build/
+*.so
 out/
 *.png
 !docs/**/*.png

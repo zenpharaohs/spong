@@ -213,16 +213,16 @@ def richardson3(x, x_old, x_old_old):
     x_old_old = np.asarray(x_old_old, dtype=float)
     y = x.copy()
 
-    num = x * x_old_old - x_old**2
-    den = x + x_old_old - 2.0 * x_old
-
     with np.errstate(divide="ignore", invalid="ignore"):
+        num = x * x_old_old - x_old**2
+        den = x + x_old_old - 2.0 * x_old
         r1 = np.abs(1.0 - x / x_old)
         r2 = np.abs(1.0 - x_old / x_old_old)
-    todo = np.minimum(r1, r2) > np.sqrt(np.finfo(float).eps)
-    todo &= den != 0.0
-    y = np.where(todo, np.divide(num, den, out=np.zeros_like(y), where=den != 0),
-                 y)
+        todo = np.minimum(r1, r2) > np.sqrt(np.finfo(float).eps)
+        todo &= den != 0.0
+        y = np.where(
+            todo, np.divide(num, den, out=np.zeros_like(y), where=den != 0),
+            y)
     return y
 
 

@@ -41,6 +41,49 @@ def _target_for(e: sturm.Enumeration, s, direction: int):
     return min(side, key=lambda p: abs(p.b - s.b))
 
 
+def _box_with_points(box, Y, margin: float = 0.02):
+    if len(Y) == 0:
+        return box
+    a0, a1, b0, b1 = box
+    ya0, ya1 = float(np.nanmin(Y[:, 0])), float(np.nanmax(Y[:, 0]))
+    yb0, yb1 = float(np.nanmin(Y[:, 1])), float(np.nanmax(Y[:, 1]))
+    da = margin * max(a1 - a0, ya1 - ya0, 1.0)
+    db = margin * max(b1 - b0, yb1 - yb0, 1.0)
+    return (min(a0, ya0 - da), max(a1, ya1 + da),
+            min(b0, yb0 - db), max(b1, yb1 + db))
+
+
+def _expand_a_box(box, side: int):
+    a0, a1, b0, b1 = box
+    width = max(a1 - a0, 1.0)
+    if side < 0:
+        a0 -= width
+    else:
+        a1 += width
+    return (a0, a1, b0, b1)
+
+
+def _trace_finite_unstable(m: Model, s, t, box):
+    # Finite branches can be nearly horizontal in the (a,b)-plane: choosing
+    # the chord budget from |Δb| alone can over-resolve the branch until the
+    # engine hits max_steps before reaching a perfectly finite target.
+    db = abs(t.b - s.b)
+    da = abs(t.a - s.a)
+    ds = max(db / 4000.0, float(np.hypot(da, db)) / 8000.0)
+    cur_box = box
+    br = None
+    for _ in range(6):
+        br = charts.trace_unstable(m, s.b, (t.a, t.b), box=cur_box, ds=ds)
+        if br.term == "capture":
+            return br, _box_with_points(cur_box, br.Y)
+        a_end = float(br.Y[-1, 0])
+        side = -1 if a_end <= cur_box[0] else (1 if a_end >= cur_box[1] else 0)
+        if br.term != "box_exit" or side == 0:
+            return br, _box_with_points(cur_box, br.Y)
+        cur_box = _expand_a_box(cur_box, side)
+    return br, _box_with_points(cur_box, br.Y)
+
+
 def compute(m: Model, view=None,
             trace_stable_branches: bool = True) -> Portrait:
     """Compute the certified portrait inside the §8b box contract."""
@@ -49,31 +92,46 @@ def compute(m: Model, view=None,
     gen = atlas.genericity(m)
 
     branches = []
-    span_scale = max(box[3] - box[2], box[1] - box[0])
+    unbounded: list[tuple] = []
 
     for s in e.saddles:
         # ---- unstable branches (descent), one per side ---------------- #
         for direction in (+1, -1):
             t = _target_for(e, s, direction)
             if t is not None:
-                br = charts.trace_unstable(m, s.b, (t.a, t.b), box=box,
-                                           ds=abs(t.b - s.b) / 4000.0)
+                br, box = _trace_finite_unstable(m, s, t, box)
                 br.diag["saddle_b"] = s.b
                 br.diag["target"] = (t.a, t.b)
                 br.certs["adjacency_ok"] = (
                     br.term == "capture"
                     and abs(br.Y[-1, 1] - t.b) < 1e-9)
+                branches.append(br)
             else:
-                b_exit = box[3] if direction > 0 else box[2]
-                a_exit = float(m.a_star(b_exit))
-                br = charts.trace_unstable(m, s.b, (a_exit, b_exit), box=box)
-                br.diag["saddle_b"] = s.b
-                br.diag["target"] = None
-                br.certs["adjacency_ok"] = br.term in ("capture", "box_exit")
-            branches.append(br)
+                unbounded.append((s, direction))
 
-        # ---- stable branches (ascent separatrices) --------------------- #
-        if trace_stable_branches:
+    for s, direction in unbounded:
+        b_exit = box[3] if direction > 0 else box[2]
+        if abs(b_exit - s.b) > 100.0:
+            b_local = None
+            if view is not None:
+                vspan = view[3] - view[2]
+                b_edge = view[3] if direction > 0 else view[2]
+                b_local = b_edge + direction * max(0.25 * vspan, 1.0)
+            br = charts.trace_valley_exit(
+                m, s.b, b_exit, box=box, local_until=b_local)
+        else:
+            a_exit = float(m.a_star(b_exit))
+            br = charts.trace_unstable(m, s.b, (a_exit, b_exit),
+                                       box=box)
+        br.diag["saddle_b"] = s.b
+        br.diag["target"] = None
+        br.certs["adjacency_ok"] = br.term in ("capture", "box_exit")
+        branches.append(br)
+
+    # ---- stable branches (ascent separatrices) ------------------------- #
+    if trace_stable_branches:
+        span_scale = max(box[3] - box[2], box[1] - box[0])
+        for s in e.saddles:
             for sign in (+1, -1):
                 br = charts.trace_stable(m, s.b, sign, box=box,
                                          ds=span_scale / 30000.0)

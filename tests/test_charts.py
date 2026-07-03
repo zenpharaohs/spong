@@ -82,6 +82,25 @@ def test_d2_all_unstable_branches():
                 assert br.certs["angle_energy"] < 1e-9
 
 
+def test_d2_random_stiff_down_branch_capture():
+    """Seed 2735729614: a quadratic f=g branch hit the HI threshold between
+    grid nodes, causing engine/shallow ping-pong and abort_zone_limit."""
+    f = [-0.27126925828072923, -0.7363598557165663, 0.7989868625933855]
+    m = model.build(f, f, model.moments_uniform01(5))
+    e = sturm.enumerate_critical_points(m)
+    s = sorted(e.saddles, key=lambda p: p.b)[0]
+    t = [p for p in e.minima if p.b < s.b][0]
+    br = charts.trace_unstable(
+        m, s.b, (t.a, t.b),
+        box=(-0.537726716445422, 1.998796912946715,
+             -5.148979319205286, 3.1997597252090433))
+    assert br.term == "capture"
+    assert br.certs["angle_energy"] < 1e-9
+    assert br.certs["seam_residual"] < 1e-9
+    assert br.Y[-1, 0] == pytest.approx(t.a, abs=1e-12)
+    assert br.Y[-1, 1] == pytest.approx(t.b, abs=1e-12)
+
+
 # ------------------ gate: fold handling, high degree ------------------- #
 
 @pytest.mark.slow

@@ -100,7 +100,7 @@ class Model:
         object.__setattr__(self, "_cnp", _npc(P.deriv(n)))
 
         # pure-float coefficient tuples for the scalar fast path
-        fl = lambda p: tuple(float(x) for x in p)
+        fl = lambda p: tuple(float(x) for x in p) or (0.0,)
         object.__setattr__(self, "_fa", fl(a))
         object.__setattr__(self, "_fb", fl(b))
         object.__setattr__(self, "_fap", fl(P.deriv(a)))
@@ -109,6 +109,15 @@ class Model:
         object.__setattr__(self, "_fbpp", fl(P.deriv(P.deriv(b))))
         object.__setattr__(self, "_fn", fl(n))
         object.__setattr__(self, "_fnp", fl(P.deriv(n)))
+        try:
+            from . import _native
+            kernel = _native.Kernel(
+                self._fa, self._fap, self._fapp,
+                self._fb, self._fbp, self._fbpp,
+                self._fn, self._fnp)
+        except (ImportError, ValueError):
+            kernel = None
+        object.__setattr__(self, "_native_kernel", kernel)
 
     # ---------------- floating evaluators (NumPy kernels) ---------------- #
 

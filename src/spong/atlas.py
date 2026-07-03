@@ -99,7 +99,8 @@ def asymptote_certificate(m: Model, Y: np.ndarray) -> dict:
     idx = [int(np.argmin(np.abs(r - r_max / 4))),
            int(np.argmin(np.abs(r - r_max / 2))),
            len(Y) - 1]
-    slopes = [abs(Y[i, 1] / Y[i, 0]) for i in idx]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        slopes = [float(abs(Y[i, 1] / Y[i, 0])) for i in idx]
     extrap = float(richardson3(np.array([slopes[2]]), np.array([slopes[1]]),
                                np.array([slopes[0]]))[0])
     return {

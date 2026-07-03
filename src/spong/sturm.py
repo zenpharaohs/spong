@@ -247,6 +247,20 @@ def interval_sign(p: Poly, iv: RootInterval) -> int | None:
     return 1 if v > 0 else -1
 
 
+def _simple_root_derivative_sign(p: Poly, iv: RootInterval) -> int:
+    """Sign of p' at the unique simple root isolated by iv.
+
+    For a non-exact isolating interval with one simple root, the sign of p
+    immediately to the right of the root is the sign of p' at the root.  The
+    right endpoint is root-free by construction/refinement.
+    """
+    if iv.exact:
+        v = P.eval_at(P.deriv(p), iv.lo)
+    else:
+        v = P.eval_at(p, iv.hi)
+    return (v > 0) - (v < 0)
+
+
 # --------------------------------------------------------------------- #
 # Critical-point enumeration for a Model                                 #
 # --------------------------------------------------------------------- #
@@ -285,7 +299,9 @@ def enumerate_critical_points(m: Model) -> Enumeration:
     B, N = m.beta, m.N
     common = P.gcd_poly(B, N)
     has_common = P.degree(common) > 0
-    morse = (not has_common) and is_squarefree(B) and is_squarefree(N) \
+    B_squarefree = is_squarefree(B)
+    N_squarefree = is_squarefree(N)
+    morse = (not has_common) and B_squarefree and N_squarefree \
         and P.degree(B) >= 0
 
     pts: list[CriticalPoint] = []
@@ -294,14 +310,29 @@ def enumerate_critical_points(m: Model) -> Enumeration:
         # refine until the sign polynomial is certified on the interval
         cur = refine(P.mul(B, N) if source == "both" else
                      (N if source == "N" else B), iv)
-        s = interval_sign(signpoly, cur)
-        for _ in range(64):
-            if s is not None:
-                break
-            cur = refine(N if source == "N" else B, cur,
-                         rel=(cur.hi - cur.lo) / (1 + abs(cur.mid)) / 4
-                         if not cur.exact else Fraction(1))
+        s = None
+        if source == "N" and not has_common and N_squarefree:
+            # At a simple N-root, sign(u'') = sign(B) * sign(N').  This is
+            # the same theorem used by BN', but avoids constructing and
+            # Sturm-counting the much higher-degree product polynomial.
+            s_B = interval_sign(B, cur)
+            s_Np = _simple_root_derivative_sign(N, cur)
+            if s_B is not None and s_Np != 0:
+                s = s_B * s_Np
+        elif source == "B" and not has_common and B_squarefree:
+            # At a simple B-root, N(b0) = -2B'(b0)A(b0), hence
+            # u'' = B'N/A^2 = -2B'^2/A < 0.  The exact product sign path
+            # remains below for non-Morse/degenerate cases.
+            s = -1
+        if s is None:
             s = interval_sign(signpoly, cur)
+            for _ in range(64):
+                if s is not None:
+                    break
+                cur = refine(N if source == "N" else B, cur,
+                             rel=(cur.hi - cur.lo) / (1 + abs(cur.mid)) / 4
+                             if not cur.exact else Fraction(1))
+                s = interval_sign(signpoly, cur)
         bf = float(cur.mid)
         af = float(P.eval_at(m.beta, cur.mid) / P.eval_at(m.alpha, cur.mid))
         if s is None or source == "both":

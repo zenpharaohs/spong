@@ -6,9 +6,10 @@ a_±(b; c) = a*(b) ± √((c − u(b))/A(b)), so contours are exact polylines on
 a dense b-grid — no marching squares, no grid artifacts, no fcontour.
 
 House palette (mse-bundle heritage): light-gray contours, gold backbone,
-green unstable branches, red separatrices; minima as filled dots, N-root
-saddles as triangles, B-root saddles as open diamonds (they are saddles
-by Theorem 2's B-root clause and deserve their own glyph).
+green unstable branches, red separatrices; local nonglobal minima as filled
+dots, global minima as open circles, N-root saddles as triangles, B-root
+saddles as open diamonds (they are saddles by Theorem 2's B-root clause and
+deserve their own glyph).
 
 Output is vector SVG: crisp at any zoom (the polylines beneath are the
 certified, chord-uniform ones from spong.charts), viewable in any
@@ -54,25 +55,29 @@ class _SVG:
         self.parts.append(
             f'<path d="{d}" fill="none" stroke="{color}" '
             f'stroke-width="{width}" stroke-opacity="{opacity}" '
-            f'stroke-linejoin="round" stroke-linecap="round"/>')
+            f'stroke-linejoin="round" stroke-linecap="round" '
+            f'vector-effect="non-scaling-stroke"/>')
 
     def circle(self, x, y, r, fill, stroke="white", sw=1.2):
         self.parts.append(
             f'<circle cx="{_fmt(x)}" cy="{_fmt(y)}" r="{r}" fill="{fill}" '
-            f'stroke="{stroke}" stroke-width="{sw}"/>')
+            f'stroke="{stroke}" stroke-width="{sw}" '
+            f'vector-effect="non-scaling-stroke"/>')
 
     def triangle(self, x, y, r, fill, stroke="white", sw=1.2):
         p = [(x, y - r), (x - 0.87 * r, y + 0.5 * r),
              (x + 0.87 * r, y + 0.5 * r)]
         d = "M" + " L".join(f"{_fmt(px)},{_fmt(py)}" for px, py in p) + " Z"
         self.parts.append(f'<path d="{d}" fill="{fill}" stroke="{stroke}" '
-                          f'stroke-width="{sw}"/>')
+                          f'stroke-width="{sw}" '
+                          f'vector-effect="non-scaling-stroke"/>')
 
     def diamond(self, x, y, r, stroke, sw=1.6):
         p = [(x, y - r), (x + r, y), (x, y + r), (x - r, y)]
         d = "M" + " L".join(f"{_fmt(px)},{_fmt(py)}" for px, py in p) + " Z"
         self.parts.append(f'<path d="{d}" fill="white" stroke="{stroke}" '
-                          f'stroke-width="{sw}"/>')
+                          f'stroke-width="{sw}" '
+                          f'vector-effect="non-scaling-stroke"/>')
 
     def text(self, x, y, s, size=11, color=PALETTE["text"], anchor="start"):
         self.parts.append(
@@ -95,6 +100,17 @@ def _mapper(view, width, height, pad):
     return to_px
 
 
+def _global_minima(p: Portrait) -> set[int]:
+    minima = [(i, q) for i, q in enumerate(p.enumeration.points)
+              if q.kind == "min"]
+    if not minima:
+        return set()
+    vals = np.array([p.model.L(q.a, q.b) for _, q in minima], dtype=float)
+    best = float(np.min(vals))
+    tol = 1e-9 * max(1.0, abs(best), float(np.max(np.abs(vals))))
+    return {i for (i, _q), val in zip(minima, vals) if val <= best + tol}
+
+
 def _clip_runs(X, Y, view):
     """Split (X, Y) into runs of points inside the view; NaN-safe."""
     a_lo, a_hi, b_lo, b_hi = view
@@ -113,6 +129,125 @@ def _clip_runs(X, Y, view):
     return runs
 
 
+def _clip_segment_to_view(x0, y0, x1, y1, view):
+    """Liang-Barsky clip of one segment against the data-coordinate view."""
+    a_lo, a_hi, b_lo, b_hi = view
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in (
+        (-dx, x0 - a_lo),
+        (dx, a_hi - x0),
+        (-dy, y0 - b_lo),
+        (dy, b_hi - y0),
+    ):
+        if p == 0.0:
+            if q < 0.0:
+                return None
+            continue
+        r = q / p
+        if p < 0.0:
+            if r > t1:
+                return None
+            if r > t0:
+                t0 = r
+        else:
+            if r < t0:
+                return None
+            if r < t1:
+                t1 = r
+    return ((x0 + t0 * dx, y0 + t0 * dy),
+            (x0 + t1 * dx, y0 + t1 * dy))
+
+
+def _clip_polylines(X, Y, view):
+    """Return clipped data-coordinate polylines, including boundary crossings.
+
+    The older point-in-view splitter is sufficient for densely sampled
+    curves, but a far-field slaved branch can cross a tight inspection view
+    with only one sampled vertex inside.  Segment clipping preserves that
+    visible chord instead of silently dropping it.
+    """
+    runs: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    last_end = None
+    for k in range(len(X) - 1):
+        x0, y0 = float(X[k]), float(Y[k])
+        x1, y1 = float(X[k + 1]), float(Y[k + 1])
+        if not (np.isfinite(x0) and np.isfinite(y0)
+                and np.isfinite(x1) and np.isfinite(y1)):
+            if len(cur) >= 2:
+                runs.append(cur)
+            cur, last_end = [], None
+            continue
+        clipped = _clip_segment_to_view(x0, y0, x1, y1, view)
+        if clipped is None:
+            if len(cur) >= 2:
+                runs.append(cur)
+            cur, last_end = [], None
+            continue
+        p0, p1 = clipped
+        if last_end is None or np.hypot(p0[0] - last_end[0],
+                                        p0[1] - last_end[1]) > 1e-10:
+            if len(cur) >= 2:
+                runs.append(cur)
+            cur = [p0]
+        cur.append(p1)
+        last_end = p1
+    if len(cur) >= 2:
+        runs.append(cur)
+    return runs
+
+
+def _adaptive_backbone(m: Model, view, to_px, n_seed: int = 96,
+                       max_depth: int = 14, max_chord_px: float = 8.0,
+                       max_err_px: float = 1.2) -> tuple[np.ndarray, np.ndarray]:
+    """Sample a*(b) adaptively in screen space.
+
+    A uniform b-grid can make the rational backbone look broken in tight
+    views near a sharp bend.  Contours can stay on their grid; the backbone is
+    a single curve, so a cheap midpoint subdivision gives a smoother
+    metrological guide.
+    """
+    b0, b1 = float(view[2]), float(view[3])
+    out: list[tuple[float, float]] = []
+
+    def aval(b):
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            return float(m.a_star(b))
+
+    def flat_enough(a0, b0, a1, b1):
+        if not (np.isfinite(a0) and np.isfinite(a1)):
+            return True, None
+        bm = 0.5 * (b0 + b1)
+        am = aval(bm)
+        if not np.isfinite(am):
+            return True, (am, bm)
+        x0, y0 = to_px(a0, b0)
+        x1, y1 = to_px(a1, b1)
+        xm, ym = to_px(am, bm)
+        chord = float(np.hypot(x1 - x0, y1 - y0))
+        lx, ly = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+        err = float(np.hypot(xm - lx, ym - ly))
+        return chord <= max_chord_px and err <= max_err_px, (am, bm)
+
+    def rec(a0, b0, a1, b1, depth):
+        ok, mid = flat_enough(a0, b0, a1, b1)
+        if ok or depth >= max_depth:
+            out.append((a0, b0))
+            return
+        am, bm = mid
+        rec(a0, b0, am, bm, depth + 1)
+        rec(am, bm, a1, b1, depth + 1)
+
+    b_seed = np.linspace(b0, b1, max(2, n_seed))
+    a_seed = [aval(float(bi)) for bi in b_seed]
+    for k in range(len(b_seed) - 1):
+        rec(a_seed[k], float(b_seed[k]), a_seed[k + 1], float(b_seed[k + 1]), 0)
+    out.append((a_seed[-1], float(b_seed[-1])))
+    Y = np.array(out, dtype=float)
+    return Y[:, 0], Y[:, 1]
+
+
 def contour_levels(m: Model, view, n_levels: int = 48):
     """Quantile level ladder: levels at quantiles of L sampled over the
     view, so contour density follows where the landscape actually lives
@@ -125,6 +260,66 @@ def contour_levels(m: Model, view, n_levels: int = 48):
     Lv = Lv[np.isfinite(Lv)]
     q = np.linspace(0.02, 0.995, n_levels)
     return np.unique(np.quantile(Lv, q))
+
+
+def _sample_polyline(Y: np.ndarray, max_points: int) -> tuple[np.ndarray, np.ndarray]:
+    if len(Y) <= max_points:
+        idx = np.arange(len(Y))
+        return Y, idx
+    idx = np.unique(np.linspace(0, len(Y) - 1, max_points).astype(int))
+    return Y[idx], idx
+
+
+def close_unstable_zooms(p: Portrait, n: int = 2, samples: int = 1800,
+                         trim_capture_radius: float = 1e-2,
+                         margin: float = 0.12) -> list[dict]:
+    """Find tight views around close approaches of distinct unstable branches.
+
+    Only branch pairs with the same captured target are considered, and a
+    small neighborhood of that target is excluded.  The returned views are
+    ordinary plane-view boxes; no branch geometry or stroke width changes.
+    """
+    candidates = []
+    unstable = [(i, br) for i, br in enumerate(p.branches)
+                if br.kind == "unstable" and br.term == "capture"
+                and br.diag.get("target") is not None and len(br.Y) >= 2]
+    for ka, (ia, ba) in enumerate(unstable):
+        ta = ba.diag.get("target")
+        for ib, bb in unstable[ka + 1:]:
+            tb = bb.diag.get("target")
+            if abs(ta[0] - tb[0]) > 1e-8 or abs(ta[1] - tb[1]) > 1e-8:
+                continue
+            Ya = ba.Y[np.hypot(ba.Y[:, 0] - ta[0],
+                               ba.Y[:, 1] - ta[1]) > trim_capture_radius]
+            Yb = bb.Y[np.hypot(bb.Y[:, 0] - tb[0],
+                               bb.Y[:, 1] - tb[1]) > trim_capture_radius]
+            if len(Ya) < 2 or len(Yb) < 2:
+                continue
+            Sa, ia_s = _sample_polyline(Ya, samples)
+            Sb, ib_s = _sample_polyline(Yb, samples)
+            d = Sa[:, None, :] - Sb[None, :, :]
+            d2 = np.sum(d * d, axis=2)
+            k = np.unravel_index(int(np.argmin(d2)), d2.shape)
+            pa, pb = Sa[k[0]], Sb[k[1]]
+            sep = float(np.sqrt(d2[k]))
+            center = 0.5 * (pa + pb)
+            scale = max(sep * 80.0, 1e-6)
+            a_half = max(scale, abs(pa[0] - pb[0]) * 20.0)
+            b_half = max(scale, abs(pa[1] - pb[1]) * 20.0)
+            a_half *= 1.0 + margin
+            b_half *= 1.0 + margin
+            view = (float(center[0] - a_half), float(center[0] + a_half),
+                    float(center[1] - b_half), float(center[1] + b_half))
+            candidates.append({
+                "view": view,
+                "separation": sep,
+                "center": (float(center[0]), float(center[1])),
+                "branches": (ia, ib),
+                "target": (float(ta[0]), float(ta[1])),
+                "sample_indices": (int(ia_s[k[0]]), int(ib_s[k[1]])),
+            })
+    candidates.sort(key=lambda z: z["separation"])
+    return candidates[:n]
 
 
 def plane_view(p: Portrait, view=None, width=1200, height=900,
@@ -150,9 +345,9 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
                 svg.polyline(pts, PALETTE["contour"], 0.7)
 
     # ---- backbone ------------------------------------------------------ #
-    bb = m.a_star(b)
-    for i0, i1 in _clip_runs(bb, b, view):
-        pts = [to_px(bb[k], b[k]) for k in range(i0, i1)]
+    bb_a, bb_b = _adaptive_backbone(m, view, to_px)
+    for run in _clip_polylines(bb_a, bb_b, view):
+        pts = [to_px(x, y) for x, y in run]
         svg.polyline(pts, PALETTE["backbone"], 1.6)
 
     # ---- branches ------------------------------------------------------ #
@@ -160,16 +355,20 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
         color = PALETTE["unstable"] if br.kind == "unstable" \
             else PALETTE["stable"]
         X, Y = br.Y[:, 0], br.Y[:, 1]
-        for i0, i1 in _clip_runs(X, Y, view):
-            pts = [to_px(X[k], Y[k]) for k in range(i0, i1)]
+        for run in _clip_polylines(X, Y, view):
+            pts = [to_px(x, y) for x, y in run]
             svg.polyline(pts, color, 2.2)
 
     # ---- critical points ------------------------------------------------ #
-    for q in p.enumeration.points:
+    global_minima = _global_minima(p)
+    for qi, q in enumerate(p.enumeration.points):
         if not (view[0] <= q.a <= view[1] and view[2] <= q.b <= view[3]):
             continue
         x, y = to_px(q.a, q.b)
-        if q.kind == "min":
+        if qi in global_minima:
+            svg.circle(x, y, 6, "white", stroke=PALETTE["min_fill"],
+                       sw=1.8)
+        elif q.kind == "min":
             svg.circle(x, y, 5, PALETTE["min_fill"])
         elif q.source == "B":
             svg.diamond(x, y, 6, PALETTE["bsaddle_stroke"])
@@ -238,7 +437,8 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
     svg = _SVG(width, height)
     svg.parts.append(
         f'<circle cx="{cx}" cy="{cy}" r="{R}" fill="none" '
-        f'stroke="{PALETTE["rim"]}" stroke-width="1.5"/>')
+        f'stroke="{PALETTE["rim"]}" stroke-width="1.5" '
+        f'vector-effect="non-scaling-stroke"/>')
 
     box = p.box
     b = np.linspace(box[2], box[3], 2001)
@@ -274,9 +474,13 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
         svg.circle(cx, cy - db * R, 4.5, "white",
                    stroke=PALETTE["backbone"], sw=2.0)
 
-    for q in p.enumeration.points:
+    global_minima = _global_minima(p)
+    for qi, q in enumerate(p.enumeration.points):
         x, y = to_px(q.a, q.b)
-        if q.kind == "min":
+        if qi in global_minima:
+            svg.circle(x, y, 5.5, "white", stroke=PALETTE["min_fill"],
+                       sw=1.7)
+        elif q.kind == "min":
             svg.circle(x, y, 4.5, PALETTE["min_fill"])
         elif q.source == "B":
             svg.diamond(x, y, 5, PALETTE["bsaddle_stroke"])

@@ -88,13 +88,15 @@ def depth_gauge_floor(m: Model, b):
     trigger — measured as instant zone ping-pong.)  0/0 at critical
     points themselves; callers fill those entries from neighbors.
     """
-    A = m.A(b)
-    asp, aspp = m.a_star_p(b), m.a_star_pp(b)
-    up, upp = m.u_p(b), m.u_pp(b)
-    w1p = (aspp * up + asp * upp) / (2.0 * A) \
-        - asp * up * m.Ap(b) / (2.0 * A**2)
-    return 2.0 * np.abs(asp) / np.maximum(
-        np.abs(w1p), 1e-16 * np.abs(asp) + 1e-300)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        A = m.A(b)
+        asp, aspp = m.a_star_p(b), m.a_star_pp(b)
+        up, upp = m.u_p(b), m.u_pp(b)
+        w1p = (aspp * up + asp * upp) / (2.0 * A) \
+            - asp * up * m.Ap(b) / (2.0 * A**2)
+        gauge = 2.0 * np.abs(asp) / np.maximum(
+            np.abs(w1p), 1e-16 * np.abs(asp) + 1e-300)
+    return np.where(np.isfinite(gauge), gauge, np.inf)
 
 
 def velocities(m: Model, b, w):
@@ -211,37 +213,64 @@ def _s_velocities(m: Model, b: float, w: float):
 
 
 def slow_rhs_s(m: Model):
+    cache = [None]
+
+    def vals(b: float, w: float):
+        key = (b, w)
+        if cache[0] is not None and cache[0][0] == key:
+            return cache[0][1]
+        A, Ap = m.sA(b), m.sAp(b)
+        B, Bp, Nv = m.sB(b), m.sBp(b), m.sN(b)
+        A2 = A * A
+        asp = Bp / A - B * Ap / A2
+        Pv = B * Nv / A2 + Ap * w * w - 2.0 * A * w * asp
+        P_w = 2.0 * Ap * w - 2.0 * A * asp
+        out = (A, asp, Pv, P_w)
+        cache[0] = (key, out)
+        return out
+
     def f(b, w):
-        A = m.sA(b)
-        asp = m.s_a_star_p(b)
-        Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
+        A, asp, Pv, _ = vals(b, w)
         return 2.0 * A * w / Pv - asp
 
     def j(b, w):
-        A = m.sA(b)
-        asp = m.s_a_star_p(b)
-        Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
-        P_w = 2.0 * m.sAp(b) * w - 2.0 * A * asp
+        A, _, Pv, P_w = vals(b, w)
         return 2.0 * A / Pv - 2.0 * A * w * P_w / (Pv * Pv)
 
     return f, j
 
 
 def fast_rhs_s(m: Model):
-    def f(w, b):
-        A = m.sA(b)
-        asp = m.s_a_star_p(b)
-        Pv = m.s_u_p(b) + m.sAp(b) * w * w - 2.0 * A * w * asp
-        return Pv / (2.0 * A * w - asp * Pv)
+    cache = [None]
 
-    def j(w, b):
-        A, Ap = m.sA(b), m.sAp(b)
-        asp, aspp = m.s_a_star_p(b), m.s_a_star_pp(b)
-        Pv = m.s_u_p(b) + Ap * w * w - 2.0 * A * w * asp
-        P_b = (m.s_u_pp(b) + m.sApp(b) * w * w
-               - 2.0 * w * (Ap * asp + A * aspp))
+    def vals(w: float, b: float):
+        key = (w, b)
+        if cache[0] is not None and cache[0][0] == key:
+            return cache[0][1]
+        A, Ap, App = m.sA(b), m.sAp(b), m.sApp(b)
+        B, Bp, Bpp = m.sB(b), m.sBp(b), m.sBpp(b)
+        Nv, Np = m.sN(b), m.sNp(b)
+        A2, A3 = A * A, A * A * A
+        asp = Bp / A - B * Ap / A2
+        aspp = ((Bpp * A - B * App) / A2
+                - 2.0 * Ap * (Bp * A - B * Ap) / A3)
+        up = B * Nv / A2
+        upp = ((Bp * Nv + B * Np) / A2
+               - 2.0 * B * Nv * Ap / A3)
+        Pv = up + Ap * w * w - 2.0 * A * w * asp
+        P_b = upp + App * w * w - 2.0 * w * (Ap * asp + A * aspp)
         D = 2.0 * A * w - asp * Pv
         D_b = 2.0 * Ap * w - aspp * Pv - asp * P_b
+        out = (Pv, D, P_b, D_b)
+        cache[0] = (key, out)
+        return out
+
+    def f(w, b):
+        Pv, D, _, _ = vals(w, b)
+        return Pv / D
+
+    def j(w, b):
+        Pv, D, P_b, D_b = vals(w, b)
         return (P_b * D - Pv * D_b) / (D * D)
 
     return f, j
@@ -303,6 +332,7 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     """
     sf, sj = slow_rhs_s(m)
     ff, fj = fast_rhs_s(m)
+    native = getattr(m, "_native_kernel", None)
     b, w = float(b0), float(w0)
     pts = [(m.s_a_star(b) + w, b)]
 
@@ -374,12 +404,16 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                 if chart == "slow":
                     h = cur / (1.0 + (vw / vb) ** 2) ** 0.5 * (
                         1.0 if vb > 0 else -1.0)
-                    w_new = gauss.gl4_scalar(sf, sj, b_prev, w_prev, h)
+                    w_new = native.slow_step(b_prev, w_prev, h) \
+                        if native is not None else \
+                        gauss.gl4_scalar(sf, sj, b_prev, w_prev, h)
                     b_new = b_prev + h
                 else:
                     h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
                         1.0 if vw > 0 else -1.0)
-                    b_new = gauss.gl4_scalar(ff, fj, w_prev, b_prev, h)
+                    b_new = native.fast_step(w_prev, b_prev, h) \
+                        if native is not None else \
+                        gauss.gl4_scalar(ff, fj, w_prev, b_prev, h)
                     w_new = w_prev + h
             except (ZeroDivisionError, FloatingPointError, OverflowError):
                 return pts, "abort_step_failure", switches, (b_prev, w_prev)
@@ -514,6 +548,11 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     for _zone in range(32):
         i_cur = grid_index(b_cur)
         g_cur = kap[min(max(i_cur, 0), n_grid - 1)]
+        # The handoff point can lie just across KAPPA_HI from its nearest
+        # precomputed grid node.  Use the exact scalar gauge too, otherwise
+        # the engine can immediately return enter_shallow while the outer
+        # dispatcher keeps sending it back into the engine.
+        g_cur = max(float(g_cur), _s_depth_gauge_floor(m, b_cur))
         if g_cur >= KAPPA_HI:
             # ---- shallow water: Hadamard fixed point owns it ---------- #
             # grid index always INCREASES toward the target (bg runs
@@ -584,6 +623,86 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     if certs["seam_residuals"]:
         certs["seam_residual"] = max(certs["seam_residuals"])
     diag["stiff_frac"] = float(np.mean(kap >= KAPPA_HI))
+    return Branch("unstable", Y, term, certs, diag)
+
+
+def _slaved_valley_points(m: Model, b0: float, b1: float,
+                          n_grid: int) -> tuple[np.ndarray, str]:
+    b = np.linspace(b0, b1, n_grid)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        A = m.A(b)
+        w = m.a_star_p(b) * m.u_p(b) / (2.0 * A)
+        a = m.a_star(b) + w
+    Y = np.column_stack([a, b])
+    finite = np.isfinite(Y[:, 0]) & np.isfinite(Y[:, 1])
+    if not np.all(finite):
+        last = int(np.argmax(~finite))
+        return Y[:max(last, 1)], "abort_nonfinite"
+    return Y, "box_exit"
+
+
+def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
+                      box=(-50.0, 50.0, -50.0, 50.0),
+                      n_grid: int = 4001,
+                      local_until: float | None = None) -> Branch:
+    """Unstable branch with no finite minimum on that side: valley → box edge.
+
+    This is the pseudo-target case from portrait assembly.  The branch needs
+    an honest eigenvector/ODE launch in the metrological window, then becomes
+    asymptotic to the shallow slaved valley.  The far tail uses the slaved
+    graph to avoid evaluating second-derivative gauges across huge high-degree
+    intervals where only the compute-box exit is being certified.
+    """
+    direction = 1.0 if b_exit > b_saddle else -1.0
+    zones = []
+    seam_residuals = []
+    switches = 0
+
+    b_tail0 = float(b_saddle)
+    prefix = None
+    if local_until is not None:
+        b_local = float(local_until)
+        if direction * (b_local - b_saddle) > 0:
+            if direction * (b_local - b_exit) > 0:
+                b_local = float(b_exit)
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                A = m.A(b_local)
+                a_local = float(m.a_star(b_local)
+                                + m.a_star_p(b_local) * m.u_p(b_local)
+                                / (2.0 * A))
+            if np.isfinite(a_local):
+                local = trace_unstable(
+                    m, b_saddle, (a_local, b_local), box=box,
+                    ds=abs(b_local - b_saddle) / 4000.0)
+                if local.term in ("capture", "box_exit"):
+                    prefix = local.Y
+                    b_tail0 = float(prefix[-1, 1])
+                    switches = int(local.diag.get("switches", 0))
+                    zones.extend(local.diag.get("zones", []))
+                    if direction * (b_exit - b_tail0) > 0:
+                        tail, term = _slaved_valley_points(
+                            m, b_tail0, b_exit, n_grid)
+                        seam_residuals.append(float(np.hypot(
+                            tail[0, 0] - prefix[-1, 0],
+                            tail[0, 1] - prefix[-1, 1])))
+                        Y = np.vstack([prefix, tail[1:]])
+                    else:
+                        Y, term = prefix, "box_exit"
+                else:
+                    prefix = None
+
+    if prefix is None:
+        Y, term = _slaved_valley_points(m, b_saddle, b_exit, n_grid)
+
+    certs = {"angle_energy": angle_energy(m, Y), "endpoint": tuple(Y[-1])}
+    if seam_residuals:
+        certs["seam_residuals"] = seam_residuals
+        certs["seam_residual"] = max(seam_residuals)
+    diag = {"saddle_b": b_saddle, "target": None, "switches": 0,
+            "zones": zones + [("slaved_valley_exit", float(b_tail0),
+                               float(Y[-1, 1]), len(Y))],
+            "stiff_frac": 1.0}
+    diag["switches"] = switches
     return Branch("unstable", Y, term, certs, diag)
 
 

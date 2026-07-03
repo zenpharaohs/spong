@@ -49,6 +49,37 @@ portraits: [docs/gallery/](docs/gallery/).
 Run the fast suite: `PYTHONPATH=src python -m pytest tests` (slow founding
 gates: add `-m slow`).
 
+Random portrait inspection:
+
+    PYTHONPATH=src python -m spong.cli --same --f-degree 5 --count 3 --pause
+
+This writes SVG portraits and JSON certificate summaries under
+`out/random_portraits/`.  With `--pause`, each portrait is opened in the
+default read-only viewer before the command waits for Enter; use
+`--viewer inkscape` explicitly when you want to inspect or edit SVG geometry
+in Inkscape.  Use `--view A_LO A_HI B_LO B_HI` to specify the plane view
+box up front, or type `v` at the pause prompt to render/open a new view box
+for the current portrait.  Add
+`--zoom-close 2` to also write tight metrological zooms around close
+approaches of distinct unstable branches that share a captured minimum.
+Installed environments also get the `spong-random-portrait` console command.
+
+Named zoo portraits:
+
+    PYTHONPATH=src python -m spong.cli --zoo quadratic-stiff --pause
+    PYTHONPATH=src python -m spong.cli --zoo linear-target-d17-thrash --pause
+
+`quadratic-stiff` is the degree-2 `f=g` case discovered at random seed
+`2735729614`: three minima, three saddles, and a bounded unstable branch from
+the lowest saddle down to a far finite minimum.  It is the canonical "you
+thought quadratic would be simple?" portrait and a regression for the
+Hadamard/engine handoff at the shallow-water threshold.
+
+`linear-target-d17-thrash` is the seed `1158725111` case with `deg f = 1` and
+`deg g = 17`.  It is a compact overparameterization example: many finite
+descent routes exist, but the attractor reached can be a local minimum.  It
+also guards the nearly horizontal finite-branch tracer regression.
+
 ## Layout
 
     src/spong/model.py      exact model coefficients; the (b, w) chart      [§1–3]
@@ -58,7 +89,9 @@ gates: add `-m slow`).
     src/spong/atlas.py      Poincaré disk, rim charts, index bookkeeping    [§8]
     src/spong/portrait.py   assembly + certificate ledger                   [§11]
     src/spong/render.py     zoom-proof polylines, contours, disk/plane views
+    src/spong/cli.py        random portrait inspection command
     docs/theorems.md        named theorems and their proof obligations
+    docs/effective_bounds.md near-poles, box contracts, ineffective bounds
     demos/                  descent-method overlays; NOT part of the library
 
 ## Development
