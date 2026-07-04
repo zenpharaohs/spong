@@ -73,12 +73,38 @@ def _inkscape_command() -> list[str] | None:
     return None
 
 
+def _browser_command() -> list[str] | None:
+    for exe in ("msedge", "chrome", "firefox"):
+        found = shutil.which(exe)
+        if found:
+            return [found]
+    if os.name == "nt":
+        for candidate in (
+            Path(os.environ.get("ProgramFiles(x86)", "")) /
+            "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            Path(os.environ.get("ProgramFiles", "")) /
+            "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            Path(os.environ.get("LocalAppData", "")) /
+            "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        ):
+            if candidate.exists():
+                return [str(candidate)]
+    return None
+
+
 def _open_one(path: str, viewer: str = "auto") -> bool:
     inkscape = _inkscape_command()
     if viewer == "inkscape":
         if inkscape is None:
             return False
         cmd = [*inkscape, path]
+    elif viewer == "browser" or (viewer == "auto" and os.name == "nt"):
+        browser = _browser_command()
+        if browser is None:
+            if viewer == "browser":
+                return False
+            return _open_one(path, viewer="open")
+        cmd = [*browser, Path(path).resolve().as_uri()]
     elif viewer == "open" or viewer == "auto":
         if sys.platform == "darwin":
             cmd = ["open", path]
@@ -196,7 +222,7 @@ def _pause_loop(p: portrait.Portrait, out_dir: Path, stem: str,
                 print(f"  invalid view: {exc}")
                 continue
             if not _view_inside_box(view, p.box):
-                print("  recomputing portrait for enlarged compute box...")
+                print("  recomputing portrait for new compute box...")
                 t0 = time.perf_counter()
                 p = portrait.compute(
                     p.model, view=view,
@@ -296,6 +322,8 @@ def random_phase_portrait(args: argparse.Namespace) -> int:
             print(f"  plane: {plane_path}")
         if disk_path:
             print(f"  disk:  {disk_path}")
+        if args.no_stable:
+            print("  stable separatrices skipped (--no-stable)")
         for zi, z in enumerate(zooms):
             print(f"  zoom{zi}: {z['svg']} "
                   f"sep={z['separation']:.3e} view={z['view']}")
@@ -374,6 +402,8 @@ def zoo_phase_portrait(args: argparse.Namespace) -> int:
         print(f"  plane: {plane_path}")
     if disk_path:
         print(f"  disk:  {disk_path}")
+    if args.no_stable:
+        print("  stable separatrices skipped (--no-stable)")
     print(f"  json:  {one_path}")
     if args.auto_open:
         opened = _open_outputs([plane_path, disk_path], viewer=args.viewer)
@@ -403,10 +433,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="open generated SVGs in the default browser/viewer")
     p.add_argument("--no-open", dest="auto_open", action="store_false",
                    help="do not open generated SVGs, even with --pause")
-    p.add_argument("--viewer", choices=("auto", "inkscape", "open"),
+    p.add_argument("--viewer", choices=("auto", "browser", "inkscape", "open"),
                    default="auto",
-                   help=("viewer for --open/--pause: auto/open use the "
-                         "platform default; inkscape is explicit"))
+                   help=("viewer for --open/--pause: auto uses a browser on "
+                         "Windows; open uses the platform default"))
     p.add_argument("--same", action="store_true",
                    help="use g = f")
     p.add_argument("--f-degree", type=int, default=5,

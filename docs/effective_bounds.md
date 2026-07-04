@@ -83,6 +83,40 @@ Current policy:
 This makes the expensive behavior demand-driven: spong only pays for a larger
 box when a finite branch proves the existing box inadequate.
 
+## Display Views and Trace Boxes
+
+The readable picture and the integration domain are not the same object.
+
+The default display view is chosen to show the finite critical skeleton with
+moderate padding.  That is the right first picture for inspection: minima,
+saddles, local separatrix geometry, and branch adjacency should not be pushed
+into a tiny corner by a far excursion.
+
+The trace box must be larger.  A stable separatrix can leave the display view
+and later re-enter it; if tracing stops at the display boundary, the renderer
+has no data for the later visible chord.  Segment clipping can only preserve
+computed curve pieces.  It cannot display manifold history that was never
+traced.
+
+Current policy:
+
+1. Build a display view from the critical-point hull, unless the user supplies
+   `--view`.
+2. Trace against a modestly larger box around that view.
+3. Render by clipping the computed branches back to the display view.
+4. When the user asks for a new interactive view that exceeds the current
+   compute box, recompute the portrait for a new box before rendering.
+
+Thus:
+
+```text
+display view  ⊂  trace box  ⊂  legal maximum box
+```
+
+The distinction matters most for correctness-by-looking.  A small view should
+not silently erase separatrix portions that pass through that view merely
+because those portions lie beyond a too-small integration boundary.
+
 ## Open Problem
 
 Find useful a priori bounds for bounded invariant manifolds in terms of the
