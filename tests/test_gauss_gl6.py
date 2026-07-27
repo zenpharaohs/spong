@@ -160,10 +160,12 @@ def test_guard_threshold_sits_between_healthy_and_singular():
 
     healthy = min(ratio(np.eye(3) - z * A)
                   for z in (-1e2, -1e4, -1e8, -1e12, -1e16))
+    hardest_real = 9.64e-04        # d=17 branch; elevated but solvable
+    assert gauss._STAGE_GUARD < hardest_real
     singular = ratio(np.eye(3) - 4.644371 * A)
     assert singular < gauss._STAGE_GUARD < healthy
     assert healthy / gauss._STAGE_GUARD > 100.0
-    assert gauss._STAGE_GUARD / singular > 100.0
+    assert gauss._STAGE_GUARD / singular > 10.0
 
 
 def test_diagonal_dominance_threshold_covers_the_mild_regime():
@@ -219,3 +221,77 @@ def test_closed_form_matches_lu_with_a_VARYING_stage_jacobian():
                                  / max(float(np.max(np.abs(lu))), 1e-300)))
         assert np.linalg.cond(M) < 1e3
     assert worst < 1e-8
+
+
+# ------------------------------------------------------- dense output (s=3) --
+
+
+@pytest.mark.parametrize("method", ["imm", "gl4", "gl6"])
+def test_dense_output_interpolates_the_step_endpoints(method):
+    """u(0) = y0 and u(1) = y1 for every stage count.
+
+    Special-casing s <= 2 would silently give a 3-stage step the 2-stage
+    polynomial -- wrong nodes and k3 dropped -- and find_event root-finds here.
+    """
+    F = lambda x, y: np.array([-0.7 * y[0] + np.cos(x)])
+    J = lambda x, y: np.array([[-0.7]])
+    st = gauss.step(F, 0.3, np.array([0.9]), 0.25, method=method, jac=J)
+    assert np.allclose(st.dense(0.0), st.y0, atol=1e-14)
+    assert np.allclose(st.dense(1.0), st.y1, atol=1e-13)
+
+
+def test_gl6_dense_output_converges_at_the_collocation_order():
+    """The interpolant is order s+1 = 4, NOT the endpoint order 2s = 6.
+
+    Gauss endpoints are superconvergent; the collocation polynomial between
+    them is not.  Measured ratios ~15.8 per halving (2^4 = 16).  Anything
+    asserting 1e-12 off-node at a working step size is asserting the wrong
+    order, not catching a bug.
+    """
+    lam = -0.6
+    F = lambda x, y: np.array([lam * y[0]])
+    J = lambda x, y: np.array([[lam]])
+    errs = []
+    for h in (0.4, 0.2, 0.1, 0.05):
+        st = gauss.step(F, 0.0, np.array([1.0]), h, method="gl6", jac=J)
+        errs.append(max(abs(float(st.dense(t)[0]) - np.exp(lam * t * h))
+                        for t in (0.17, 0.5, 0.83)))
+    for a, b in zip(errs[:-1], errs[1:]):
+        assert 12.0 < a / b < 20.0                 # order 4
+
+
+def test_gl6_dense_differs_from_the_gl4_polynomial():
+    """Guards the bug directly: if dense() fell through to the 2-stage branch
+    the 3-stage interpolant would coincide with a 2-node/2-stage evaluation."""
+    F = lambda x, y: np.array([np.sin(3.0 * x) - 0.4 * y[0]])
+    J = lambda x, y: np.array([[-0.4]])
+    st6 = gauss.step(F, 0.0, np.array([1.0]), 0.5, method="gl6", jac=J)
+    c1, c2 = gauss._GL2_C
+    th = 0.37
+    w1 = (th**2 / 2 - c2 * th) / (c1 - c2)
+    w2 = (th**2 / 2 - c1 * th) / (c2 - c1)
+    wrong = st6.y0 + st6.h * (w1 * st6.K[0] + w2 * st6.K[1])
+    assert abs(float(st6.dense(th)[0]) - float(wrong[0])) > 1e-6
+
+
+# ---------------------------------------------------------- native parity --
+
+
+def test_native_and_python_agree_on_the_gl6_default():
+    """The C kernel and the Python fallback must be the SAME method: if the
+    extension shipped GL4 while Python ran GL6, behaviour would depend on
+    whether the .so was built."""
+    _native = pytest.importorskip("spong._native")
+    from fractions import Fraction as F_
+    from spong import charts, model
+
+    f = [F_(1), F_(1), F_(1, 2)]
+    m = model.build(f, f, model.moments_uniform01(9))
+    k = m._native_kernel
+    if k is None:
+        pytest.skip("native kernel not built")
+    sf, sj = charts.slow_rhs_s(m)
+    for b0, w0, h in ((0.4, 0.05, 1e-3), (-0.7, -0.02, 5e-4), (1.1, 0.01, 2e-3)):
+        native = k.slow_step(b0, w0, h)
+        py = gauss.gl6_scalar(sf, sj, b0, w0, h)
+        assert abs(native - py) <= 1e-12 * max(abs(py), 1e-9)

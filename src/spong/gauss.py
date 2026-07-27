@@ -48,16 +48,28 @@ _TABLEAU = {
     "gl6": (_GL3_C, _GL3_A, _GL3_B),
 }
 
+# stage nodes by stage count, for the dense-output collocation polynomial
+_STAGES = {len(c): c for c, _, _ in _TABLEAU.values()}
+
 _NEWTON_TOL = 1e-13
 _NEWTON_MAX = 30
 
 # Ill-conditioning trip for the closed-form stage solve, as a Hadamard-style
-# ratio |det M| / prod(row inf-norms).  Measured: the ratio saturates at
-# 0.4159 for ANY dissipative stiffness (= 1/(120*prod_i max_j|a_ij|), matched
-# exactly), worst case 0.4009 over random varying-D, versus 2.9e-08 at a true
-# singularity.  Seven orders of separation; cond ~ 4-8/ratio, so this trips at
-# cond ~ 5e3 -- unreachable dissipatively, well before any loss of accuracy.
-_STAGE_GUARD = 1e-3
+# ratio |det M| / prod(row inf-norms).  Calibrated on REAL traces, not on a
+# synthetic dissipative sweep -- that mistake set this to 1e-3 and aborted a
+# legitimate d=17 branch (test_linear_vs_d17_horizontal_branch...) whose
+# marginal region reaches 9.64e-04.  The three empirical points:
+#
+#   0.4159  saturation for ANY dissipative stiffness, = 1/(120*prod_i
+#           max_j|a_ij|) exactly; also the minimum over 9173 stage matrices
+#           sampled from real straddling-suite traces
+#   9.6e-04 hardest real trace seen (d=17 at |b| ~ 10.4): cond ~ 5e3, i.e.
+#           still ~1e-12 accurate -- ELEVATED, not broken; must not trip
+#   2.9e-08 a genuine Pade-root singularity: cond ~ 2.7e+08
+#
+# The guard must separate breakdown from mere elevation, so it belongs between
+# the last two, not above them.  cond ~ 4-8/ratio, so 1e-6 trips at cond ~5e6.
+_STAGE_GUARD = 1e-6
 
 
 def _fd_jac(F, x, y, f0):
@@ -116,21 +128,33 @@ class Step:
     def dense(self, theta):
         """Collocation polynomial at x + theta*h, theta in [0, 1].
 
-        s = 1: u = y0 + h·θ·k1 (linear).
-        s = 2: u = y0 + h[(θ²/2 − c2θ)k1/(c1−c2) + (θ²/2 − c1θ)k2/(c2−c1)].
+        u(x + θh) = y0 + h · Σ_i ℓ_i(θ) k_i,  ℓ_i(θ) = ∫₀^θ L_i(τ) dτ
+
+        with L_i the Lagrange basis on the stage nodes — the quadrature that
+        defines the step also defines the interpolant.  Written for ANY stage
+        count: s = 1 gives the linear form, s = 2 the quadratic one, and s = 3
+        (GL6) its own cubic.  Special-casing s ≤ 2 here would silently hand a
+        3-stage step the 2-stage polynomial, which uses the wrong nodes AND
+        drops k₃ — and `find_event` root-finds on this.
         """
         th = np.asarray(theta, dtype=float)
-        if self.K.shape[0] == 1:
-            return self.y0 + self.h * np.multiply.outer(th, self.K[0])
-        c1, c2 = _GL2_C
-        w1 = (th**2 / 2 - c2 * th) / (c1 - c2)
-        w2 = (th**2 / 2 - c1 * th) / (c2 - c1)
-        return (self.y0 + self.h *
-                (np.multiply.outer(w1, self.K[0])
-                 + np.multiply.outer(w2, self.K[1])))
+        s = self.K.shape[0]
+        c = _STAGES[s]
+        acc = None
+        for i in range(s):
+            # ∏_{j≠i}(τ − c_j) / ∏_{j≠i}(c_i − c_j), integrated from 0 to θ
+            roots = [c[j] for j in range(s) if j != i]
+            num = np.poly(roots) if roots else np.array([1.0])
+            den = np.prod([c[i] - c[j] for j in range(s) if j != i]) \
+                if roots else 1.0
+            integ = np.polyint(num)                    # ℓ_i, constant term 0
+            wi = np.polyval(integ, th) / den
+            term = np.multiply.outer(wi, self.K[i])
+            acc = term if acc is None else acc + term
+        return self.y0 + self.h * acc
 
 
-def step(F, x, y, h, method="gl4", jac=None) -> Step:
+def step(F, x, y, h, method="gl6", jac=None) -> Step:
     """One anadromic Gauss step.  method: 'imm' (2), 'gl4' (4), 'gl6' (6)."""
     y = np.atleast_1d(np.asarray(y, dtype=float))
     try:
@@ -307,7 +331,7 @@ class Trajectory:
         return self.steps[-1].y1
 
 
-def solve(F, x0, x1, y0, n, method="gl4", jac=None) -> Trajectory:
+def solve(F, x0, x1, y0, n, method="gl6", jac=None) -> Trajectory:
     """Fixed-step integration of y' = F(x, y) over [x0, x1] with n steps."""
     h = (x1 - x0) / n
     y = np.atleast_1d(np.asarray(y0, dtype=float))
@@ -321,7 +345,7 @@ def solve(F, x0, x1, y0, n, method="gl4", jac=None) -> Trajectory:
     return Trajectory(tuple(out))
 
 
-def reversal_gap(F, x0, x1, y0, n, method="gl4", jac=None) -> float:
+def reversal_gap(F, x0, x1, y0, n, method="gl6", jac=None) -> float:
     """Anadromy certificate: forward n steps, backward n steps, return error.
 
     For a symmetric method this is Newton-tolerance + roundoff, NOT a
@@ -371,7 +395,7 @@ class RichardsonResult:
     converged: bool
 
 
-def solve_richardson(F, x0, x1, y0, tol, method="gl4", jac=None,
+def solve_richardson(F, x0, x1, y0, tol, method="gl6", jac=None,
                      n0=8, max_doublings=14) -> RichardsonResult:
     """House step-size doctrine: n, 2n, 4n, ... with Aitken extrapolation at
     the endpoint; stop when successive extrapolants agree within tol.

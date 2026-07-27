@@ -12,6 +12,9 @@ typedef struct {
 } Kernel;
 
 static const double SQRT3 = 1.73205080756887729352744634150587237;
+static const double SQRT15 = 3.87298334620741688517926539978239961;
+/* ill-conditioning trip for the closed-form stage solve; see gauss.py */
+static const double STAGE_GUARD = 1e-6;
 static const double NEWTON_TOL = 1e-13;
 static const int NEWTON_MAX = 30;
 
@@ -177,7 +180,111 @@ static double gl4_step(Kernel *k, FJ fj, double x, double y, double h) {
     return y + h * 0.5 * (K1 + K2);
 }
 
+/* 3-stage Gauss (IRK6-GL), closed-form 3x3 stage Newton by adjugate.
+ *
+ * Safe rather than merely convenient: det(I - zA) is the (3,3) Pade
+ * denominator of exp, whose roots all have Re z > 0 (A-stability), so for
+ * dissipative h*lambda the stage matrix cannot be singular and |det| GROWS
+ * like |z|^3/120.  cond_2 saturates at 10.44 (frozen D) / 24.6 (varying D),
+ * flat to |z| = 1e14.  Entries are essentially exact, so small backward error
+ * IS small forward error and no refinement is needed; the only guard required
+ * is the ill-conditioning trip below.  Must stay bit-comparable with
+ * gauss.gl6_scalar -- tests/test_native_parity.py pins that. */
+static double gl6_step(Kernel *k, FJ fj, double x, double y, double h) {
+    const double c1 = 0.5 - SQRT15 / 10.0;
+    const double c2 = 0.5;
+    const double c3 = 0.5 + SQRT15 / 10.0;
+    const double a11 = 5.0 / 36.0;
+    const double a12 = 2.0 / 9.0 - SQRT15 / 15.0;
+    const double a13 = 5.0 / 36.0 - SQRT15 / 30.0;
+    const double a21 = 5.0 / 36.0 + SQRT15 / 24.0;
+    const double a22 = 2.0 / 9.0;
+    const double a23 = 5.0 / 36.0 - SQRT15 / 24.0;
+    const double a31 = 5.0 / 36.0 + SQRT15 / 30.0;
+    const double a32 = 2.0 / 9.0 + SQRT15 / 15.0;
+    const double a33 = 5.0 / 36.0;
+    double x1 = x + c1 * h;
+    double x2 = x + c2 * h;
+    double x3 = x + c3 * h;
+    double K1 = fj(k, x, y, NULL);
+    double K2 = K1;
+    double K3 = K1;
+    for (int it = 0; it < NEWTON_MAX; it++) {
+        double Y1 = y + h * (a11 * K1 + a12 * K2 + a13 * K3);
+        double Y2 = y + h * (a21 * K1 + a22 * K2 + a23 * K3);
+        double Y3 = y + h * (a31 * K1 + a32 * K2 + a33 * K3);
+        double r1 = K1 - fj(k, x1, Y1, NULL);
+        double r2 = K2 - fj(k, x2, Y2, NULL);
+        double r3 = K3 - fj(k, x3, Y3, NULL);
+        double m = fabs(K1);
+        if (fabs(K2) > m) m = fabs(K2);
+        if (fabs(K3) > m) m = fabs(K3);
+        double r = fabs(r1);
+        if (fabs(r2) > r) r = fabs(r2);
+        if (fabs(r3) > r) r = fabs(r3);
+        if (r < NEWTON_TOL * (1.0 + m)) {
+            break;
+        }
+        double J1, J2, J3;
+        (void)fj(k, x1, Y1, &J1);
+        (void)fj(k, x2, Y2, &J2);
+        (void)fj(k, x3, Y3, &J3);
+        double m11 = 1.0 - h * a11 * J1;
+        double m12 = -h * a12 * J1;
+        double m13 = -h * a13 * J1;
+        double m21 = -h * a21 * J2;
+        double m22 = 1.0 - h * a22 * J2;
+        double m23 = -h * a23 * J2;
+        double m31 = -h * a31 * J3;
+        double m32 = -h * a32 * J3;
+        double m33 = 1.0 - h * a33 * J3;
+        double C11 = m22 * m33 - m23 * m32;
+        double C12 = -(m21 * m33 - m23 * m31);
+        double C13 = m21 * m32 - m22 * m31;
+        double det = m11 * C11 + m12 * C12 + m13 * C13;
+        double C21 = -(m12 * m33 - m13 * m32);
+        double C22 = m11 * m33 - m13 * m31;
+        double C23 = -(m11 * m32 - m12 * m31);
+        double C31 = m12 * m23 - m13 * m22;
+        double C32 = -(m11 * m23 - m13 * m21);
+        double C33 = m11 * m22 - m12 * m21;
+        /* ill-conditioning guard: Hadamard-style ratio, free here */
+        double n1 = fabs(m11);
+        if (fabs(m12) > n1) n1 = fabs(m12);
+        if (fabs(m13) > n1) n1 = fabs(m13);
+        double n2 = fabs(m21);
+        if (fabs(m22) > n2) n2 = fabs(m22);
+        if (fabs(m23) > n2) n2 = fabs(m23);
+        double n3 = fabs(m31);
+        if (fabs(m32) > n3) n3 = fabs(m32);
+        if (fabs(m33) > n3) n3 = fabs(m33);
+        if (fabs(det) < STAGE_GUARD * n1 * n2 * n3) {
+            return NAN;         /* caller rejects the step */
+        }
+        K1 -= (C11 * r1 + C21 * r2 + C31 * r3) / det;
+        K2 -= (C12 * r1 + C22 * r2 + C32 * r3) / det;
+        K3 -= (C13 * r1 + C23 * r2 + C33 * r3) / det;
+    }
+    return y + h * (5.0 / 18.0 * K1 + 4.0 / 9.0 * K2 + 5.0 / 18.0 * K3);
+}
+
 static PyObject *Kernel_slow_step(Kernel *self, PyObject *args) {
+    double x, y, h;
+    if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
+        return NULL;
+    }
+    return PyFloat_FromDouble(gl6_step(self, slow_fj, x, y, h));
+}
+
+static PyObject *Kernel_fast_step(Kernel *self, PyObject *args) {
+    double x, y, h;
+    if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
+        return NULL;
+    }
+    return PyFloat_FromDouble(gl6_step(self, fast_fj, x, y, h));
+}
+
+static PyObject *Kernel_slow_step_gl4(Kernel *self, PyObject *args) {
     double x, y, h;
     if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
         return NULL;
@@ -185,7 +292,7 @@ static PyObject *Kernel_slow_step(Kernel *self, PyObject *args) {
     return PyFloat_FromDouble(gl4_step(self, slow_fj, x, y, h));
 }
 
-static PyObject *Kernel_fast_step(Kernel *self, PyObject *args) {
+static PyObject *Kernel_fast_step_gl4(Kernel *self, PyObject *args) {
     double x, y, h;
     if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
         return NULL;
@@ -208,9 +315,13 @@ static PyObject *Kernel_velocities(Kernel *self, PyObject *args) {
 
 static PyMethodDef Kernel_methods[] = {
     {"slow_step", (PyCFunction)Kernel_slow_step, METH_VARARGS,
-     "One scalar GL4 slow-chart step."},
+     "One scalar GL6 slow-chart step (the default)."},
     {"fast_step", (PyCFunction)Kernel_fast_step, METH_VARARGS,
-     "One scalar GL4 fast-chart step."},
+     "One scalar GL6 fast-chart step (the default)."},
+    {"slow_step_gl4", (PyCFunction)Kernel_slow_step_gl4, METH_VARARGS,
+     "One scalar GL4 slow-chart step (kept for parity tests)."},
+    {"fast_step_gl4", (PyCFunction)Kernel_fast_step_gl4, METH_VARARGS,
+     "One scalar GL4 fast-chart step (kept for parity tests)."},
     {"velocities", (PyCFunction)Kernel_velocities, METH_VARARGS,
      "Descent velocities in the deviation chart."},
     {NULL, NULL, 0, NULL}

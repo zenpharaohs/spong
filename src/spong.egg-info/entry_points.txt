@@ -1,0 +1,2 @@
+[console_scripts]
+spong-random-portrait = spong.cli:main

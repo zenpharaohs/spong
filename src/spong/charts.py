@@ -465,14 +465,14 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                         1.0 if vb > 0 else -1.0)
                     w_new = native.slow_step(b_prev, w_prev, h) \
                         if native is not None else \
-                        gauss.gl4_scalar(sf, sj, b_prev, w_prev, h)
+                        gauss.gl6_scalar(sf, sj, b_prev, w_prev, h)
                     b_new = b_prev + h
                 else:
                     h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
                         1.0 if vw > 0 else -1.0)
                     b_new = native.fast_step(w_prev, b_prev, h) \
                         if native is not None else \
-                        gauss.gl4_scalar(ff, fj, w_prev, b_prev, h)
+                        gauss.gl6_scalar(ff, fj, w_prev, b_prev, h)
                     w_new = w_prev + h
             except (ZeroDivisionError, FloatingPointError, OverflowError):
                 return pts, "abort_step_failure", switches, (b_prev, w_prev)

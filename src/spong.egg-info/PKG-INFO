@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: spong
+Version: 0.0.1
+Summary: Certified phase portraits of gradient descent on the MSE loss of a single scalar polynomial neuron
+Requires-Python: >=3.10
+Requires-Dist: numpy
+Provides-Extra: render
+Requires-Dist: matplotlib; extra == "render"
