@@ -897,3 +897,42 @@ the ladder, not just the final trajectory.
 stiffness: GL6 above roughly 1e-10, GL4 below.  That favours GL6 where spong
 actually operates — plotting tolerance is loose, but the founding gates demand
 `angle_energy < 1e-12` and seam residuals land at ~1e-12.
+
+### KAPPA_HI: the question dissolved
+
+Both earlier sweeps (raise it / lower it) are now STALE — they were run against
+a 2nd-order transform with a 1st-order edge and a GL4 engine.  With
+`edge_order=2`, the 4th-order transform stencil and IRK6-GL as default, the
+147-case suite gives:
+
+| `KAPPA_HI` | med seam | max seam | med \|E\| | \|E\|>1 |
+|---|--:|--:|--:|--:|
+| 1e6 | 1.95e-16 | **2.22e-10** | 2.70e-09 | 0 |
+| 1e5 | 1.04e-15 | 2.27e-10 | 6.89e-09 | 0 |
+| **1e4 (current)** | 3.58e-16 | 5.95e-10 | **1.39e-09** | 0 |
+| 1e3 | 7.48e-16 | 9.11e-08 | 3.17e-08 | 0 |
+| 3e2 | 5.53e-16 | 1.79e-06 | 3.17e-08 | 0 |
+| 1e2 | 8.47e-17 | 1.84e-05 | 5.93e-08 | 0 |
+| 3e1 | 1.10e-23 | 3.03e+00 | 1.05e-06 | 1 |
+
+**The trade reversed and then mostly vanished.**  Lowering to 3e2 used to buy
+four orders of median seam at 23x median |E|; now lowering makes the max seam
+monotonically WORSE (5.95e-10 -> 1.79e-06 -> 3.03) because the engine is no
+longer the weak party.  **Leave `KAPPA_HI = 1e4`**: best median |E| by 2x, max
+seam within 2.7x of the best, no failures.  Raising to 1e6 trades 2.7x of max
+seam for 2x worse median |E| — a wash.
+
+**What actually fixed the handoff, at the UNCHANGED threshold:**
+
+| | med seam | max seam |
+|---|--:|--:|
+| GL4, `edge_order=1` | 4.61e-12 | 2.85e-06 |
+| + `edge_order=2` | 1.81e-12 | 2.85e-06 |
+| + 4th-order transform stencil | 1.79e-12 | 2.85e-06 |
+| **+ IRK6-GL default** | **3.58e-16** | **5.95e-10** |
+
+Max seam 4800x better, median seam 13000x, with `KAPPA_HI` untouched.  The
+handoff was never a threshold-PLACEMENT problem; both methods were simply
+under-resolved at the seam.  That is why every tuning sweep was ambiguous —
+raising and lowering each looked defensible and neither helped much, because
+the knob being turned was not the one that mattered.
