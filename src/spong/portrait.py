@@ -201,6 +201,9 @@ def build_ledger(p: Portrait, gen: dict) -> dict:
             "term": br.term,
             "n_points": int(len(br.Y)),
             "angle_energy[RESIDUAL]": br.certs.get("angle_energy"),
+            "angle_resolved": br.certs.get("angle_resolved"),
+            "angle_unresolved": br.certs.get("angle_unresolved"),
+            "backbone_residual[RESIDUAL]": br.certs.get("backbone_residual"),
             "max_turn_deg[RESIDUAL]": _max_turn_deg(br.Y),
         }
         if "seam_residual" in br.certs:

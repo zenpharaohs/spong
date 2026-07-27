@@ -34,6 +34,13 @@ def test_tricky_branch_parity(tricky_portrait):
         assert b["term"] == "capture"
         assert b["adjacency[RESIDUAL,thm-backed]"]
         assert b["angle_energy[RESIDUAL]"] < 1e-12
+        # ...and it must have measured something: angle_energy skips vertices
+        # whose grad L direction is below the digit budget, so E alone cannot
+        # distinguish a clean pass from a vacuous one.  Whatever it skipped is
+        # certified algebraically instead (out there the branch IS a* = B/A).
+        assert b["angle_resolved"] > 1500
+        if b["angle_unresolved"]:
+            assert b["backbone_residual[RESIDUAL]"] < 1e-8
 
 
 def test_adjacency_everywhere(tricky_portrait):

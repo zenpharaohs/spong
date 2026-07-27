@@ -334,3 +334,56 @@ exact, entered on a computable criterion.  Note what it does NOT require —
 `C_inf`, the leading form, or any asymptotic expansion.  Those describe the
 *time parameterization* `bdot = -C_inf/b^2`, which the portrait never needs,
 since the drawn object is the curve, not its schedule.
+
+## Resolution: two certificates, not a smaller box
+
+The founding parity gate is fixed, and NOT by truncating the trace.  Measurement
+ruled the simpler options out one at a time.
+
+**Grading the guard alone cannot work.**  Along the escaping branch the digit
+ratio `R = |grad L| / g_floor` runs 7.7 digits at b = -3 down to 0.3 at b = -11,
+and its MAXIMUM anywhere on the branch is 7.8 digits.  Holding `E < 1e-12` over
+~4000 vertices needs per-vertex noise below ~2.5e-16, i.e. `R >~ 1e8` — and a
+budget of 1e8 skips 100% of the vertices.  Any budget strict enough to silence
+the noise returns E = 0 by measuring nothing: a vacuous pass, worse than a
+failure.
+
+**Truncating the box is unnecessary.**  The two certificates run in OPPOSITE
+directions:
+
+| b | R (digits) | \|w_s/a*\| |
+|---|--:|--:|
+| -3.01 | 4.95e+07 (7.7) | 7.71e-11 |
+| -4.01 | 1.78e+06 (6.3) | 7.62e-14 |
+| -5.01 | 8.64e+04 (4.9) | **2.36e-16** |
+| -6.99 | 8.91e+02 (2.9) | 4.19e-20 |
+| -11.00 | 1.78 (0.3) | 3.44e-25 |
+
+The geometric certificate (`angle_energy`) decays outward; the algebraic one
+(`backbone_residual` = max |w|/|a*|, i.e. "the branch IS a* = B/A") improves
+outward.  They cross around b ~ -4.5, where BOTH are strong.  So the branch is
+certified in two pieces and can still be DRAWN to the wider box — which also
+leaves the Windows re-entry-chord fix intact.
+
+**The digit budget was measured, not chosen.**  `ANGLE_DIGIT_BUDGET = 1e3`:
+
+| K | E(resolved) | used | cut at b |
+|---|--:|--:|--:|
+| 1 (old cliff) | 2.007e-08 | 3999 | -11.049 |
+| 1e2 | 3.465e-12 | 2627 | -8.196 |
+| **1e3** | **3.414e-14** | 2018 | **-6.931** |
+| 1e4 | 3.450e-16 | 1504 | -5.863 |
+
+At 1e3 it reproduces the historical passing gate almost exactly — E = 3.414e-14
+cutting at b = -6.931, against 3.704e-14 for the pre-inflation box edge at
+b = -7.069.  **The principle explains the accident**: that box happened to stop
+right where the direction still carried ~3 digits.
+
+**Result on the gate.**  The escaping branch reports E = 3.414e-14 over 2018
+resolved vertices with 1981 unresolved (49.5%), and those are covered by
+`backbone_residual = 1.67e-10`.  The other tricky branch is 100% resolved with
+`backbone_residual = 0.12` — correctly NOT the backbone, which is what keeps the
+algebraic certificate from being vacuous.  Portrait-wide only 3.9% of vertices
+are unresolved.  `angle_resolved` / `angle_unresolved` /
+`backbone_residual[RESIDUAL]` are now ledger fields, and the founding gate
+asserts them, so it can never pass by measuring nothing.

@@ -42,6 +42,12 @@ R_SWITCH = 20.0         # velocity-ratio chart handoff threshold
 MAX_SWITCHES = 12
 TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
 
+# Minimum significant digits the DIRECTION of grad L must carry for a vertex to
+# contribute to angle_energy.  R = |grad L| / g_floor; below this the vertex
+# reports evaluation noise as geometry.  Measured choice -- see
+# angle_energy_detail.
+ANGLE_DIGIT_BUDGET = 1e3
+
 
 # --------------------------------------------------------------------- #
 # soundings, velocities, launch data                                     #
@@ -517,18 +523,41 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
 # --------------------------------------------------------------------- #
 
 
-def angle_energy(m: Model, Y: np.ndarray) -> float:
-    """E = Σ ½‖d_⊥‖²: the discrete integral-curve certificate (E = 0 ⟺
-    the polyline chords are everywhere parallel to ∇L).
+def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None):
+    """(E, n_resolved, n_unresolved) — angle energy over resolved vertices.
 
-    Noise-floor aware (§4 doctrine): each gradient component is a
-    cancellation of terms whose magnitudes set an evaluation floor
-    ~eps·(term scale); where ‖∇L‖ sits below that floor its DIRECTION is
-    numerically meaningless and the vertex is skipped — otherwise the
-    certificate measures its own evaluation noise, not the curve (seen
-    on far valley stretches where |∇L| ~ C_inf/b²).
+    E = Σ ½‖d_⊥‖² is the discrete integral-curve certificate (E = 0 ⟺ the
+    chords are everywhere parallel to ∇L).  Each gradient component is a
+    cancellation whose magnitude sets an evaluation floor ~eps·(term scale),
+    so R = ‖∇L‖ / g_floor is how many significant digits the DIRECTION of ∇L
+    carries.  A vertex is skipped when R < `digits`.
+
+    The guard used to fire only at R < 1, a cliff that never triggers: the
+    direction degrades CONTINUOUSLY (measured 7.7 digits at b = −3 falling to
+    0.3 at b = −11 on the tricky portrait's escaping branch), so a certificate
+    reading R ≈ 6 reports its own evaluation noise as curve geometry.  That is
+    what broke the founding parity gate when the compute box was widened —
+    99.7% of the reported 2.007e-08 came from b < −9, and 0 of 3999 vertices
+    were skipped.
+
+    `ANGLE_DIGIT_BUDGET = 1e3` (3 digits) chosen by measurement, not taste:
+    it reproduces the historical passing gate almost exactly (E = 3.414e-14
+    cutting at b = −6.931, against 3.704e-14 for the pre-inflation box edge at
+    b = −7.069).  The principle explains the accident — that box happened to
+    stop right where the direction still had ~3 digits.
+
+    n_unresolved MUST be reported: a budget strict enough to silence all noise
+    would skip every vertex and return E = 0, which is a vacuous pass, not a
+    clean one.  Beyond the resolved region the branch is certified
+    ALGEBRAICALLY instead — out there it IS the backbone a*(b), with
+    |w_s/a*| ~ 3.4e-25.  The two certificates run in opposite directions
+    (geometric decays outward, algebraic improves outward) and overlap around
+    b ≈ −4.5, where both are strong.
     """
+    K = ANGLE_DIGIT_BUDGET if digits is None else digits
     E = 0.0
+    used = 0
+    skipped = 0
     eps = np.finfo(float).eps
     for k in range(1, len(Y) - 1):
         a, b = Y[k, 0], Y[k, 1]
@@ -539,12 +568,38 @@ def angle_energy(m: Model, Y: np.ndarray) -> float:
         scale_a = 2.0 * (abs(a) * m.A(b) + abs(m.B(b)))
         scale_b = 2.0 * abs(a) * abs(m.Bp(b)) + a * a * abs(m.Ap(b))
         g_floor = 16.0 * eps * float(np.hypot(scale_a, scale_b))
-        if ng < max(1e-12, g_floor) or nd < 1e-14:
+        if ng < max(1e-12, K * g_floor) or nd < 1e-14:
+            skipped += 1
             continue
         gh = g / ng
         dp = d - (gh @ d) * gh
         E += 0.5 * float(dp @ dp)
-    return E
+        used += 1
+    return E, used, skipped
+
+
+def angle_energy(m: Model, Y: np.ndarray) -> float:
+    """E over the resolved vertices; see `angle_energy_detail` for the counts
+    (which callers need — E alone cannot distinguish clean from vacuous)."""
+    return angle_energy_detail(m, Y)[0]
+
+
+def backbone_residual(m: Model, Y: np.ndarray) -> float:
+    """max |w| / |a*| over the polyline — the ALGEBRAIC certificate.
+
+    Where the geometric certificate runs out of digits the branch has become
+    the backbone a* = B/A, an exact rational function, so 'is this the
+    invariant manifold' is answerable without any chord geometry.  This
+    certificate IMPROVES outward, exactly where `angle_energy` decays.
+    """
+    worst = 0.0
+    for a, b in Y:
+        astar = float(m.a_star(b))
+        denom = abs(astar)
+        if denom < 1e-300:
+            continue
+        worst = max(worst, abs(float(a) - astar) / denom)
+    return worst
 
 
 def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
@@ -686,7 +741,11 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
         term = "abort_zone_limit"
 
     Y = np.array(pts)
-    certs["angle_energy"] = angle_energy(m, Y)
+    _E, _used, _skip = angle_energy_detail(m, Y)
+    certs["angle_energy"] = _E
+    certs["angle_resolved"] = _used
+    certs["angle_unresolved"] = _skip
+    certs["backbone_residual"] = backbone_residual(m, Y)
     certs["endpoint"] = tuple(Y[-1])
     if certs["seam_residuals"]:
         certs["seam_residual"] = max(certs["seam_residuals"])
@@ -762,7 +821,11 @@ def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
     if prefix is None:
         Y, term = _slaved_valley_points(m, b_saddle, b_exit, n_grid)
 
-    certs = {"angle_energy": angle_energy(m, Y), "endpoint": tuple(Y[-1])}
+    _E, _used, _skip = angle_energy_detail(m, Y)
+    certs = {"angle_energy": _E, "angle_resolved": _used,
+             "angle_unresolved": _skip,
+             "backbone_residual": backbone_residual(m, Y),
+             "endpoint": tuple(Y[-1])}
     if seam_residuals:
         certs["seam_residuals"] = seam_residuals
         certs["seam_residual"] = max(seam_residuals)
@@ -798,5 +861,9 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
     pts, term, sw, _ = _continue_curve(m, b0, w0, -1, [], box, ds,
                                        ds0=abs(delta))
     Y = np.array([(a_s, b_saddle)] + pts)
-    certs = {"angle_energy": angle_energy(m, Y), "endpoint": tuple(Y[-1])}
+    _E, _used, _skip = angle_energy_detail(m, Y)
+    certs = {"angle_energy": _E, "angle_resolved": _used,
+             "angle_unresolved": _skip,
+             "backbone_residual": backbone_residual(m, Y),
+             "endpoint": tuple(Y[-1])}
     return Branch("stable", Y, term, certs, {"switches": sw})
