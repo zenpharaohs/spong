@@ -936,3 +936,48 @@ handoff was never a threshold-PLACEMENT problem; both methods were simply
 under-resolved at the seam.  That is why every tuning sweep was ambiguous —
 raising and lowering each looked defensible and neither helped much, because
 the knob being turned was not the one that mattered.
+
+### Due diligence: IRK8-GL, and why GL6 is the stopping point
+
+Not expected to help much, checked anyway so the choice is measured.  The
+4-stage tableau was built programmatically from the Gauss-Legendre nodes
+(`a_ij = int_0^{c_i} L_j`), verified against the hardcoded gl4/gl6 tableaux to
+1.1e-16 — so this is the real method, not an approximation of it.
+
+**The theory carries over, with worse constants.**
+
+| | GL6 (3-stage) | GL8 (4-stage) |
+|---|--:|--:|
+| classical / stage order | 6 / 3 | 8 / 4 |
+| `det(I−zA)` = Pade denominator | 3e-15 | 3e-15 |
+| Pade roots (need Re>0) | 4.64, 3.68±3.51i | 4.21±5.32i, 5.79±1.73i |
+| cond_2 saturation | **10.44** | 18.20 |
+| diagonal-dominance threshold | **1.64** | 1.32 |
+| Tier-0 cost / step | 2.01x gl4 | 4.35x gl4 (**2.16x gl6**) |
+
+**And the net effect is small.**  Step counts from the Richardson ladder,
+divided by the Tier-0 cost per step:
+
+| case | gl6 n | gl8 n | steps saved | cost/step | gl8 net |
+|---|--:|--:|--:|--:|--:|
+| osc omega=2, 1e-12 | 128 | 64 | 2.0x | 2.16x | **0.93x** |
+| stiff nonlinear, 1e-12 | 256 | 128 | 2.0x | 2.16x | **0.93x** |
+| osc omega=8, 1e-12 | 512 | 128 | 4.0x | 2.16x | 1.85x |
+| every case, 1e-14 | — | — | 4.0x | 2.16x | 1.85x |
+
+GL8 ranges from a slight LOSS to a 1.85x win, against the ~10x GL6 delivered
+over GL4.  In log terms GL4->GL6 buys ~3.3 doublings of speed and GL6->GL8 buys
+~0.9: **GL6 captures ~78% of what is available**, and the rest only appears at
+1e-14, tighter than any gate spong states.
+
+Two structural costs on top: a 4x4 adjugate is 16 cofactors each a 3x3
+determinant, so the closed-form story degrades to unpivoted LU (on a matrix
+whose dominance threshold is now 1.32); and it would mean a second C
+implementation to keep in step with the Python one.  One thing that would carry
+free: `Step.dense()` is written for any stage count, so a 4-stage interpolant
+needs no new code.
+
+**Conclusion: stop at GL6.**  Not implemented.  Ladder step counts are quantized
+to powers of two, which is why GL8's savings appear as 2x or 4x rather than the
+smooth `(1/6 - 1/8)` exponent gap — worth remembering if the ladder ever gains
+finer refinement, since that would modestly improve GL8's side of this table.
