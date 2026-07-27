@@ -252,6 +252,79 @@ that the prescription controls *where* a critical point is, not *which kind* —
 in this family the prescribed point consistently became the far minimum, with
 the saddle staying near b = −1.066.
 
+## The transition-straddling suite
+
+`straddling_suite` generates the cases that actually stress the instrument.
+Three things had to be got right, two of them the hard way.
+
+**Screening must be hysteretic.**  The engine enters shallow water at
+`KAPPA_HI` and leaves only below `KAPPA_EXIT`, so a gauge that pokes above 1e4
+and falls back to 5e3 never leaves the fixed point.  Counting raw crossings of
+`KAPPA_HI` predicts nothing: over 120 traced candidates the median switch count
+was **0 in every raw-crossing group**, and crossings correlated with the seam
+at r = −0.32 — the wrong sign.  `hysteretic_zones` reproduces the engine's
+state machine instead.
+
+**Even hysteretic screening on a b-grid misses the worst case.**  The gauge is
+sampled along the straight span, but the engine follows the *trajectory* and
+can run **backward** in b inside a shallow zone.  The worst case found —
+`g4`, `b* = 20480` — screens as **zero** transitions and actually produces four
+zones, one switch, a seam residual of **3.42** and an angle energy of **32.2**,
+while still reporting `term = capture`.  A suite built on prediction alone
+omits precisely the case it most needs, so `straddling_suite(verify_all=True)`
+traces every candidate and ranks on what the engine did.  `StraddleCase.
+mispredicted` flags the disagreement.
+
+**Anatomy of that failure.**  Zones:
+
+    engine(−1.72 → 4.67) → shallow(4.67 → 3.38) → engine(3.38 → 8.50) → shallow(8.50 → 20480)
+
+The second zone runs **backward**: entered at 4.67, the fixed point converged
+to 3.38, behind where it started — the ping-pong the `depth_gauge_floor`
+docstring warns about.  The engine then re-runs the same territory and hands
+off again at 8.50, and that seam is the O(1) one.  The cause is visible in the
+gauge profile: it goes **813 → 2e16 with nothing in the hysteresis band**
+(`fraction inside [1e3, 1e4) = 0.000`), so the handoff is necessarily made at a
+point where neither representation has been validated.
+
+## Improving the handoff: what the suite says
+
+Lowering the thresholds fixes that case spectacularly — at `KAPPA_HI = 1e2` its
+seam goes 3.42 → 5.09e−17, sixteen orders, with one zone and no switches, and
+raising them makes it monotonically worse (at 1e6: three switches, angle energy
+100).  **But that is one case.**  Across the 35-case suite:
+
+| HI / EXIT | median seam | median \|E\| | max \|E\| |
+|---|--:|--:|--:|
+| **1e4 / 1e3** (current) | 1.6e−11 | **8.8e−12** | 5.4e−07 |
+| 1e3 / 1e2 | 1.1e−09 | 1.8e−11 | 1.1e−06 |
+| 1e2 / 1e1 | 0.0 | 6.0e−08 | 6.4e−04 |
+| 1e5 / 1e4 | 4.2e−12 | 8.5e−12 | 1.2e−05 |
+
+Dropping to 1e2 makes the suite median angle energy **four orders worse**.
+**The current 1e4 is well chosen and should not be moved globally** — the
+single-case experiment was overfitting, which is exactly what the suite exists
+to prevent.
+
+So the improvement directions are local, not global:
+
+1. **Refuse to call it `capture`.**  A branch with seam 3.42 and angle energy
+   32 reports the same terminal status as one at 1e−16.  The certificates
+   already catch it; the termination should too (`abort_seam`).  Most
+   conservative, clearly right, and turns a wrong portrait into a loud failure.
+2. **Guard the backward shallow zone.**  A shallow zone that moves b against
+   the span direction is the observable signature here.  `_continue_curve`
+   already takes a `shallow_gate` for directional gating; it did not prevent
+   this.
+3. **Adaptive thresholds per branch.**  When the gauge profile has *no* samples
+   in `[KAPPA_EXIT, KAPPA_HI)`, there is no overlap region in which to match,
+   and the fixed thresholds are meaningless for that branch.  Setting the band
+   from the observed profile — or matching where the two representations agree
+   best, rather than at a fixed crossing — is the matched-asymptotics answer.
+4. **Extend the exact jets.**  The handoff here happens at b ≈ 4.7 while the
+   saddle is at −1.74.  A certified validity radius for the jet could cover the
+   handoff region analytically and skip the engine phase entirely.
+
 ## Status and what is left
 
 Implemented in `spong.inverse`: the exact single-stage solve, the `g(0) ≠ 0`
@@ -267,8 +340,5 @@ Left to do:
    enumeration.
 2. Suite indexed by **geometry**: prescribed radii, close approaches at chosen
    separations, clusters — not by degree.
-3. Generate *transition-straddling* cases deliberately — branches that cross
-   the mild/shallow boundary several times — since that is where the seam
-   residual actually peaks.  Pushing κ higher is not informative.
-4. Experiment: can the free parameters push surplus roots complex, giving
+3. Experiment: can the free parameters push surplus roots complex, giving
    exactly the prescribed real critical set?

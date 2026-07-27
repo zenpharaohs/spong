@@ -199,3 +199,50 @@ def test_the_depth_gauge_saturates_and_the_cap_is_known(mu):
     d = inverse.design([F(2) ** 20], G, mu)
     assert inverse.depth_gauge_at(d.model, F(2) ** 20) == pytest.approx(2e16,
                                                                        rel=1e-9)
+
+
+# ------------------------------------------ transition-straddling suite
+
+def test_raw_crossings_do_not_predict_switches__hysteresis_is_required(mu):
+    """The engine enters shallow at KAPPA_HI and leaves only below KAPPA_EXIT.
+    A gauge that pokes above 1e4 and falls back to 5e3 never leaves the fixed
+    point, so counting raw threshold crossings predicts nothing."""
+    gauges = [1e2, 2e4, 5e3, 2e4, 1e2]          # two raw crossings of KAPPA_HI
+    raw = sum(1 for a, b in zip(gauges, gauges[1:])
+              if (a >= charts.KAPPA_HI) != (b >= charts.KAPPA_HI))
+    assert raw == 4          # F,T,F,T,F -> four raw transitions
+    # hysteretically: enter at 2e4, the 5e3 dip does NOT exit, leave at the end
+    assert inverse.hysteretic_zones(gauges) == 2
+
+
+def test_suite_finds_straddling_cases(mu):
+    suite = inverse.straddling_suite(G, mu, min_zones=1)
+    assert suite, "no straddling cases generated"
+    assert all(c.predicted_zones >= 1 for c in suite)
+    # ranked hardest first: most transitions, then most evenly split
+    assert suite == sorted(
+        suite, key=lambda c: (-c.predicted_zones,
+                              -min(c.shallow_fraction, 1 - c.shallow_fraction)))
+
+
+def test_verified_suite_catches_what_screening_misses(mu):
+    """The cheap screen samples the gauge on a straight b-grid, but the engine
+    follows the trajectory and can run BACKWARD inside a shallow zone.  The
+    worst case known (g4, b* = 20480) screens as zero transitions and actually
+    produces four zones with an O(1) seam, so a suite built on prediction alone
+    omits exactly the case it most needs.
+    """
+    g4 = [F(1), F(1), F(1, 2), F(1, 6), F(1, 24)]
+    c = inverse.verify(inverse.straddle_case([F(20480)], g4, mu))
+    assert c.predicted_zones == 0            # screening says: nothing to see
+    assert c.actual_zones >= 4               # the engine says otherwise
+    assert c.mispredicted
+    assert c.worst_seam > 1.0                # O(1): the certificate fails
+    assert c.term == "capture"               # ...while termination looks clean
+
+
+def test_suite_dedupes_radii(mu):
+    radii = [F(2) ** 12, F(4096), F(2) ** 13]      # first two are equal
+    suite = inverse.straddling_suite(G, mu, radii=radii, min_zones=0)
+    got = [c.design.prescribed[0] for c in suite]
+    assert len(got) == len(set(got))

@@ -289,3 +289,171 @@ def stiffness_ladder(radii, gpoly, mu, deg_f: int | None = None, **kw):
         except Exception as exc:                      # noqa: BLE001
             out.append((r, None, exc))
     return out
+
+
+# --------------------------------------------------------------------- #
+# transition-straddling suite                                           #
+# --------------------------------------------------------------------- #
+#
+# The instrument is stressed by the mild/shallow HANDOFF, not by the magnitude
+# of the gauge: past the transition a branch is uniformly shallow, the Hadamard
+# fixed point owns all of it, and the seam falls back to roundoff.  So the cases
+# worth generating are the ones that cross the boundary.
+#
+# Screening must be HYSTERETIC.  The engine enters shallow water at KAPPA_HI and
+# only leaves below KAPPA_EXIT, so raw crossings of KAPPA_HI do not cause chart
+# switches -- counting them predicts nothing (measured: median switches 0 in
+# every raw-crossing group).  `hysteretic_zones` reproduces the engine's state
+# machine, which is what correlates with the seam.
+
+def branch_span(m: model.Model):
+    """(saddle, nearest target minimum) for the first traceable branch, or None."""
+    e = sturm.enumerate_critical_points(m)
+    if not e.saddles or not e.minima:
+        return None
+    s = e.saddles[0]
+    side = [p for p in e.minima if p.b > s.b] or [p for p in e.minima if p.b < s.b]
+    if not side:
+        return None
+    return s, min(side, key=lambda p: abs(p.b - s.b)), e
+
+
+def zone_profile(m: model.Model, b0: float, b1: float, n: int = 3001):
+    """Depth gauge sampled along the span (endpoints dropped: 0/0 there)."""
+    bs = np.linspace(float(b0), float(b1), n)[1:-1]
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        gg = np.asarray(charts.depth_gauge_floor(m, bs), dtype=float)
+    ok = np.isfinite(gg)
+    return bs[ok], gg[ok]
+
+
+def hysteretic_zones(gauges, hi: float | None = None,
+                     exit_: float | None = None) -> int:
+    """Zone transitions the ENGINE would make, hysteresis included."""
+    hi = charts.KAPPA_HI if hi is None else hi
+    exit_ = charts.KAPPA_EXIT if exit_ is None else exit_
+    if len(gauges) == 0:
+        return 0
+    shallow = gauges[0] >= hi
+    n = 0
+    for v in gauges[1:]:
+        if shallow and v < exit_:
+            shallow, n = False, n + 1
+        elif not shallow and v >= hi:
+            shallow, n = True, n + 1
+    return n
+
+
+@dataclass(frozen=True)
+class StraddleCase:
+    design: Design
+    saddle_b: float
+    target_b: float
+    predicted_zones: int      # hysteretic transitions along the gauge profile
+    band_fraction: float      # fraction of the span inside [KAPPA_EXIT, KAPPA_HI)
+    shallow_fraction: float
+    actual_zones: int = -1    # from tracing; -1 if not verified
+    switches: int = -1
+    worst_seam: float = float("nan")
+    angle_energy: float = float("nan")
+    term: str = ""
+
+    @property
+    def mispredicted(self) -> bool:
+        """Screening disagreed with the engine.
+
+        The gauge is sampled on a straight b-grid while the engine follows the
+        trajectory and may run BACKWARD in b inside a shallow zone, so the
+        cheap screen can miss a genuinely straddling case.  The worst case
+        found so far (g4, b* = 20480: four zones, seam 3.42, angle energy 32)
+        was screened as zero transitions -- so a suite built on prediction
+        alone omits exactly the case it most needs.
+        """
+        return self.actual_zones >= 0 and abs(self.actual_zones - 1
+                                              - self.predicted_zones) > 1
+
+
+def straddle_case(pres, gpoly, mu, **kw) -> StraddleCase | None:
+    """Design and screen one candidate; None if it has no traceable branch."""
+    d = design(pres, gpoly, mu, **kw)
+    sp = branch_span(d.model)
+    if sp is None:
+        return None
+    s, t, _ = sp
+    bs, gg = zone_profile(d.model, s.b, t.b)
+    if gg.size < 10:
+        return None
+    band = (gg >= charts.KAPPA_EXIT) & (gg < charts.KAPPA_HI)
+    return StraddleCase(d, float(s.b), float(t.b), hysteretic_zones(gg),
+                        float(np.mean(band)), float(np.mean(gg >= charts.KAPPA_HI)))
+
+
+def verify(c: StraddleCase, box=(-1e9, 1e9, -1e9, 1e9)) -> StraddleCase:
+    """Trace the case and record what the engine actually did."""
+    from dataclasses import replace
+    sp = branch_span(c.design.model)
+    if sp is None:
+        return c
+    s, t, _ = sp
+    br = charts.trace_unstable(c.design.model, s.b, (t.a, t.b), box=box,
+                               ds=abs(t.b - s.b) / 2000.0)
+    seams = br.certs.get("seam_residuals", [])
+    return replace(
+        c,
+        actual_zones=len(br.diag.get("zones", [])),
+        switches=int(br.diag.get("switches", 0)),
+        worst_seam=max((abs(float(x)) for x in seams), default=0.0),
+        angle_energy=abs(float(br.certs.get("angle_energy") or 0.0)),
+        term=br.term)
+
+
+def straddling_suite(gpoly, mu, radii=None, min_zones: int = 1,
+                     limit: int | None = None,
+                     verify_all: bool = False) -> list[StraddleCase]:
+    """Cases whose branch crosses the mild/shallow boundary, hardest first.
+
+    With `verify_all`, every candidate is traced and the ranking uses what the
+    engine ACTUALLY did (zones, then seam).  That is the honest mode: the cheap
+    screen alone omits the worst known case -- see `StraddleCase.mispredicted`.
+    Without it, ranking is by predicted transitions, then by how evenly the span
+    splits between zones (a 50/50 branch spends the most length near the
+    handoff, which is where the seam is paid).
+    """
+    if radii is None:
+        radii = [Fraction(2) ** k for k in range(1, 20)]
+        radii += [Fraction(3) * Fraction(2) ** k for k in range(1, 17)]
+        radii += [Fraction(5) * Fraction(2) ** k for k in range(1, 15)]
+    seen, uniq = set(), []
+    for r in radii:                       # dedupe: 20480 = 5*2^12 = 2^12 * 5
+        rf = Fraction(r)
+        if rf not in seen:
+            seen.add(rf)
+            uniq.append(rf)
+    radii = uniq
+
+    out: list[StraddleCase] = []
+    for r in radii:
+        try:
+            c = straddle_case([r], gpoly, mu)
+        except Exception:                                   # noqa: BLE001
+            continue
+        if c is None:
+            continue
+        if verify_all:
+            try:
+                c = verify(c)
+            except Exception:                               # noqa: BLE001
+                continue
+            # keep anything the ENGINE found interesting, whatever the screen said
+            if max(c.predicted_zones, c.actual_zones - 1) < min_zones:
+                continue
+        elif c.predicted_zones < min_zones:
+            continue
+        out.append(c)
+
+    if verify_all:
+        out.sort(key=lambda c: (-(c.actual_zones), -c.worst_seam))
+    else:
+        out.sort(key=lambda c: (-c.predicted_zones,
+                                -min(c.shallow_fraction, 1.0 - c.shallow_fraction)))
+    return out[:limit] if limit else out
