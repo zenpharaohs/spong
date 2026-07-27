@@ -434,11 +434,55 @@ That reframes the remaining ideas:
    a 5% test — i.e. choose the handoff to minimize `|w − w₁|` over the approach.
    This is the same matched-asymptotics idea as before but now correctly
    motivated: the quantity to match is the slaving error, not the gauge.
-2. **Correct the snap instead of avoiding it.**  The seam is measured at the
-   junction; a defect correction using it would let an unslaved handoff be
-   repaired rather than paid for.
+2. ~~**Correct the snap instead of avoiding it.**~~  **RULED OUT — see below.**
 3. **Accelerate the approach to the floor** so slaving is achieved sooner.
 4. Only then, fail loudly.
+
+### RULED OUT: defect correction of the snap
+
+The idea: at a handoff the engine sits at `w_cur` while the graph is at
+`w_zone[0]`, and the code discards the difference.  Since the manifold
+*attracts*, that offset is a decaying transient rather than an error, so carry
+it — `w(b) = w_zone(b) + δ₀·φ(b)` — instead of snapping.
+
+Along the flow the chart obeys `dw/db = F(b,w) = 2Aw/P − a*′`, so linearizing
+about the graph gives `dδ/db = λδ` with
+
+    λ = ∂F/∂w = 2A/P − 2A w P_w / P²,     P_w = 2A′w − 2A a*′
+
+and the carried transient is `δ₀ exp(∫ λ)`.  Implemented and measured.
+
+**It is inapplicable, and the reason is quantitative.**  λ is enormous
+wherever the fixed point is usable — measured at the actual handoffs, −8.8e13
+to −1.5e46, so `φ` underflows to zero inside the first grid step and the
+"correction" is either a no-op or a full snap, with no intermediate regime.
+The corrected polyline scored no better than the snapped one on 9 of 10 cases.
+
+Sampling λ across the whole gauge range shows the two requirements never
+overlap:
+
+| κ band | median \|λ\| | transient decay length 1/\|λ\| |
+|--:|--:|--:|
+| [1, 10) | 4.15 | 2.4e−01 |
+| [1e2, 1e3) | 675 | 1.5e−03 |
+| [1e3, 1e4) | 4.5e3 | 2.2e−04 |
+| [1e4, 1e6) | 2.5e5 | 4.0e−06 |
+| [1e10, ∞) | 2.4e23 | 4.2e−24 |
+
+Wherever the fixed point converges (κ ≥ 664) the transient dies within ≲1.5e−3
+— orders below one grid cell.  Where it would be *resolvable* (κ ≲ 10) the
+fixed point diverges.  **No κ makes the correction both applicable and
+needed**, and the snap is the correct representation of a boundary layer that
+is genuinely thinner than anything the polyline can carry.
+
+**What this rules out about the seam.**  The seam residual is therefore *not*
+an uncarried transient.  Measured δ₀ at real handoffs is ~3e−6 while the local
+attraction is instantaneous, which means the trajectory is already glued to the
+floor to ~3e−6 and the seam is measuring the ENGINE's own accuracy in tracking
+it, not a discarded piece of dynamics.  That is consistent with lowering
+`KAPPA_HI` making seams worse — an earlier handoff gives the engine less
+distance to converge onto the floor — but it is an inference from two
+measurements rather than a direct one, and has not been tested.
 
 ### Still open
 2. **Match in an overlap region.**  When the profile has *no* samples in
