@@ -526,20 +526,56 @@ itself uncertain at ~1e−8.  At κ = 2.6e10 the fixed point's 5.72e−09 is *be
 that floor — indistinguishable from the best trajectory available — while the
 coarse engine's 2.53e−02 is far above it and genuinely wrong.
 
-**The open question this raises.**  `KAPPA_HI = 1e4` sits one to four orders
-BELOW the crossover at which the fixed point becomes the better representation
-of the branch.  That is the opposite of the territory-extension hypothesis and
-suggests testing *higher* thresholds — the first sweep's 1e5 row did give the
-best median seam (4.19e−12) while worsening the max \|E\| tail, which was not
-followed up.
+**The open question this raised — now settled: `KAPPA_HI = 1e4` is correct, do
+not raise it.**  The per-stretch crossover sits one to four orders ABOVE the
+threshold, which looked like an argument for handing off later.  It is not.
+Re-running the threshold sweep over the 147-case suite *with* the backward-zone
+guard `341c0b6` in place (the earlier sweep predated it):
 
-**A reference-free measure was attempted and failed.**  `gauss.reversal_gap`
-(anadromy: forward n steps, backward n steps) is the natural instrument since
-it needs no ground truth, but feeding it the stiff, pole-bearing slow-chart RHS
-over a long span at fixed steps returned `inf` everywhere.  That is a misuse,
-not a result.  Applying it per sub-span with adaptive steps, or on the fast
-chart where the RHS is well posed, is the way to settle the crossover without
-leaning on a reference that is itself an engine run.
+| `KAPPA_HI` | med seam | max seam | med \|E\| | max \|E\| | \|E\|>1 |
+|---|---|---|---|---|---|
+| **1e4** | 4.61e−12 | **2.85e−06** | 1.40e−09 | **9.50e−01** | **0** |
+| 3e4 | 1.31e−12 | 3.92e−01 | 2.20e−09 | 2.13e+01 | 4 |
+| 1e5 | 2.64e−11 | 5.70e−02 | 1.40e−09 | 2.53e+02 | 14 |
+| 1e6 | 2.11e−12 | 7.81e−02 | 8.44e−09 | 1.67e+02 | 24 |
+| 1e7 | 2.09e−23 | 8.69e−02 | 2.83e−07 | 9.00e+05 | 31 |
+
+The medians are flat across five orders of threshold — every row is ~1e−12 seam,
+~1e−9 \|E\| — while the **tail explodes monotonically**.  1e4 is the only
+setting with no \|E\|>1 case at all.  So *per-stretch accuracy and the right
+place to hand off are different questions*: the fixed point being the better
+representation at κ=1e6 does not mean the trace should stay with the engine
+until κ=1e6, because a late handoff lands the zone somewhere geometrically
+worse.  The threshold is not an accuracy knob; it is a placement knob.
+
+**The reference-free measure, done properly.**  The earlier `inf` everywhere was
+a harness bug, not a numerical finding: `charts.slow_rhs(m)` returns a **tuple
+`(F, J)`**, the tuple was passed as `F`, every call raised, and a bare
+`except Exception` turned that into `inf`.  Nothing was ever measured.
+
+Run correctly (`F, J = charts.slow_rhs(m)`, `jac=J`, short sub-spans away from
+both critical points where `P → 0`, 225 stretches, step count swept):
+
+| κ band | n=50 | n=200 | n=800 | n=3200 |
+|---|---|---|---|---|
+| [1e4, 1e6) | 9.69e−19 | 1.75e−08 | 8.17e−01 | 1.01e+00 |
+| [1e6, 1e10) | 4.85e−21 | 5.57e−20 | 9.08e−19 | 1.52e−10 |
+| **[1e10, ∞)** | **6.02e+01** | **4.87e+01** | **1.97e+01** | **2.53e+00** |
+
+Read this carefully, because it is **not** an accuracy measure and the gap
+mostly *grows* with n.  The docstring says so outright: "for a symmetric method
+this is Newton-tolerance + roundoff, NOT a method-order quantity."  It certifies
+that the *scheme* is anadromic, and a symmetric scheme passes at any step size.
+Worse, a small gap can be small for the wrong reason — once \|hλ\| is enormous
+the Gauss stability function saturates at R(−∞) = ±1, so forward-then-backward
+cancels *exactly* whether or not anything was resolved.  Saturation and accuracy
+are indistinguishable in this statistic.
+
+What it does certify, reference-free, is where the **nonlinear solve** fails:
+above κ ≈ 1e10 the engine cannot reverse its own trajectory at any step count.
+That independently confirms the catastrophic failure the trusted-trajectory
+comparison showed (3.86e+04 at κ = 2e16) without leaning on a reference that is
+itself an engine run — and bounds the usable engine region from above.
 
 ### Still open
 2. **Match in an overlap region.**  When the profile has *no* samples in
@@ -569,3 +605,49 @@ Left to do:
    separations, clusters — not by degree.
 3. Experiment: can the free parameters push surplus roots complex, giving
    exactly the prescribed real critical set?
+
+### The commutator criterion: right idea, closes off a whole family
+
+`kappa = 2|a*'|/|w1'|` sees only the **spectral gap**.  Slaving can also fail
+when the eigenframe *rotates* fast compared to the gap, which no gap scalar can
+see.  The commutator is exactly that missing part: along the descent flow
+`Hdot = -grad^3 L[grad L]`, and
+
+$$[H,\dot H]_{ij} = (\lambda_i-\lambda_j)\dot H_{ij}$$
+
+annihilates whatever merely rescales the timescales, keeping only what mixes
+fast into slow.  `[H,Hdot] = 0` iff the fast/slow splitting is invariant — i.e.
+iff the fixed-point construction is *exact* rather than approximate.  Two things
+make it practical here: `L = C - 2aB(b) + a^2 A(b)` is quadratic in `a` and
+polynomial in `b`, so `grad^3 L` is **closed form** (only `A'''`, `B'''` beyond
+what `Model` stores — no finite differences); and for symmetric 2x2 the
+commutator is antisymmetric, hence a single *signed* scalar with no scalarizing
+choice to make:
+
+$$\omega = (p-r)\dot q - q(\dot p - \dot r),\quad
+  \text{gap} = \sqrt{(p-r)^2+4q^2},\quad
+  \mathfrak{A} = |\omega|/\text{gap}^3$$
+
+**Measured, 42355 samples along traced branches — it does not detect the
+changeover.**  `A` peaks at kappa in [1e1,1e2) and decays monotonically above,
+reaching 1e-37; it is `<< 1` *everywhere*.  So the eigenframe is effectively
+frozen throughout, and frame rotation is **not** the mechanism of handoff
+difficulty.  A per-branch check killed the one suggestive signal too: pooled
+across models `sign(omega)<0` swings 98% -> 25% across kappa=1e4, but within a
+single branch there are 50-123 sign flips, clustered at the gauge's 2e16
+saturation cap.  Band-membership confounding, not structure.
+
+**Why it fails is the real result.**  The *unnormalized* rotation rate is nearly
+constant — median |omega| = 5.85, 5.94, 11.2, 10.8, 19.6 across kappa bands
+1e3 ... 1e8, i.e. O(10) over eight orders — while the gap moves 6.1e1 -> 1.9e5.
+All the variation is in the gap.  Dividing by gap^3 therefore does not build a
+new instrument; it rebuilds kappa with a worse exponent.  **Any criterion
+carrying the gap in its denominator inherits kappa's monotonicity**, and the
+cube amplifies it rather than curing it.
+
+That closes off the whole spectral family: no function of `H`'s spectrum along
+the flow can mark the changeover, because the spectrum is monotone in position
+while the difficulty is not.  Consistent with the two independent findings
+above — log kappa vs log|b| r=+0.748 against degree r=+0.109 (difficulty is
+positional), and the threshold sweep leaving every median flat while only the
+tail degrades (`KAPPA_HI` is a *placement* knob, not an accuracy knob).
