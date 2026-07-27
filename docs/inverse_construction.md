@@ -5,11 +5,9 @@ them.  Used to generate spong's regression suite — in particular to place
 critical points at large `|b|`, which is where the descent equation is stiff.
 Sampling reaches stiff cases only by luck; prescription chooses them.
 
-Recorded 2026-07-26 from a working discussion.  The method predates this note
-and is not currently in the repository; the derivation below is a
-reconstruction from `model.py` that the original author confirms matches what
-was used.  Treat the mechanism as sound and the details as unverified until it
-is rebuilt with tests.
+**Rebuilt 2026-07-26 as `spong.inverse`** (23 tests).  The derivation below is
+a reconstruction from `model.py` that the original author confirms matches the
+method originally used; the implementation is new.
 
 ## Mechanism
 
@@ -22,15 +20,34 @@ From §1–3 (`model.py` header):
 So "prescribe the critical points" means "prescribe real roots of `N` and of
 `B`", and the split is what makes it tractable:
 
-- `B` is **linear** in the model coefficients, so its prescribed roots are
-  placed directly.
-- `N = A'B − 2B'A` is **bilinear** in `(A, B)`.  With `B` already fixed by the
-  first stage, prescribing roots of `N` is linear in `A`.
+The implementation is simpler than the two-stage sketch this note first gave.
+Fix `g` and `μ` — they determine `A` alone.  Then
 
-Two linear stages rather than a general nonlinear inverse problem.  The
-unknowns are `f`, `g` coefficients (with the moment sequence `μ` fixed), so the
-map from those to `(A, B)` must be inverted as well; that is the part most
-likely to need care on rebuild.
+- `B_j = g_j · Σ_i f_i μ_{i+j}` is **linear in `f`**, and
+- `N = A'B − 2B'A` is **linear in `B`**, hence linear in `f`.
+
+So *both* root families are linear conditions on `f`, and a prescription is a
+**single homogeneous linear system `M f = 0`**, solved exactly over ℚ.  One
+stage, not two.
+
+**Exactness.**  `model.Model` accepts `Fraction` coefficients, so a prescribed
+`b` is an *exact* root — `P.eval_at(m.N, b) == 0` on the nose, and the Sturm
+enumeration finds it exactly rather than nearby.
+
+### Two preconditions found by building it
+
+**`g(0) ≠ 0`.**  `A(b) = E[g(bX)²]` is positive for every `b ≠ 0` whenever `g`
+is nonzero, but `A(0) = g₀²μ₀`.  A vanishing constant term puts a pole of
+`a* = B/A` at the origin and the model is not well posed there.
+
+**At most `deg g` points may be prescribed.**  Every condition is a linear
+functional on `B`, which has only `deg g + 1` coefficients; `deg g + 1`
+independent conditions force `B ≡ 0` — a model with *no critical points at
+all*, in which the prescription is satisfied **vacuously**.  This was a live
+bug in the first implementation: the exact-root assertions passed while `B` and
+`N` were both identically zero.  Raising `deg f` does **not** help; the
+bottleneck is `deg g`.  `design()` now rejects the over-prescription up front
+and additionally refuses any solution whose `B` vanishes identically.
 
 **Constraint.** Not every configuration is realisable: the alternation
 invariant requires minima and saddles to interleave, so the design space is
@@ -179,16 +196,42 @@ and the extras change which side it checks rather than weakening it:
 Neither is two-sided alone; together they are.  That is strictly stronger than
 the present self-certifying ledger.
 
-## Rebuild checklist
+## The ladder, measured
 
-1. Two-stage linear solve as above, including the `(f, g, μ) → (A, B)` inverse.
-2. Reject prescriptions that violate alternation, with a clear diagnostic.
-3. Report the full critical set (prescribed + extras) — it is exactly
-   computable by the Sturm enumeration, so ground truth remains available.
-4. Suite indexed by **geometry**: prescribed radii, close approaches at chosen
+`inverse.stiffness_ladder` designing one model per radius, `g = 1 + b + b²/2`,
+uniform-[0,1] moments, tracing every unstable branch:
+
+| `b*` | depth gauge | zone | term | worst seam residual |
+|--:|--:|---|---|--:|
+| 1/2 | 11.7 | mild | capture | 5.8e−21 |
+| 2 | 2.4e3 | mild | capture | 3.6e−22 |
+| 4 | 1.6e5 | shallow | capture | 1.4e−12 |
+| 16 | 4.2e9 | shallow | capture | 7.4e−12 |
+| 64 | 2.1e14 | shallow | capture | 1.1e−09 |
+| 256 | 2.0e16 | shallow | capture | 1.8e−07 |
+
+Fifteen orders of gauge, monotone, with the mild→shallow handoff at `b* = 4`.
+The seam residual degrades by roughly fourteen orders across it — close to
+linear in the gauge — and **every branch still terminates in `capture` at
+κ = 2e16**.  That is the degradation law, and it is only measurable because
+prescription can build the ladder; the random sample in the section above never
+produced a single branch that entered shallow water.
+
+## Status and what is left
+
+Implemented in `spong.inverse`: the exact single-stage solve, the `g(0) ≠ 0`
+and `deg g` preconditions, rejection of the vacuous `B ≡ 0` solution,
+`depth_gauge_at` / `is_shallow` (reading the gauge just off the critical point,
+as `trace_unstable` does), `report()` with containment plus extras plus the
+gauge, and `stiffness_ladder`.  Tests: `tests/test_inverse.py`.
+
+Left to do:
+
+1. Reject prescriptions that violate alternation up front, with a clear
+   diagnostic — currently a bad prescription is only caught downstream by the
+   enumeration.
+2. Suite indexed by **geometry**: prescribed radii, close approaches at chosen
    separations, clusters — not by degree.
-5. Large-`|b|` sweep to map the stiffness law, gating on
-   **`depth_gauge_floor`** (`kappa_saddle`) — not the spectral scalar, and not
-   step count, switches, or residual.
-6. Experiment: can the free parameters push surplus roots complex, giving
+3. Push the ladder past κ = 2e16 to find where `capture` finally fails.
+4. Experiment: can the free parameters push surplus roots complex, giving
    exactly the prescribed real critical set?
