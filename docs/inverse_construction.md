@@ -484,6 +484,63 @@ it, not a discarded piece of dynamics.  That is consistent with lowering
 distance to converge onto the floor — but it is an inference from two
 measurements rather than a direct one, and has not been tested.
 
+### The overlap: real, but not a "both fraying" overlap
+
+Andrew's expectation was that near the handoff both methods might be fraying
+while their *consensus* stays accurate — the standard matched-asymptotics
+picture — and that it would be surprising if the two had no overlap at all.
+The overlap is real; the consensus idea is not supported.
+
+**Correction to an earlier claim in this note.**  "No overlap" was said about
+the *defect correction's* applicability, not about the two methods.  By the
+`angle_energy` certificate both are healthy across κ ∈ [1e3, 1e6] — three
+decades — with the engine fraying above 1e6 and the fixed point below 1e3.
+
+**Consensus does not help: 0 of 273 stretches.**  Averaging the two
+representations scored between them every time, with `E_consensus ≈ E_eng/4` in
+every band — exactly what averaging does when one input is far better than the
+other (half the deviation, and E is quadratic in it).  There is no band where
+the two are comparably degraded, which is what a useful consensus would need.
+
+**But `angle_energy` cannot settle this**, and that is worth recording: it is
+satisfied by ANY integral curve.  The slow manifold is one and the branch from
+the saddle is another; E cannot tell them apart, so the seven-order margin it
+reports for the fixed point is not a statement about the branch.
+
+Against a trusted trajectory instead (engine at ds/50 from the same start):
+
+| κ | \|engine − ref\| | \|fixed point − ref\| |
+|--:|--:|--:|
+| 2.5e5 | **4.96e−09** | 1.17e−07 |
+| 9.0e7 | 6.23e−06 | 1.09e−06 |
+| 2.6e10 | 2.53e−02 | **5.72e−09** |
+| 2.0e16 | 3.86e+04 | **8.43e−09** |
+
+so the engine is the better representation of the *branch* at moderate κ and
+the fixed point at high κ, with a **crossover somewhere in [1e5, 1e8]** — not
+a region of joint degradation but a clean handover of dominance.
+
+**Reference uncertainty bounds all of this.**  Two independent fine runs
+(ds and ds/4) agree only to 6e−09 … 2.6e−08, so the "trusted" trajectory is
+itself uncertain at ~1e−8.  At κ = 2.6e10 the fixed point's 5.72e−09 is *below*
+that floor — indistinguishable from the best trajectory available — while the
+coarse engine's 2.53e−02 is far above it and genuinely wrong.
+
+**The open question this raises.**  `KAPPA_HI = 1e4` sits one to four orders
+BELOW the crossover at which the fixed point becomes the better representation
+of the branch.  That is the opposite of the territory-extension hypothesis and
+suggests testing *higher* thresholds — the first sweep's 1e5 row did give the
+best median seam (4.19e−12) while worsening the max \|E\| tail, which was not
+followed up.
+
+**A reference-free measure was attempted and failed.**  `gauss.reversal_gap`
+(anadromy: forward n steps, backward n steps) is the natural instrument since
+it needs no ground truth, but feeding it the stiff, pole-bearing slow-chart RHS
+over a long span at fixed steps returned `inf` everywhere.  That is a misuse,
+not a result.  Applying it per sub-span with adaptive steps, or on the fast
+chart where the RHS is well posed, is the way to settle the crossover without
+leaning on a reference that is itself an engine run.
+
 ### Still open
 2. **Match in an overlap region.**  When the profile has *no* samples in
    `[KAPPA_EXIT, KAPPA_HI)` there is no overlap in which to match, and the fixed
