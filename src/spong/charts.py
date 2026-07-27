@@ -178,7 +178,7 @@ def slow_fixed_point(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
     rel = np.inf
     for it in range(1, max_iter + 1):
         with np.errstate(over="ignore", invalid="ignore"):
-            wp = np.gradient(w, b_grid)
+            wp = np.gradient(w, b_grid, edge_order=2)
             Pv = up + Ap * w**2 - 2.0 * A * w * asp
             w_new = Pv * (asp + wp) / (2.0 * A)
         if not np.all(np.isfinite(w_new)):

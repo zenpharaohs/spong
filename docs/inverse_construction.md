@@ -651,3 +651,71 @@ while the difficulty is not.  Consistent with the two independent findings
 above — log kappa vs log|b| r=+0.748 against degree r=+0.109 (difficulty is
 positional), and the threshold sweep leaving every median flat while only the
 tail degrades (`KAPPA_HI` is a *placement* knob, not an accuracy knob).
+
+### The jet-based handoff detector: order reduction is the whole story
+
+Andrew's construction, by analogy with the "explicit deviation from implicit"
+stiffness scalar (difference of two methods in the `h -> 0` limit): measure the
+difference between the ODE integrator and the Hadamard graph transform.  Unlike
+the commutator this is a *method* difference, not a gap-normalized quantity, so
+nothing forces it to inherit kappa's monotonicity.
+
+**What the two methods actually are.**  The transform is the invariance equation
+`w' = 2Aw/P - a*'` solved for `w` (the contracting direction):
+
+```python
+w <- P*(a*' + w')/(2A)          # w' from np.gradient
+```
+
+so its fixed point IS the exact invariant manifold, and its only error is the
+finite-difference `w'`.  Measured self-convergence: **interior order 2.00, edge
+order 1.00** -- `np.gradient` defaults to `edge_order=1`, and *the zone edge is
+exactly where the seam is measured*.  Fixed (`edge_order=2`); over the 147-case
+suite the median seam improves 4.61e-12 -> 1.81e-12 with max seam, max |E| and
+the |E|>1 count bit-identical.
+
+**The prediction, and why it was wrong.**  With the engine at order 4 and the
+transform at order 2 damped by the contraction factor `1/kappa`, the errors would
+balance at `kappa h^2 = C2 J2/(C1 J1)` -- making `kappa*h^2` the dispatch
+variable.  Measurement says otherwise: the ratio `err_ODE/err_GT` is **constant
+in h**,
+
+| n | 26 | 51 | 101 | 201 | 401 |
+|---|--:|--:|--:|--:|--:|
+| ratio (kappa=8.9e7) | 1.65e7 | 1.83e7 | 1.83e7 | 1.83e7 | 1.82e7 |
+
+because **both** methods are second order here.  IRK4-GL is 2-stage Gauss:
+classical order 4, **stage order 2**, and for stiff problems the observed order
+drops to the stage order (B-convergence, Hairer-Wanner II).  This is the
+guaranteed rate, not a defect -- verified by control experiment: on non-stiff
+problems the same code gives 4.00, 4.00, 4.00 at `|h*lambda|` = 6e-3 and 6e-2,
+and 3.98/4.00/4.00 on `y' = -y + sin x`.  In spong the observed order is a clean
+2.00 because the integration runs *along the manifold*, where the transient is
+absent and the collocation defect is exactly the stage order.
+
+So the `h` dependence CANCELS:
+
+$$\frac{\mathrm{err_{ODE}}}{\mathrm{err_{GT}}} = \frac{C_1J_1}{C_2J_2}\,\kappa
+  \qquad\text{independent of }h$$
+
+and the measured ratios track it: kappa=8.9e7 -> 1.8e7, kappa=5.1e9 -> 3.0e9,
+kappa=6.2e12 -> 1.0e12, i.e. **ratio ~ 0.2 kappa**.  Refining the step helps both
+methods equally; there is no step size at which the engine catches up.
+
+**Consequence: the engine retires far too late.**  The transform wins once
+kappa > ~5, tempered only by its own convergence requirement.  Sweeping down:
+
+| `KAPPA_HI` | med seam | max seam | med \|E\| | max \|E\| | \|E\|>1 |
+|---|--:|--:|--:|--:|--:|
+| 1e4 (current) | 4.61e-12 | 2.85e-06 | 1.40e-09 | 9.50e-01 | 0 |
+| **3e2** | **3.58e-16** | 3.74e-06 | 3.17e-08 | 9.50e-01 | 0 |
+| 3e1 | 2.09e-23 | 2.47e-03 | 1.18e-04 | 9.50e-01 | 0 |
+| 1e1 | 5.72e-24 | 2.08e+00 | 3.08e-04 | 8.61e+00 | 2 |
+
+Four orders of median seam at `HI = 3e2`, max seam essentially unchanged (1.3x),
+max |E| and the failure count identical.  The counterweight is median |E|, which
+worsens 23x -- so this is a real trade, not a free win, and the threshold change
+is NOT applied here pending a decision on which metric governs.  Note this is the
+opposite direction from the earlier "raise it" hypothesis, and both are now
+measured: raising degrades the tail monotonically, lowering improves the median
+seam and degrades median |E|.
