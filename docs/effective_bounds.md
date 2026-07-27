@@ -281,3 +281,56 @@ integrate nothing.  Two consequences for the code:
 2. `angle_energy`'s noise guard should be graded (skip when `ng < K*g_floor`
    for a digit budget K, K >> 1) rather than a cliff at `K = 1`.  Otherwise the
    certificate silently reports evaluation noise as geometry.
+
+### Replace the flow, don't just stop — but replace it with the EXACT backbone
+
+The rule above says where to stop.  The better statement is that past that radius
+the flow should be *replaced* by an analytically known one.  Two candidates, and
+measurement picks the second decisively.
+
+**Candidate 1, the principal-terms (leading form) flow.**  With `A ~ a_L b^2d`
+and `B ~ b_L b^d`, slaving gives `a -> (b_L/a_L) b^-d`, and substituting into
+`bdot = 2aB' - a^2 A'` the leading term cancels identically (the Wronskian
+cancellation recorded in `C_inf`'s docstring), leaving `bdot = -C_inf/b^2`,
+solvable as `b^3/3 = -C_inf t`.  **Measured, it converges far too slowly to
+serve.**  On the tricky escaping branch `P b^2 / C_inf` reads
+
+| b | -3 | -4 | -5 | -7 | -9 | -11 |
+|---|--:|--:|--:|--:|--:|--:|
+| `P b^2/C_inf` | 2.12 | 3.76 | 3.58 | 2.99 | 2.58 | 2.30 |
+
+still 2.3x off at b=-11, with the residual decaying only as `O(1/b)` (fitted
+exponent 0.93, 0.98 on the last two windows; roughly `1 + 14/b`).  Three digits
+would need `|b| ~ 1.4e4`.  Asymptotically correct, metrologically useless at the
+radii that actually occur.
+
+**Candidate 2, the exact backbone.**  Far out the separatrix simply *is* the
+backbone, and `a*(b) = B(b)/A(b)` is an exact rational function — no asymptotics
+required, correct immediately rather than in the limit:
+
+| b | chord digits `log10(\|grad L\|/g_floor)` | fp residual | fp iters | `w_s` |
+|---|--:|--:|--:|--:|
+| -4 | 6.27 | 0 | 2 | 1.79e-19 |
+| -11 | 0.25 | 0 | 1 | 9.29e-36 |
+| -20 | **-3.27** | 0 | 1 | 2.81e-45 |
+| -200 | **-16.49** | 0 | 1 | 1.60e-81 |
+
+`w_s` collapses like `~b^-36` here while the fixed point returns residual 0 in
+one iteration — there is nothing left to solve.  Chord digits go **negative**
+past `|b| ~ 12`: `grad L` is entirely beneath its own evaluation floor, so
+`angle_energy` is measuring noise, which is exactly how the box inflation broke
+the founding gate.
+
+**So the far-field chart is: `a = a*(b)`, emitted analytically at whatever
+resolution rendering wants, certified ALGEBRAICALLY (`|w_s|` below tolerance
+against an exact rational) rather than geometrically (chord-vs-gradient angles
+that have run out of digits).**  The handoff radius is where `w_s` becomes
+numerically indistinguishable from 0 relative to `a*` — which on this branch has
+already happened by `b = -4`, far inside either compute box.
+
+This is the same architectural pattern as the shallow/deep handoff, with the
+certificate swapped rather than the integrator: a region where a closed form is
+exact, entered on a computable criterion.  Note what it does NOT require —
+`C_inf`, the leading form, or any asymptotic expansion.  Those describe the
+*time parameterization* `bdot = -C_inf/b^2`, which the portrait never needs,
+since the drawn object is the curve, not its schedule.
