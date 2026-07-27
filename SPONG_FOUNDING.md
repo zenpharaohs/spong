@@ -77,7 +77,7 @@ Everything spong draws follows from the identities below.  Coefficient-level
 constructions (A, B, N, discriminants, Sturm chains) are EXACT — rational
 arithmetic over the dyadic inputs.  Point evaluations and traces are floating,
 certified RESIDUAL (with VALIDATED enclosures where a-priori bounds are
-cheap), using only the two Gauss integrators of §10.
+cheap), using only the Gauss collocation integrators of §10.
 
 ### 1. Model
 
@@ -351,9 +351,10 @@ reversibility.  Closed-contour return gap is reported as a certificate.
 
 ### 10. Numerics doctrine
 
-**Integrators: the Gauss collocation pair, and nothing else.**
-IMM (implicit midpoint = 1-stage Gauss, order 2) and IRK4-GL (2-stage Gauss,
-order 4).  Selected by three requirements that all point at the same family:
+**Integrators: the Gauss collocation family, and nothing else.**
+IMM (implicit midpoint = 1-stage Gauss, order 2), IRK4-GL (2-stage, order 4)
+and IRK6-GL (3-stage, order 6, **the default**).  Selected by three
+requirements that all point at the same family:
 
 - *portable* — a few dozen lines each, no black boxes;
 - *anadromic* (time-symmetric, Φ₋ₕ = Φₕ⁻¹) — REQUIRED, twice over:
@@ -366,8 +367,39 @@ order 4).  Selected by three requirements that all point at the same family:
   (b) **level-set conservation**: symplecticity of the Gauss family is what
   makes §9 true;
 - *implicit / A-stable* — nearly free here, because every ODE spong
-  integrates is **scalar** (graph ODEs), so the stage equations are 1-D
+  integrates is **scalar** (graph ODEs), so the stage equations are s×s
   Newton solves with analytic Jacobians.
+
+Which member is the default is a **tolerance** question, not a stiffness one.
+Stiff problems observe the *stage* order (s), not the classical order (2s), so
+GL4 runs at order 2 and GL6 at order 3–4 in stiff country; but where the
+integrator actually earns its keep — the mild arc, resolved by the Richardson
+ladder — GL6 climbs 3–4 fewer rungs than GL4 and runs 4.8–10.8× faster at
+tol = 1e-12, while being ~1.5× *slower* on easy spans at 1e-8 where GL4's error
+was never the binding constraint.  spong's gates are stated at 1e-12, so GL6 is
+the default.  IRK8-GL was measured and declined: it captures only the last ~22%
+(net 0.93–1.85× in the scalar path) at a worse conditioned 4×4 stage solve.
+
+**The stage solve is closed-form and provably safe**, which is what keeps
+"no black boxes" honest at 3 stages.  The stage matrix is M = I − h·diag(J_i)·A
+with A the constant tableau, and
+
+    det(I − zA) = Q_s(z), the (s,s) Padé denominator of exp
+
+so **A-stability *is* the statement that M cannot be singular for dissipative
+h·λ** — every root of Q_s lies in Re z > 0 — and |det M| *grows* like |z|^s.
+Measured cond₂(M) saturates (10.44 frozen-D, 24.6 varying-D) *independently of
+stiffness*.  Because the entries are essentially exact (exact tableau, analytic
+Jacobians), small backward error IS small forward error, so any backward-stable
+solve serves and only an ill-conditioning **guard** is needed — a Hadamard
+ratio, free from the factorization.  spong uses row-equilibrated LU with partial
+pivoting: unpivoted LU is already stable below the diagonal-dominance threshold
+|h·J| < 1.64, pivoting covers above it, and bounding the multipliers by 1 removes
+overflow structurally.  Iterative refinement is *not* used — measured against an
+exact rational solve, the raw factorization is already at machine precision.
+
+A failed stage solve is a **step-size signal, not a fatal error**: M is
+diagonally dominant for small enough h, so the engine halves and retries.
 
 **Step control: coarse, halve, halve, extrapolate.**  Solve each span at h,
 h/2, h/4 (compared at shared nodes); apply `richardson3` (Aitken Δ², rate-free,
@@ -398,10 +430,21 @@ Every portrait ships with, per object:
 | object | certificates (semantics label per §Certificate semantics) |
 |---|---|
 | critical points | Sturm root count [EXACT]; min/saddle alternation via interval sign of u″ on the isolating intervals [EXACT]; N square-free (Bezoutian) [EXACT]; ψ > 0 (Sturm) [EXACT]; Newton residual vs noise floor [RESIDUAL] |
-| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² (E = 0 ⟺ discrete integral curve) [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; adjacency invariant (Theorem 1) [RESIDUAL, theorem-backed]; capture/exit data incl. asymptote agreement at the rim [RESIDUAL] |
+| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (E = 0 ⟺ discrete integral curve) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; adjacency invariant (Theorem 1) [RESIDUAL, theorem-backed]; capture/exit data incl. asymptote agreement at the rim [RESIDUAL] |
 | each level curve | closure gap [RESIDUAL]; L-drift (zero secular by construction; measured residual reported) [RESIDUAL] |
 | the portrait | Poincaré–Hopf index balance on the disk [EXACT under §8 genericity, else VALIDATED with the declared reduction]; Morse certificate [EXACT]; moment-space discriminant distance (how close this fiber is to a topology change) [EXACT] |
 | rendering | max vertex turn ≤ 0.2°; chord sag below pixel at 1000× zoom [RESIDUAL] |
+
+**Two certificates per branch, because one cannot span it.**  `angle_energy` is
+GEOMETRIC: it needs the *direction* of ∇L, whose significant digits fall as
+‖∇L‖ ~ C_inf/b² approaches its own evaluation floor — so it decays OUTWARD, and
+past a computable radius it measures its own noise rather than the curve.  The
+backbone residual is ALGEBRAIC: far out the branch *is* a* = B/A, an exact
+rational function, so it IMPROVES outward.  The two cross where both are strong,
+and a branch is certified in two pieces.  Each is scoped to where it is relied
+upon — measuring either one where the other governs makes it report failure on a
+claim it was never asked to support — and the resolved/unresolved counts are
+published so a certificate can never pass by measuring nothing.
 
 The claim "as correct as it can be" is precisely: every drawn object carries
 residuals a skeptic can recompute without trusting the code that drew it.
