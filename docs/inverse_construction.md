@@ -2,8 +2,8 @@
 
 Prescribe the critical points; solve for polynomials `f` and `g` that have
 them.  Used to generate spong's regression suite — in particular to place
-critical points at large `|b|`, which is where the descent equation is stiff
-and which random draws essentially never reach.
+critical points at large `|b|`, which is where the descent equation is stiff.
+Sampling reaches stiff cases only by luck; prescription chooses them.
 
 Recorded 2026-07-26 from a working discussion.  The method predates this note
 and is not currently in the repository; the derivation below is a
@@ -66,35 +66,73 @@ linearly against a roughly flat real-root count.  That ratio suggests a refined
 construction could *steer* surplus roots complex rather than accepting where
 they land — untested, and the obvious next experiment.
 
-## Why this is the right suite generator: reachability
+## Stiffness: the scalar, and why it is a position effect
 
-Difficulty is geometric, not degree-indexed.  Measured over 166 traced
-branches (degrees 3–13, 4 seeds each), predicting integration effort:
+The stiffness scalar is the **sounding** `κ = 2A / |u''|` (`charts.sounding`).
+`κ ≥ KAPPA_HI = 1e4` is *shallow water*: the Hadamard slow-graph fixed point
+takes over from the ODE, with hysteresis back out at `KAPPA_EXIT = 1e3`.  The
+per-branch diagnostics record `kappa_saddle` and `kappa_spectral_saddle`.
 
-| predictor | log₁₀(steps) | log₁₀(residual) |
-|---|--:|--:|
-| `\|saddle_b\|` | **r = −0.470** | r = +0.165 |
-| degree | r = +0.142 | r = +0.005 |
+Measured at 785 saddles of random models, degrees 3–13:
 
-Position on the backbone predicts effort about three times better than degree
-does.  A regression suite indexed by degree therefore tests the wrong axis: it
-will miss a stiff low-degree case and waste time on a benign high-degree one.
+| predictor | log₁₀ κ |
+|---|--:|
+| log₁₀ `\|b\|` | **r = +0.748** |
+| degree | r = +0.109 |
 
-**But the random-draw measurement above does not reach the stiff regime, and
-this is the point of the inverse construction.**  Over those 166 branches
-`|saddle_b|` spanned only 0.12 … 20.9, with an outermost-quartile median of
-5.5 — and within that narrow range the correlation runs *inward* (inner
-branches took a median 6374 steps against 4001 outer, while achieving better
-residuals, 2.5e−16 against 1.0e−13).  The stiffness at large `|b|` that the
-construction was built to exercise lies outside what random `f`, `g` produce at
-all.  Sampling cannot get there; prescription can.  The apparent tension
-between the measured inward correlation and the design fact is a
-regime-coverage artifact, not a contradiction — and resolving it is a good
-first use of a rebuilt constructor.
+| quartile | median `\|b\|` | median κ | max κ |
+|---|--:|--:|--:|
+| innermost | 0.41 | 0.0915 | 2.05e3 |
+| outermost | 5.12 | **3.46e10** | **1.86e68** |
 
-Note also that residual is the wrong difficulty metric: `richardson3` absorbs
-stiffness into step count and holds accuracy roughly flat, so the residual
-reports what is left *after* adaptation.  **Step count is the honest measure.**
+Eleven orders of magnitude in κ between the quartile medians, and κ spans 76
+orders overall (5.2e−08 … 1.86e68).  **Stiffness is a position effect on the
+backbone; degree barely enters.**  Large `|b|` is stiff — which is why the
+inverse construction places critical points there.
+
+### Step count and chart switches are the WRONG difficulty metrics
+
+An earlier draft of this note claimed step count was the honest measure of
+difficulty.  That is backwards, and the reason is architectural.  The stiff
+neighbourhoods are handled by the slow-graph fixed point and by **exact jets**
+at critical points whose locations are known exactly from the Sturm
+enumeration.  Neither consumes integration steps.  The adaptive IMM/IRK4-GL
+stepping runs in the *mild* regions.  So step count measures mild arc, and is
+anti-correlated with stiffness:
+
+- steps vs `\|saddle_b\|`: r = −0.470, chart switches vs `\|saddle_b\|`: r = −0.407
+- steps vs switches: r = +0.884 (they measure the same thing, and it is not
+  stiffness)
+- over 168 traced branches, switches ranged only 0…2 with **median 0 in both
+  the inner and outer quartiles** — nearly nothing in that sample entered the
+  stiff regime at all
+
+Use κ.  Do not use step count, switches, or residual — `richardson3` absorbs
+what stiffness reaches it into step count and holds accuracy roughly flat, so
+the residual reports what is left *after* adaptation.
+
+### The magic simplification
+
+κ reaching 1e68 would defeat any general-purpose ODE method, and a general
+Hadamard graph transform with it.  spong survives it because it does not
+integrate through the stiff region: the critical points are known **exactly**
+(Sturm, rational arithmetic) and the local **jets are exact expressions**, so
+the worst country is evaluated analytically rather than traversed numerically.
+That, not the integrator, is why these portraits can be drawn at all — and it
+is the reason to doubt that any other phase portrait code would draw them
+correctly.
+
+### What sampling gives you, and what prescription gives you
+
+Random draws do reach stiff saddles — 24.6% of the 785 sampled were in shallow
+water, and `|b|` ran out to 1.9e3.  So the argument for the inverse
+construction is **control, not reachability**: sampling lands where it lands,
+while prescription puts a critical point at a chosen `|b|` and therefore at a
+chosen κ.  That is what makes a stiffness sweep possible — pick the radii, get
+the κ ladder, trace each one, and check the certificates hold across it.
+
+A suite indexed by degree tests the wrong axis (r = +0.109); a suite indexed by
+backbone position tests the right one (r = +0.748).
 
 ## Why it is also an oracle
 
@@ -121,7 +159,7 @@ the present self-certifying ledger.
    computable by the Sturm enumeration, so ground truth remains available.
 4. Suite indexed by **geometry**: prescribed radii, close approaches at chosen
    separations, clusters — not by degree.
-5. Large-`|b|` sweep to map the stiffness law outside the reachable-by-sampling
-   regime, using step count rather than residual as the difficulty measure.
+5. Large-`|b|` sweep to map the stiffness law, using **κ** as the difficulty
+   measure — not step count, switches, or residual.
 6. Experiment: can the free parameters push surplus roots complex, giving
    exactly the prescribed real critical set?
