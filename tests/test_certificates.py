@@ -123,17 +123,34 @@ def test_the_two_certificates_run_in_opposite_directions(tricky):
                 out.append(ng / gf)
         return float(np.median(out))
 
+    def wrel(seg):
+        out = []
+        for a, b in seg:
+            astar = float(m.a_star(b))
+            if abs(astar) > 1e-300:
+                out.append(abs(float(a) - astar) / abs(astar))
+        return float(np.median(out))
+
     assert digits(inner) > digits(outer) * 1e3          # geometric decays
-    assert charts.backbone_residual(m, outer) < \
-        charts.backbone_residual(m, inner) * 1e-3        # algebraic improves
+    assert wrel(outer) < wrel(inner) * 1e-3             # algebraic improves
+    # (measured on |w/a*| directly: backbone_residual is now scoped to the
+    # UNRESOLVED vertices, so it makes no claim about the inner segment)
 
 
-def test_backbone_residual_is_large_for_a_genuine_curve(tricky):
-    """It must not certify everything: a branch that is NOT the backbone has
-    to score badly, or the certificate is vacuous."""
+def test_backbone_residual_makes_no_claim_where_it_is_not_relied_on(tricky):
+    """Scoped to the vertices angle_energy could NOT resolve.
+
+    Measured over the whole polyline instead, it reports where the branch is
+    legitimately far from the backbone and then 'fails' on branches it was
+    never asked about — out of sample that read as 37 of 75 branches
+    uncertified when their unresolved tails were in fact fine.
+    """
     m, p = tricky
     for L, br in zip(p.ledger["branches"], p.branches):
         if L["kind"] == "unstable" and br.Y[:, 1].min() > -4:
-            assert L["backbone_residual[RESIDUAL]"] > 1e-3
+            assert L["angle_unresolved"] == 0            # fully resolved...
+            assert L["backbone_residual[RESIDUAL]"] == 0.0   # ...so no claim
+            # forced to answer, it must still refuse to certify a genuine curve
+            assert charts.backbone_residual(m, br.Y, digits=1e300) > 1e-3
             return
     pytest.skip("no finite-range unstable branch in this portrait")

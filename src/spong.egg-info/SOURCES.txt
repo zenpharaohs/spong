@@ -21,6 +21,7 @@ src/spong.egg-info/entry_points.txt
 src/spong.egg-info/requires.txt
 src/spong.egg-info/top_level.txt
 tests/test_atlas.py
+tests/test_certificates.py
 tests/test_charts.py
 tests/test_cli.py
 tests/test_demos.py

@@ -479,9 +479,23 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                         if native is not None else \
                         gauss.gl6_scalar(ff, fj, w_prev, b_prev, h)
                     w_new = w_prev + h
+                step_failed = False
             except (ZeroDivisionError, FloatingPointError, OverflowError):
+                step_failed = True
+            # A failed stage solve is a STEP-SIZE signal, not a fatal error.
+            # The stage matrix is M = I − h·diag(J_i)·A, which is diagonally
+            # dominant — hence trivially solvable — for small enough h, so
+            # halving is the correct response and aborting throws away a
+            # branch the engine can still trace.  Measured: GL6's 3-stage
+            # solve is tighter than GL4's 2-stage one, so it signals here
+            # where GL4 silently proceeds; without halving that showed up out
+            # of sample as abort_nonfinite on branches GL4 captured.
+            if step_failed or not (np.isfinite(b_new) and np.isfinite(w_new)):
+                if cur > ds / 128.0:
+                    cur *= 0.5
+                    continue
                 return pts, "abort_step_failure", switches, (b_prev, w_prev)
-            if len(pts) >= 2 and np.isfinite(b_new) and np.isfinite(w_new):
+            if len(pts) >= 2:
                 a_new = m.s_a_star(b_new) + w_new
                 p1, p0 = pts[-1], pts[-2]
                 d1a, d1b = p1[0] - p0[0], p1[1] - p0[1]
@@ -583,21 +597,39 @@ def angle_energy(m: Model, Y: np.ndarray) -> float:
     return angle_energy_detail(m, Y)[0]
 
 
-def backbone_residual(m: Model, Y: np.ndarray) -> float:
-    """max |w| / |a*| over the polyline — the ALGEBRAIC certificate.
+def backbone_residual(m: Model, Y: np.ndarray, digits: float = None) -> float:
+    """max |w| / |a*| over the vertices `angle_energy` could NOT resolve.
 
-    Where the geometric certificate runs out of digits the branch has become
-    the backbone a* = B/A, an exact rational function, so 'is this the
-    invariant manifold' is answerable without any chord geometry.  This
-    certificate IMPROVES outward, exactly where `angle_energy` decays.
+    The ALGEBRAIC certificate.  Where the geometric one runs out of digits the
+    branch has become the backbone a* = B/A, an exact rational function, so
+    "is this the invariant manifold" is answerable without any chord geometry —
+    and it IMPROVES outward, exactly where `angle_energy` decays.
+
+    Scoped to the UNRESOLVED vertices on purpose.  Measured over the whole
+    polyline instead it reports where the branch is legitimately far from the
+    backbone (a genuine curve, or a*≈0 making the ratio unbounded), and then
+    fails on branches it was never asked about: out of sample that read as
+    37 of 75 branches "uncertified" when in fact their unresolved tails were
+    fine.  A certificate must be measured where it is relied upon.
+
+    Returns 0.0 when nothing was unresolved — there is no claim to make.
     """
+    K = ANGLE_DIGIT_BUDGET if digits is None else digits
+    eps = np.finfo(float).eps
     worst = 0.0
-    for a, b in Y:
+    for k in range(1, len(Y) - 1):
+        a, b = float(Y[k, 0]), float(Y[k, 1])
+        g = m.gradL(a, b)
+        ng = float(np.hypot(g[0], g[1]))
+        scale_a = 2.0 * (abs(a) * m.A(b) + abs(m.B(b)))
+        scale_b = 2.0 * abs(a) * abs(m.Bp(b)) + a * a * abs(m.Ap(b))
+        g_floor = 16.0 * eps * float(np.hypot(scale_a, scale_b))
+        if ng >= max(1e-12, K * g_floor):
+            continue                      # resolved: angle_energy covers it
         astar = float(m.a_star(b))
-        denom = abs(astar)
-        if denom < 1e-300:
+        if abs(astar) < 1e-300:
             continue
-        worst = max(worst, abs(float(a) - astar) / denom)
+        worst = max(worst, abs(a - astar) / abs(astar))
     return worst
 
 

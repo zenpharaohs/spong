@@ -277,21 +277,13 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         m31 = -h * a31 * J3
         m32 = -h * a32 * J3
         m33 = 1.0 - h * a33 * J3
-        # adjugate / Cramer: M dK = -r, with det bounded away from 0 above
-        C11 = m22 * m33 - m23 * m32
-        C12 = -(m21 * m33 - m23 * m31)
-        C13 = m21 * m32 - m22 * m31
-        det = m11 * C11 + m12 * C12 + m13 * C13
-        C21 = -(m12 * m33 - m13 * m32)
-        C22 = m11 * m33 - m13 * m31
-        C23 = -(m11 * m32 - m12 * m31)
-        C31 = m12 * m23 - m13 * m22
-        C32 = -(m11 * m23 - m13 * m21)
-        C33 = m11 * m22 - m12 * m21
-        # Ill-conditioning guard (the ONLY guard needed: entries are
-        # essentially exact, so small backward error IS small forward error
-        # via forward <= cond * backward, and any backward-stable solve does).
-        # Hadamard-style ratio, free here since det is already formed.
+        # ROW-SCALE first.  The adjugate forms TRIPLE products where a 2x2
+        # determinant forms double ones, so unscaled it overflows ~1e150
+        # against GL4's ~1e300 — a 150-order loss of dynamic range that showed
+        # up out of sample as a NaN step (abort_nonfinite) on a random
+        # portrait GL4 handled.  Dividing row i and r_i by the row's inf-norm
+        # leaves dK unchanged, puts every entry in [-1,1], and makes the
+        # Hadamard ratio simply |det| of the scaled matrix.
         n1 = abs(m11)
         if abs(m12) > n1: n1 = abs(m12)
         if abs(m13) > n1: n1 = abs(m13)
@@ -301,15 +293,33 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         n3 = abs(m31)
         if abs(m32) > n3: n3 = abs(m32)
         if abs(m33) > n3: n3 = abs(m33)
-        if abs(det) < _STAGE_GUARD * n1 * n2 * n3:
+        if n1 == 0.0 or n2 == 0.0 or n3 == 0.0:
+            raise FloatingPointError("GL6 stage matrix has a zero row")
+        m11 /= n1; m12 /= n1; m13 /= n1; s1 = r1 / n1
+        m21 /= n2; m22 /= n2; m23 /= n2; s2 = r2 / n2
+        m31 /= n3; m32 /= n3; m33 /= n3; s3 = r3 / n3
+        C11 = m22 * m33 - m23 * m32
+        C12 = -(m21 * m33 - m23 * m31)
+        C13 = m21 * m32 - m22 * m31
+        det = m11 * C11 + m12 * C12 + m13 * C13
+        # Ill-conditioning guard (the ONLY guard needed: entries are
+        # essentially exact, so small backward error IS small forward error
+        # via forward <= cond * backward, and any backward-stable solve does).
+        if abs(det) < _STAGE_GUARD:
             raise FloatingPointError(
                 "GL6 stage matrix is ill-conditioned "
-                f"(Hadamard ratio {abs(det) / (n1 * n2 * n3):.2e} < "
-                f"{_STAGE_GUARD:.0e}); h*lambda is not dissipative, so the "
-                "Pade/A-stability bound does not apply here")
-        K1 -= (C11 * r1 + C21 * r2 + C31 * r3) / det
-        K2 -= (C12 * r1 + C22 * r2 + C32 * r3) / det
-        K3 -= (C13 * r1 + C23 * r2 + C33 * r3) / det
+                f"(Hadamard ratio {abs(det):.2e} < {_STAGE_GUARD:.0e}); "
+                "h*lambda is not dissipative, so the Pade/A-stability bound "
+                "does not apply here")
+        C21 = -(m12 * m33 - m13 * m32)
+        C22 = m11 * m33 - m13 * m31
+        C23 = -(m11 * m32 - m12 * m31)
+        C31 = m12 * m23 - m13 * m22
+        C32 = -(m11 * m23 - m13 * m21)
+        C33 = m11 * m22 - m12 * m21
+        K1 -= (C11 * s1 + C21 * s2 + C31 * s3) / det
+        K2 -= (C12 * s1 + C22 * s2 + C32 * s3) / det
+        K3 -= (C13 * s1 + C23 * s2 + C33 * s3) / det
     return y + h * (b1 * K1 + b2 * K2 + b3 * K3)
 
 

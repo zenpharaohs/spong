@@ -238,17 +238,11 @@ static double gl6_step(Kernel *k, FJ fj, double x, double y, double h) {
         double m31 = -h * a31 * J3;
         double m32 = -h * a32 * J3;
         double m33 = 1.0 - h * a33 * J3;
-        double C11 = m22 * m33 - m23 * m32;
-        double C12 = -(m21 * m33 - m23 * m31);
-        double C13 = m21 * m32 - m22 * m31;
-        double det = m11 * C11 + m12 * C12 + m13 * C13;
-        double C21 = -(m12 * m33 - m13 * m32);
-        double C22 = m11 * m33 - m13 * m31;
-        double C23 = -(m11 * m32 - m12 * m31);
-        double C31 = m12 * m23 - m13 * m22;
-        double C32 = -(m11 * m23 - m13 * m21);
-        double C33 = m11 * m22 - m12 * m21;
-        /* ill-conditioning guard: Hadamard-style ratio, free here */
+        /* ROW-SCALE first: the adjugate forms TRIPLE products, so unscaled it
+         * overflows ~1e150 against the 2x2's ~1e300.  Found out of sample as a
+         * NaN step on a random portrait GL4 handled.  Scaling row i and r_i by
+         * the row inf-norm leaves dK unchanged and bounds every entry by 1, so
+         * the Hadamard ratio is just |det| of the scaled matrix. */
         double n1 = fabs(m11);
         if (fabs(m12) > n1) n1 = fabs(m12);
         if (fabs(m13) > n1) n1 = fabs(m13);
@@ -258,12 +252,29 @@ static double gl6_step(Kernel *k, FJ fj, double x, double y, double h) {
         double n3 = fabs(m31);
         if (fabs(m32) > n3) n3 = fabs(m32);
         if (fabs(m33) > n3) n3 = fabs(m33);
-        if (fabs(det) < STAGE_GUARD * n1 * n2 * n3) {
+        if (n1 == 0.0 || n2 == 0.0 || n3 == 0.0) {
+            return NAN;
+        }
+        m11 /= n1; m12 /= n1; m13 /= n1;
+        m21 /= n2; m22 /= n2; m23 /= n2;
+        m31 /= n3; m32 /= n3; m33 /= n3;
+        double s1 = r1 / n1, s2 = r2 / n2, s3 = r3 / n3;
+        double C11 = m22 * m33 - m23 * m32;
+        double C12 = -(m21 * m33 - m23 * m31);
+        double C13 = m21 * m32 - m22 * m31;
+        double det = m11 * C11 + m12 * C12 + m13 * C13;
+        if (fabs(det) < STAGE_GUARD) {
             return NAN;         /* caller rejects the step */
         }
-        K1 -= (C11 * r1 + C21 * r2 + C31 * r3) / det;
-        K2 -= (C12 * r1 + C22 * r2 + C32 * r3) / det;
-        K3 -= (C13 * r1 + C23 * r2 + C33 * r3) / det;
+        double C21 = -(m12 * m33 - m13 * m32);
+        double C22 = m11 * m33 - m13 * m31;
+        double C23 = -(m11 * m32 - m12 * m31);
+        double C31 = m12 * m23 - m13 * m22;
+        double C32 = -(m11 * m23 - m13 * m21);
+        double C33 = m11 * m22 - m12 * m21;
+        K1 -= (C11 * s1 + C21 * s2 + C31 * s3) / det;
+        K2 -= (C12 * s1 + C22 * s2 + C32 * s3) / det;
+        K3 -= (C13 * s1 + C23 * s2 + C33 * s3) / det;
     }
     return y + h * (5.0 / 18.0 * K1 + 4.0 / 9.0 * K2 + 5.0 / 18.0 * K3);
 }
