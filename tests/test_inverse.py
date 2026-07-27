@@ -226,19 +226,37 @@ def test_suite_finds_straddling_cases(mu):
 
 
 def test_verified_suite_catches_what_screening_misses(mu):
-    """The cheap screen samples the gauge on a straight b-grid, but the engine
-    follows the trajectory and can run BACKWARD inside a shallow zone.  The
-    worst case known (g4, b* = 20480) screens as zero transitions and actually
-    produces four zones with an O(1) seam, so a suite built on prediction alone
-    omits exactly the case it most needs.
-    """
+    """The cheap screen samples the gauge on a straight b-grid; the engine
+    follows the trajectory.  g4 at b* = 20480 screens as zero transitions and
+    the engine finds several zones, so a suite built on prediction alone still
+    omits the case it most needs -- which is why verify_all exists."""
     g4 = [F(1), F(1), F(1, 2), F(1, 6), F(1, 24)]
     c = inverse.verify(inverse.straddle_case([F(20480)], g4, mu))
     assert c.predicted_zones == 0            # screening says: nothing to see
-    assert c.actual_zones >= 4               # the engine says otherwise
+    assert c.actual_zones >= 3               # the engine says otherwise
     assert c.mispredicted
-    assert c.worst_seam > 1.0                # O(1): the certificate fails
-    assert c.term == "capture"               # ...while termination looks clean
+    assert c.term == "capture"
+
+
+def test_no_shallow_zone_runs_backward(mu):
+    """Regression: grid_index rounds to NEAREST, so bg[i_cur] can lie behind
+    b_cur.  When the KAPPA_EXIT walk did not advance, the shallow zone ran
+    BACKWARD -- at g4/b*=20480 it entered at 4.674 and ended at 3.381, the
+    engine re-ran the same ground, and the re-entry seam was 3.42 with an angle
+    energy of 32.  Every shallow zone must advance toward the target."""
+    g4 = [F(1), F(1), F(1, 2), F(1, 6), F(1, 24)]
+    d = inverse.design([F(20480)], g4, mu)
+    s, t, _ = inverse.branch_span(d.model)
+    sgn = 1.0 if float(t.b) > float(s.b) else -1.0
+    br = charts.trace_unstable(d.model, s.b, (t.a, t.b),
+                               box=(-1e9, 1e9, -1e9, 1e9),
+                               ds=abs(t.b - s.b) / 2000.0)
+    for zone in br.diag.get("zones", []):
+        if zone[0] == "shallow":
+            assert (zone[2] - zone[1]) * sgn > 0, f"backward zone: {zone}"
+    seams = [abs(float(x)) for x in br.certs.get("seam_residuals", [])]
+    assert max(seams, default=0.0) < 1e-3, seams
+    assert abs(float(br.certs.get("angle_energy") or 0.0)) < 1e-1
 
 
 def test_suite_dedupes_radii(mu):

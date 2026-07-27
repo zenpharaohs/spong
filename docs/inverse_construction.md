@@ -306,24 +306,59 @@ Dropping to 1e2 makes the suite median angle energy **four orders worse**.
 single-case experiment was overfitting, which is exactly what the suite exists
 to prevent.
 
-So the improvement directions are local, not global:
+So the improvement directions are local, not global.  Failing loudly is the
+backstop, to be reached only after everything that could actually help has been
+tried.
 
-1. **Refuse to call it `capture`.**  A branch with seam 3.42 and angle energy
-   32 reports the same terminal status as one at 1e−16.  The certificates
-   already catch it; the termination should too (`abort_seam`).  Most
-   conservative, clearly right, and turns a wrong portrait into a loud failure.
-2. **Guard the backward shallow zone.**  A shallow zone that moves b against
-   the span direction is the observable signature here.  `_continue_curve`
-   already takes a `shallow_gate` for directional gating; it did not prevent
-   this.
-3. **Adaptive thresholds per branch.**  When the gauge profile has *no* samples
-   in `[KAPPA_EXIT, KAPPA_HI)`, there is no overlap region in which to match,
-   and the fixed thresholds are meaningless for that branch.  Setting the band
-   from the observed profile — or matching where the two representations agree
-   best, rather than at a fixed crossing — is the matched-asymptotics answer.
-4. **Extend the exact jets.**  The handoff here happens at b ≈ 4.7 while the
-   saddle is at −1.74.  A certified validity radius for the jet could cover the
-   handoff region analytically and skip the engine phase entirely.
+### FIXED: the backward shallow zone
+
+Root cause, confirmed by replaying the zone loop's arithmetic.  `grid_index`
+rounds to **nearest**, so `bg[i_cur]` can lie *behind* `b_cur`; and when the
+`KAPPA_EXIT` walk does not advance (that node's gauge is already below the exit
+threshold) `j` stays at `i_cur` and `np.linspace(b_cur, bg[j], ...)` runs
+backward.  Measured at `g4`, `b* = 20480`:
+
+    b_cur = 4.673945   i_cur = 1   bg[1] = 3.380928   (behind b_cur)
+    kap[1] = 813 < KAPPA_EXIT = 1000  ->  loop never advances  ->  j = 1
+
+The zone was *entered* because the exact scalar gauge at `b_cur` was ≥ 1e4
+while the grid node read 813 — four orders apart, because `hstep = 20481/4000
+= 5.12` and the whole 813 → 2e16 transition lives inside **one grid cell**.
+
+Fix: the zone endpoint must lie strictly ahead of its start, `(bg[j] − b_cur)·
+sgn > 0`.  Measured over 147 straddling cases, baseline versus guarded:
+
+| | baseline | guarded |
+|---|--:|--:|
+| median seam | 4.61e−12 | 4.61e−12 |
+| median \|E\| | 1.40e−09 | 1.40e−09 |
+| **max seam** | **3.42e+00** | **2.85e−06** |
+| **max \|E\|** | **3.31e+01** | **9.50e−01** |
+| cases with \|E\| > 1 | 2 | **0** |
+| backward zones | 2 | **0** |
+
+Medians identical, tail repaired — the signature of a correct guard rather than
+a retuning.  On the case itself: seam 3.42 → 8.67e−16, angle energy 32.2 →
+0.0033, four zones → three, and the backward zone gone.
+
+### Still open
+
+1. **Resolve the grid adaptively.**  A uniform `bg` over a span of 2e4 cannot
+   see structure living in ~5 units near the saddle, which is what put the
+   handoff where neither representation was validated.  The residual seam of
+   2.8e−06 on that case is the surviving engine→shallow junction at the coarse
+   node.  A grid clustered near the saddle (or refined where `kap` jumps
+   between adjacent nodes) is the real fix; note `grid_index` would need a
+   `searchsorted` rather than its O(1) inverse.
+2. **Match in an overlap region.**  When the profile has *no* samples in
+   `[KAPPA_EXIT, KAPPA_HI)` there is no overlap in which to match, and the fixed
+   thresholds are meaningless for that branch.  Matching where the two
+   representations agree best is the matched-asymptotics answer.
+3. **Extend the exact jets.**  The handoff happens at b ≈ 4.7 with the saddle at
+   −1.74; a certified validity radius for the jet could cover it analytically
+   and skip the engine phase.
+4. **Only then, fail loudly.**  A branch whose seam survives all of the above
+   at O(1) should not report `capture`.
 
 ## Status and what is left
 

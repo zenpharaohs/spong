@@ -561,6 +561,15 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             while j < n_grid and kap[j] >= KAPPA_EXIT:
                 j += 1
             j = min(max(j, 0), n_grid - 1)
+            # grid_index rounds to NEAREST, so bg[i_cur] can lie BEHIND b_cur.
+            # When the while loop does not advance (that node's gauge is
+            # already below KAPPA_EXIT) the zone would run backward: measured
+            # at g4/b*=20480, entering at b=4.674 and ending at b=3.381, after
+            # which the engine re-runs the same ground and hands off again with
+            # an O(1) seam.  The zone must end strictly ahead of where it
+            # started.
+            while j < n_grid - 1 and (bg[j] - b_cur) * sgn <= 0.0:
+                j += 1
             n_pts = max(abs(j - i_cur) + 1, 8)
             j = min(j, n_grid - 1)
             b_zone = np.linspace(b_cur, bg[j], n_pts)
