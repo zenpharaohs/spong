@@ -809,3 +809,54 @@ the tool the residual problem needs: every other line of attack (raising
 `KAPPA_HI`, lowering it, spectral criteria, stencil order) ended by pointing at
 placement, and placement is what a reference-free error estimate can finally
 resolve.
+
+### Raising the graph transform's order: the free win
+
+The transform's ONLY error is its finite-difference `w'` (it is 2nd order, from
+`np.gradient` — not 4th), and that error is damped by `1/kappa`.  So the stencil
+order sets the whole method's order in the stiff region.
+
+**Why this population matters (Andrew's selection argument).**  Truly evil
+`(f,g,mu)` make the exact Sturm/Morse enumeration slow, which naturally filters
+which portraits ever get drawn.  What survives is "cheap to qualify as Morse, but
+possibly unpleasant invariant manifolds" — and measurement says those really are
+different axes (45 models):
+
+| correlation | r |
+|---|--:|
+| log10 Morse-time vs **degree** | **+0.893** |
+| log10 Morse-time vs log10 kappa | +0.111 |
+| log10 kappa vs degree | +0.033 |
+| log10 kappa vs **log10 \|b\|** | **+0.919** |
+
+Morse cost is degree-driven, manifold difficulty is position-driven, and the two
+are uncorrelated.  **The filter strips high-degree cases and leaves the stiff ones
+untouched**, so raising the transform's order helps precisely the surviving
+population.
+
+**Measured (84 stretches), relative error and iteration count:**
+
+| kappa band | order 2 | order 4 | order 6 | gain 2->6 | iters 2/4/6 |
+|---|--:|--:|--:|--:|--:|
+| 1e4-1e6 | 1.18e-11 | 4.48e-16 | 1.69e-16 | **7.0e+04** | 5/5/5 |
+| 1e6-1e8 | 1.54e-12 | **0** | **0** | — | 4/4/4 |
+| 1e8-1e11 | 3.52e-15 | **0** | **0** | — | 3/3/3 |
+
+Iteration counts are IDENTICAL — the wider stencil costs nothing in convergence.
+Order 4 is already machine-exact from kappa=1e6 up, so order 6 buys ~2.6x over it
+in one band and nothing elsewhere; not worth the width.  **4th order adopted**
+(`_dw_db`), falling back to `np.gradient(edge_order=2)` on non-uniform or short
+grids — the production caller always passes `np.linspace`, but the public entry
+point stays correct for any grid.
+
+Straddling suite is unchanged (med seam 1.81e-12 -> 1.79e-12, max seam, med/max
+|E| and the |E|>1 count all identical; 147 traced, 0 errors), which is expected:
+that suite is seam-dominated and placement-limited, so it does not sample the
+moderate-kappa manifold accuracy this improves.  This is why the earlier
+"4th-order stencil does nothing" reading was too narrow — it was true of the
+suite metric, not of the method.
+
+**Architectural consequence.**  With a 4th-order transform and IRK6-GL, both
+representations are near-exact across kappa in [1e4, 1e13].  That widens the
+matching band from BOTH sides — and matching, not blending, is what the overlap
+is for.
