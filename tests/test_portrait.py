@@ -92,6 +92,21 @@ def test_branch_segment_crossing_view_is_rendered():
     assert runs[0][-1] == (0.0, -2.0)
 
 
+def test_default_display_view_is_smaller_than_trace_box():
+    f = [-0.27126925828072923, -0.7363598557165663, 0.7989868625933855]
+    m = model.build(f, f, model.moments_uniform01(5))
+    p = portrait.compute(m)
+    assert p.view is not None
+    assert p.box[0] < p.view[0] and p.box[1] > p.view[1]
+    assert p.box[2] < p.view[2] and p.box[3] > p.view[3]
+    assert any(
+        br.kind == "stable"
+        and (np.min(br.Y[:, 0]) < p.view[0] or np.max(br.Y[:, 0]) > p.view[1]
+             or np.min(br.Y[:, 1]) < p.view[2] or np.max(br.Y[:, 1]) > p.view[3])
+        for br in p.branches
+    )
+
+
 def test_backbone_sampling_is_adaptive_in_screen_space():
     f = [-0.3259270001197266, -0.3989071127950847, -0.08631058733881063]
     m = model.build(f, f, model.moments_uniform01(5))

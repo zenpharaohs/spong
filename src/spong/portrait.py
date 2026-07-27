@@ -63,6 +63,21 @@ def _expand_a_box(box, side: int):
     return (a0, a1, b0, b1)
 
 
+def _trace_box(m: Model, display_box, scale: float = 1.35):
+    """Larger integration box around the display view.
+
+    The default view keeps the critical skeleton readable, but separatrices
+    may leave that view and later pass through it again.  Trace against a
+    larger box so rendering has those visible re-entry chords.
+    """
+    a0, a1, b0, b1 = display_box
+    ac, bc = 0.5 * (a0 + a1), 0.5 * (b0 + b1)
+    ah = 0.5 * scale * max(a1 - a0, 1.0)
+    bh = 0.5 * scale * max(b1 - b0, 1.0)
+    bmax = atlas.legal_max_b(m)
+    return (ac - ah, ac + ah, max(bc - bh, -bmax), min(bc + bh, bmax))
+
+
 def _trace_finite_unstable(m: Model, s, t, box):
     # Finite branches can be nearly horizontal in the (a,b)-plane: choosing
     # the chord budget from |Δb| alone can over-resolve the branch until the
@@ -88,7 +103,8 @@ def compute(m: Model, view=None,
             trace_stable_branches: bool = True) -> Portrait:
     """Compute the certified portrait inside the §8b box contract."""
     e = sturm.enumerate_critical_points(m)
-    box = atlas.compute_box(m, e, view=view)
+    display_view = atlas.compute_box(m, e, view=view)
+    box = _trace_box(m, display_view)
     gen = atlas.genericity(m)
 
     branches = []
@@ -130,7 +146,8 @@ def compute(m: Model, view=None,
 
     # ---- stable branches (ascent separatrices) ------------------------- #
     if trace_stable_branches:
-        span_scale = max(box[3] - box[2], box[1] - box[0])
+        span_scale = max(display_view[3] - display_view[2],
+                         display_view[1] - display_view[0])
         for s in e.saddles:
             for sign in (+1, -1):
                 br = charts.trace_stable(m, s.b, sign, box=box,
@@ -141,7 +158,8 @@ def compute(m: Model, view=None,
                         m, br.Y)
                 branches.append(br)
 
-    p = Portrait(m, e, branches, box, view)
+    p = Portrait(m, e, branches, box,
+                 view if view is not None else display_view)
     p.ledger = build_ledger(p, gen)
     return p
 

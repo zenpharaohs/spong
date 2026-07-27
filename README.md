@@ -57,11 +57,17 @@ This writes SVG portraits and JSON certificate summaries under
 `out/random_portraits/`.  With `--pause`, each portrait is opened in the
 default read-only viewer before the command waits for Enter; use
 `--viewer inkscape` explicitly when you want to inspect or edit SVG geometry
-in Inkscape.  Use `--view A_LO A_HI B_LO B_HI` to specify the plane view
-box up front, or type `v` at the pause prompt to render/open a new view box
-for the current portrait.  Add
+in Inkscape.  On Windows, `--viewer auto` opens SVGs in a browser so strict
+XML/SVG parsing is part of the inspection loop.  Use
+`--view A_LO A_HI B_LO B_HI` to specify the plane view box up front, or type
+`v` at the pause prompt to render/open a new view box for the current
+portrait.  Default rendering keeps a readable display view but traces against
+a larger compute box so invariant manifolds that leave and re-enter the view
+are still available to the clipper.  Add
 `--zoom-close 2` to also write tight metrological zooms around close
 approaches of distinct unstable branches that share a captured minimum.
+Use `--no-stable` only for quick scans; it deliberately omits the red stable
+separatrices.
 Installed environments also get the `spong-random-portrait` console command.
 
 Named zoo portraits:

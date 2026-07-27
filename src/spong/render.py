@@ -18,6 +18,8 @@ browser, and — per the corpus's merch clause — silkscreen-ready.
 
 from __future__ import annotations
 
+from html import escape
+
 import numpy as np
 
 from .model import Model
@@ -83,7 +85,7 @@ class _SVG:
         self.parts.append(
             f'<text x="{_fmt(x)}" y="{_fmt(y)}" font-family="Helvetica" '
             f'font-size="{size}" fill="{color}" '
-            f'text-anchor="{anchor}">{s}</text>')
+            f'text-anchor="{anchor}">{escape(str(s))}</text>')
 
     def to_string(self) -> str:
         return "\n".join(self.parts + ["</svg>"])
@@ -493,6 +495,6 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
 
 
 def save(svg_text: str, path: str) -> str:
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(svg_text)
     return path

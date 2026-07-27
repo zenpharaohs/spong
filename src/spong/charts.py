@@ -48,6 +48,37 @@ TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
 # --------------------------------------------------------------------- #
 
 
+def _sym2_eigh(H: np.ndarray):
+    """Closed-form eigenpairs for a real symmetric 2x2 matrix.
+
+    Returns eigenvalues in ascending order and a 2x2 matrix whose columns are
+    the corresponding unit eigenvectors, matching the small slice of
+    np.linalg.eigh that saddle_frame needs without invoking LAPACK.
+    """
+    a = float(H[0, 0])
+    b = float(0.5 * (H[0, 1] + H[1, 0]))
+    d = float(H[1, 1])
+    mid = 0.5 * (a + d)
+    rad = float(np.hypot(0.5 * (a - d), b))
+    lam = np.array([mid - rad, mid + rad], dtype=float)
+
+    if abs(b) <= 1e-300:
+        if a <= d:
+            V = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+        else:
+            V = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float)
+        return lam, V
+
+    cols = []
+    for l in lam:
+        if abs(b) > abs(l - a):
+            v = np.array([l - d, b], dtype=float)
+        else:
+            v = np.array([b, l - a], dtype=float)
+        cols.append(v / np.hypot(v[0], v[1]))
+    return lam, np.column_stack(cols)
+
+
 def sounding(m: Model, b):
     """Spectral ratio κ = 2A/|u''| — DIAGNOSTIC only (lies at u-inflections;
     kept for reporting).  The dispatcher's depth gauge is depth_gauge()."""
@@ -106,7 +137,7 @@ def velocities(m: Model, b, w):
 
 
 def saddle_frame(m: Model, b_s: float, a_s: float):
-    """Exact-eigenvector launch data at a saddle, in chart components.
+    """Closed-form 2x2 Hessian launch data at a saddle, in chart components.
 
     Returns dict with unstable/stable eigenvectors as (d_w, d_b) pairs:
     d_w = v1 - a*'·v2, d_b = v2 for eigvec (v1, v2) of the Hessian.
@@ -115,7 +146,7 @@ def saddle_frame(m: Model, b_s: float, a_s: float):
     well-posed for each manifold at every saddle.
     """
     H = m.hessL(a_s, b_s)
-    lam, V = np.linalg.eigh(0.5 * (H + H.T))
+    lam, V = _sym2_eigh(H)
     asp = m.a_star_p(b_s)
     out = {}
     for name, idx in (("unstable", int(np.argmin(lam))),
