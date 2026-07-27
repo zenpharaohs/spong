@@ -384,6 +384,62 @@ observations are on a uniform grid, where mislabelling already routes some
 near-saddle stretches to the fixed point regardless of the threshold; the two
 effects are entangled and neither measurement isolates the question.
 
+### ANSWERED: the fixed point's territory should NOT be extended
+
+The experiment the adaptive-grid failure pointed at: run the Hadamard fixed
+point on stretches the gauge calls DEEP and score it against the continuation
+engine on the same stretch, from the same starting state, with the same
+certificate (`angle_energy`, normalized per vertex; the engine's shallow
+handoff gated off so it stays in engine mode).  357 stretches, degrees 2–4.
+
+**The fixed point is valid far below `KAPPA_HI`.**  Its lowest converged κ is
+**664** (`rel < 1e-10`); below that it genuinely diverges, `rel = inf` and the
+certificate runs to 1e224 and worse.  And where both work it is the better
+representation by a wide margin — in `[1e3, 1e4)`, entirely below `KAPPA_HI`,
+E/vertex is **1.82e−19 against the engine's 1.30e−17**, about 70×.
+
+**But extending its territory makes things worse.**  Holding `KAPPA_EXIT` at
+1e3 (safely above the 664 floor) and lowering only `KAPPA_HI`, over 147 cases:
+
+| HI (EXIT = 1e3) | median seam | median \|E\| |
+|--:|--:|--:|
+| **1e4** (current) | **4.61e−12** | **1.40e−09** |
+| 6e3 | 1.14e−11 | 2.21e−09 |
+| 3e3 | 4.81e−11 | 5.61e−09 |
+| 1.2e3 | 4.35e−10 | 6.74e−09 |
+
+Monotone, 150× on the median seam.  Both results are real, and the resolution
+is that **`KAPPA_HI` was never marking fixed-point validity** — it marks where
+the TRAJECTORY becomes slaved to the floor, which is the condition the handoff
+actually needs (`_continue_curve` already tests `|w − w₁| ≤ 0.05|w₁|`
+alongside the κ test).  Measured along traced branches:
+
+| κ band | median \|w − w₁\|/\|w₁\| | fraction slaved (≤ 5%) |
+|--:|--:|--:|
+| [1e3, 3e3) | 8.20e−02 | 43.9% |
+| [3e3, 1e4) | 3.24e−02 | 70.5% |
+| **[1e4, 3e4)** | **6.97e−03** | **95.1%** |
+| [3e4, 1e6) | 9.99e−03 | 97.4% |
+
+Slaving jumps to 95–97% exactly at `KAPPA_HI`.  Handing off earlier snaps a
+trajectory that has not yet reached the floor onto it, and the seam residual is
+the size of that snap.  So the current threshold is well chosen, and now has a
+mechanism rather than a tuning behind it.
+
+**Where this leaves the weak spot.**  The problem is not the location of the
+boundary but that the trajectory is not slaved when one would like to hand off.
+That reframes the remaining ideas:
+
+1. **Match where the representations agree best**, rather than at a fixed κ plus
+   a 5% test — i.e. choose the handoff to minimize `|w − w₁|` over the approach.
+   This is the same matched-asymptotics idea as before but now correctly
+   motivated: the quantity to match is the slaving error, not the gauge.
+2. **Correct the snap instead of avoiding it.**  The seam is measured at the
+   junction; a defect correction using it would let an unslaved handoff be
+   repaired rather than paid for.
+3. **Accelerate the approach to the floor** so slaving is achieved sooner.
+4. Only then, fail loudly.
+
 ### Still open
 2. **Match in an overlap region.**  When the profile has *no* samples in
    `[KAPPA_EXIT, KAPPA_HI)` there is no overlap in which to match, and the fixed
