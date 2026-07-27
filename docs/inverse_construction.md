@@ -341,15 +341,50 @@ Medians identical, tail repaired — the signature of a correct guard rather tha
 a retuning.  On the case itself: seam 3.42 → 8.67e−16, angle energy 32.2 →
 0.0033, four zones → three, and the backward zone gone.
 
-### Still open
+### TRIED AND REJECTED: the adaptive grid
 
-1. **Resolve the grid adaptively.**  A uniform `bg` over a span of 2e4 cannot
-   see structure living in ~5 units near the saddle, which is what put the
-   handoff where neither representation was validated.  The residual seam of
-   2.8e−06 on that case is the surviving engine→shallow junction at the coarse
-   node.  A grid clustered near the saddle (or refined where `kap` jumps
-   between adjacent nodes) is the real fix; note `grid_index` would need a
-   `searchsorted` rather than its O(1) inverse.
+The obvious next fix was to resolve the gauge table where it moves, since a
+uniform `bg` over a span of 2e4 cannot see structure occupying ~5 units near
+the saddle.  Implemented as gauge-driven refinement (bisect any interval across
+which log₁₀ κ moves by more than `dlog`, nodes built in a normalized coordinate
+so the index still increases toward the target) with `grid_index` becoming a
+`searchsorted`.
+
+**It is a regression, and the reason inverts the premise.**  On `g2`,
+`b* = 2¹⁸` — previously one zone with seam 7.5e−16 — refinement gives two
+zones, seam 1.2e−01 and angle energy **2.2e+03**.  Isolating the two changes
+shows the fault is the refinement alone, and that as few as **four** extra
+nodes are enough:
+
+| `dlog` | nodes | zones | seam | \|E\| |
+|--:|--:|--:|--:|--:|
+| 0.75 | 4034 | 2 | 1.24e−01 | 2.22e+03 |
+| 3.0 | 4005 | 2 | 1.24e−01 | 2.24e+03 |
+| 50 (no refinement) | 4001 | 1 | 7.48e−16 | 6.03e−01 |
+
+`searchsorted` alone is harmless — the last row has it active.
+
+**The coarse grid's mislabelling was load-bearing.**  Near the saddle the true
+gauge is low, but the nearest coarse node sits far out where the gauge is huge,
+so the zone loop read "shallow" and handed the stretch to the Hadamard fixed
+point, which traversed it cleanly.  An accurate table labels that stretch deep,
+hands it to the continuation engine, and the engine is what fails.
+
+The lesson is about where the weakness actually is: **the fixed point
+outperforms the engine even in territory the gauge calls deep.**  `KAPPA_HI`
+does not mark where the fixed point becomes *necessary*; the fixed point is
+already the better instrument well before that line.  Improving the handoff is
+therefore not a matter of locating it more precisely — it is a question of how
+much territory the fixed point should own, or of why the engine degrades on
+these near-saddle stretches.
+
+Note this cuts against the naive reading of the threshold sweep above, which
+found lowering `KAPPA_HI` globally made the suite median worse.  Both
+observations are on a uniform grid, where mislabelling already routes some
+near-saddle stretches to the fixed point regardless of the threshold; the two
+effects are entangled and neither measurement isolates the question.
+
+### Still open
 2. **Match in an overlap region.**  When the profile has *no* samples in
    `[KAPPA_EXIT, KAPPA_HI)` there is no overlap in which to match, and the fixed
    thresholds are meaningless for that branch.  Matching where the two
