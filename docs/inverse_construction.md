@@ -719,3 +719,42 @@ is NOT applied here pending a decision on which metric governs.  Note this is th
 opposite direction from the earlier "raise it" hypothesis, and both are now
 measured: raising degrades the tail monotonically, lowering improves the median
 seam and degrades median |E|.
+
+### Would IRK6-GL help?  Measured: yes in the mild region, not as a handoff fix
+
+B-convergence says the stiff regime observes the STAGE order: 2-stage Gauss
+(GL4) has classical 4 / stage 2; 3-stage (GL6) has classical 6 / stage 3.  So
+GL6 should buy +1 where it matters and, since `err_ODE ~ C1 h^3` against
+`err_GT ~ C2 h^2/kappa`, un-cancel the `h` dependence -- restoring a crossover
+the engine can reach by refining.
+
+**Measured (3-stage Gauss dropped into `_newton_stages`, b = 5/18, 4/9, 5/18).**
+Control on non-stiff problems: order 6.00, 6.00, 6.07 -- implementation correct.
+Along the manifold the gain is LARGER than the +1 predicted (observed order ~4,
+not 3):
+
+| case | kappa | GL4 | GL6 | GT (order 2) | GT (order 4) |
+|---|--:|--:|--:|--:|--:|
+| g2 2^3 | 7.3e+05 | 8.83e-18 | **6.25e-21** | 9.33e-20 | 4.05e-21 |
+| g2 2^5 | 8.9e+07 | 2.16e-16 | 4.46e-22 | 1.19e-23 | **2.58e-26** |
+| g4 2^5 | 5.1e+09 | 2.29e-18 | 1.26e-23 | 6.06e-28 | **2.02e-28** |
+
+GL6 **does** move the crossover: at kappa = 7.3e5 it beats the current transform
+15x, which GL4 never does at any step size.  But it cannot win the asymptotic
+argument -- GL6's gain is a fixed factor while the transform keeps an unbounded
+`1/kappa` damping, so above kappa ~ 1e7 the transform wins again.  **The handoff
+moves; it does not go away.**
+
+**The cheap alternative is exhausted.**  A 4th-order stencil for `w'` in the
+transform costs no Newton stages and is 3-460x better on isolated stretches, but
+over the 147-case suite it gives 1.81e-12 -> 1.79e-12 -- nothing.  Reason: the
+seam is measured AT THE ZONE EDGE, and once `edge_order=2` fixed the edge the
+interior stencil order stopped mattering.  The seam is no longer
+stencil-limited; what remains is the placement effect.
+
+**Recommendation.**  Adopt GL6 for the MILD region on classical order alone
+(order 6 vs 4 is fewer steps for the same accuracy, and that is where the engine
+does its production work), not as a way to push back the handoff.  Cost to weigh
+against it: `gl4_scalar` is a Tier-0 pure-float fast path built on a CLOSED-FORM
+2x2 stage Newton; three stages needs a 3x3 stage solve and that closed form does
+not carry over.
