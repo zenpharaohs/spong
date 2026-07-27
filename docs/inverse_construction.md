@@ -1126,3 +1126,54 @@ compare.  (The engine rejects such a step and halves.)
 
 No lost branches, no `abort_nonfinite`, no `abort_step_failure`; identical
 outcomes on every branch, with the seam 6x better.  GL6 qualifies out of sample.
+
+### Long out-of-sample run: the GL6 default confirmed, the large-|b| premise refuted
+
+150 untargeted random portraits plus 72 targeted models STRATIFIED by prescribed
+radius 2^k, GL4 vs GL6 on identical models, both arms in C.  Two claims tested
+separately, because pooling them would hide the second.
+
+**(a) GL6 is not worse on untargeted random portraits — confirmed, and it is
+better where it is supposed to be.**
+
+| | GL4 | GL6 |
+|---|--:|--:|
+| angle energy, paired | — | better 15, **tie 122**, worse 13 |
+| max angle energy | 1.58e+00 | **4.06e-01** |
+| median seam | 6.40e-14 | **1.55e-16** |
+| max seam | 2.25e-07 | **5.19e-11** |
+| seam, paired | — | **better 90, tie 32, worse 1** |
+| captures | 729/754 | 728/754 |
+| clean | 144/150 | 143/150 |
+
+Angle energy is a wash (122 of 150 ties), the tail is 4x better, seams are 400x
+better at the median and 4300x at the max.  Cost: one lost capture in 754.
+
+**(b) GL6 has a larger advantage where critical points sit at large |b| —
+REFUTED.**  The win count DECREASES with radius:
+
+| 2^k | GL6 seam better/tie/worse | med seam gl4 -> gl6 |
+|---|---|---|
+| 2^2 | **12/0/0** | 6.34e-14 -> 4.33e-17 |
+| 2^5 | **12/0/0** | 8.31e-12 -> 5.07e-15 |
+| 2^8 | 10/2/0 | 1.15e-08 -> 4.81e-12 |
+| 2^11 | 9/2/1 | 7.17e-14 -> 8.56e-19 |
+| 2^14 | **6/5/1** | 5.05e-15 -> 3.76e-16 |
+| 2^17 | 7/5/0 | 4.82e-15 -> 8.45e-19 |
+
+12, 12, 10, 9, 6, 7 — monotone-ish DOWN, not up.  The reason is architectural
+and should have been predicted: stiffness is POSITIONAL (log kappa vs log|b|
+r = +0.748), so large |b| means large kappa, which means **the fixed point owns
+that stretch and the engine barely runs there**.  GL6 improves the ENGINE, and
+the engine lives in the mild arc.  A large-|b| case hands MORE of its length to
+the transform, so a better integrator matters LESS, not more.
+
+This is the same lesson as "GL6 pays by tolerance, not by stiffness", arriving
+from the other direction: the integrator's contribution is bounded by how much
+arc it owns.  It also means the two improvements are complementary rather than
+overlapping — the 4th-order transform stencil is what pays at large |b|, and
+GL6 is what pays in the mild arc that every branch must cross.
+
+Pooled arm 2 for completeness: medE 6.80e-06 -> 8.26e-07, medSeam 6.09e-14 ->
+9.44e-16, seam paired 56 better / 12 tie / 2 worse, captures 324 vs 323, and
+maxSeam 3.76e-07 -> 1.47e-06 (GL6 4x worse on that one statistic).
