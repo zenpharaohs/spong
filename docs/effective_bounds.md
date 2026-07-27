@@ -218,3 +218,66 @@ finite unstable branch from a `B`-source saddle was nearly horizontal in the
 based only on `|Delta b|` over-resolved that branch until the continuation
 engine hit `max_steps` before reaching the target.  Finite-branch tracing now
 uses a conservative Euclidean chord budget when that is more informative.
+
+## The compute box has an upper bound too, and it is metrological
+
+The rule above ("if a branch exits before capturing, expand and retry") and the
+blanket `_trace_box` inflation both push the box OUTWARD.  Measurement says the
+box also has a hard *upper* limit, for a reason unrelated to topology: **past a
+certain radius the certificates cannot measure anything, and the flow does not
+need to be integrated.**
+
+Found by bisecting a regression in the founding MATLAB-parity gate
+(`test_tricky_branch_parity`).  It passes at `1ca22ed` and fails at `3938060`
+(`angle_energy` 3.70e-14 -> 2.01e-08 against a `< 1e-12` bound).  The cause is
+NOT the closed-form `_sym2_eigh` (verified bit-identical to `np.linalg.eigh`
+here) but `_trace_box`, which enlarged the integration box 1.35x:
+
+| | b-range | arc | vertices | E | E/vertex |
+|---|---|--:|--:|--:|--:|
+| `1ca22ed` | [-7.069, -2.738] | 4.330 | 4001 | 3.70e-14 | 9.26e-18 |
+| `3938060` | [-11.049, -2.738] | 8.310 | 4001 | 2.01e-08 | 5.02e-12 |
+
+The branch is *escaping*: it runs to the b-boundary in BOTH commits, so no
+finite box is ever the right answer for it.  It exits along the **degenerate
+b-pole**, not a diagonal — `asymptote_certificate` extrapolates slope 16116
+against target sqrt(d_eff) = 3.3166 (residual 1.06e+03), which is the
+certificate correctly declining to apply.  `rim_directions` already documents
+this direction: `bdot ~ -C_inf/b^2`, integrable in closed form as
+`b^3/3 = -C_inf t`, with `C_inf` an EXACT rational.
+
+**Where the energy actually comes from.**  Per-chord decomposition of the
+2.01e-08:
+
+| b window | E | % of total | med \|grad L\| | med floor | ratio |
+|---|--:|--:|--:|--:|--:|
+| [-4.0, -2.7) | 7.73e-20 | 0.0% | 8.66e-03 | 5.84e-10 | 1.5e+07 |
+| [-7.0, -5.0) | 3.41e-14 | 0.0% | 2.96e-03 | 4.06e-07 | 7.3e+03 |
+| [-9.0, -7.0) | 5.65e-11 | 0.3% | 1.41e-03 | 1.01e-05 | 1.4e+02 |
+| **[-11.1, -9.0)** | **2.00e-08** | **99.7%** | 7.86e-04 | 1.24e-04 | **6.3** |
+
+99.7% of it is in the arc that exists only because of the inflation.  `|grad L|`
+DECAYS (as `C_inf/b^2`) while its evaluation floor RISES (the cancellation scale
+grows with `|b|`), so the two converge: the direction of `grad L` carries ~7
+digits at b=-4 and **less than one** at b=-11.  `angle_energy` already documents
+this exact regime — "measures its own evaluation noise, not the curve (seen on
+far valley stretches where |grad L| ~ C_inf/b^2)" — but its guard fires only on
+`ng < floor`, a cliff that never triggers, so a continuous loss of meaning is
+reported as curve error.  **0 of 3999 vertices were skipped.**
+
+Note the branch is a single `shallow` zone with `switches=0`: it is traced
+entirely by the Hadamard fixed point, not the engine.  This is not an integrator
+accuracy problem, and cannot be fixed by more steps.
+
+**Rule.**  The outward box limit is the radius at which `|grad L|` falls to
+within a chosen digit budget of `g_floor` — a *metrological* bound, computable a
+priori from `C_inf` and the coefficient scales, not a heuristic multiple of the
+view.  Beyond it: attach the closed-form b-pole tail, certify with `C_inf`, and
+integrate nothing.  Two consequences for the code:
+
+1. `_trace_box`'s 1.35x inflation should be replaced by (or intersected with)
+   this bound.  Inflating costs resolution exactly where resolution is already
+   meaningless, since the chord budget stays fixed while the arc grows.
+2. `angle_energy`'s noise guard should be graded (skip when `ng < K*g_floor`
+   for a digit budget K, K >> 1) rather than a cliff at `K = 1`.  Otherwise the
+   certificate silently reports evaluation noise as geometry.
