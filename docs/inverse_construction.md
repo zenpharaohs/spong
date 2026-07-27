@@ -210,12 +210,47 @@ uniform-[0,1] moments, tracing every unstable branch:
 | 64 | 2.1e14 | shallow | capture | 1.1e−09 |
 | 256 | 2.0e16 | shallow | capture | 1.8e−07 |
 
-Fifteen orders of gauge, monotone, with the mild→shallow handoff at `b* = 4`.
-The seam residual degrades by roughly fourteen orders across it — close to
-linear in the gauge — and **every branch still terminates in `capture` at
-κ = 2e16**.  That is the degradation law, and it is only measurable because
-prescription can build the ladder; the random sample in the section above never
-produced a single branch that entered shallow water.
+Fifteen orders of gauge, monotone, with the mild→shallow handoff at `b* = 4`,
+and every branch terminating in `capture`.  Only measurable because
+prescription can build the ladder: the random sample in the section above never
+produced a single branch that entered shallow water at all.
+
+### Turning the knob until it breaks — it doesn't
+
+**First: the gauge saturates.**  `depth_gauge_floor` divides by
+`max(|w₁'|, 1e-16·|a*'|)`, so it cannot report more than `2/1e-16 = 2e16`.
+Every reading at 2e16 is that ceiling, not a measurement.  The raw ratio
+`2|a*'|/|w₁'|` is needed to see past it.
+
+Pushing `b*` from 2⁸ to 2²⁶ (≈ 6.7e7), raw gauge 2.3e18 → **5.2e61**:
+
+| `b*` | raw gauge | zones | switches | term | seam |
+|--:|--:|--:|--:|---|--:|
+| 2⁸ | 2.3e18 | 2 | 0 | capture | 3.2e−07 |
+| 2¹² | 1.0e28 | 2 | 0 | capture | 8.7e−07 |
+| **2¹⁴** | **6.5e32** | **4** | **1** | capture | **8.6e−05** |
+| 2¹⁵ | 1.7e35 | 1 | 0 | capture | 2.6e−16 |
+| 2¹⁸ | 2.8e42 | 1 | 0 | capture | 7.5e−16 |
+| 2²⁶ | 5.2e61 | 1 | 0 | capture | 6.5e−16 |
+
+Capture never fails, over 43 further orders of raw gauge.  All of these are
+genuine traces — Morse, two critical points, ~4000 polyline points, spans out
+to 6.7e7 — not degenerate collapses.
+
+**Difficulty is not monotone in stiffness.**  The worst seam residual on the
+whole ladder, 8.6e−05, is at `b* = 2¹⁴`, precisely where the branch has *four*
+zones and *one* chart switch: it straddles the mild/shallow boundary and
+alternates.  Past the transition the branch is entirely in shallow water — one
+zone, no handoffs, the Hadamard fixed point owning all of it — and the seam
+falls back to roundoff (~6e−16), nine orders better than at the transition.
+
+**Uniform stiffness is easy; mixed stiffness is hard.**  The instrument is
+stressed by the *handoff*, not by the magnitude of κ.  A suite that only pushes
+the extreme will therefore find nothing; the cases worth generating are the
+ones that sit on the mild↔shallow boundary and cross it repeatedly.  Note also
+that the prescription controls *where* a critical point is, not *which kind* —
+in this family the prescribed point consistently became the far minimum, with
+the saddle staying near b = −1.066.
 
 ## Status and what is left
 
@@ -232,6 +267,8 @@ Left to do:
    enumeration.
 2. Suite indexed by **geometry**: prescribed radii, close approaches at chosen
    separations, clusters — not by degree.
-3. Push the ladder past κ = 2e16 to find where `capture` finally fails.
+3. Generate *transition-straddling* cases deliberately — branches that cross
+   the mild/shallow boundary several times — since that is where the seam
+   residual actually peaks.  Pushing κ higher is not informative.
 4. Experiment: can the free parameters push surplus roots complex, giving
    exactly the prescribed real critical set?

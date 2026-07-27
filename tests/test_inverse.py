@@ -155,3 +155,47 @@ def test_stiffness_ladder_is_monotone_in_gauge(mu):
         assert rep.missing == ()
         gauges.append(rep.gauges[0])
     assert all(a < b for a, b in zip(gauges, gauges[1:])), gauges
+
+
+# ------------------------------------------------- the knob, turned till it breaks
+
+def test_extreme_stiffness_is_easier_than_the_transition(mu):
+    """Difficulty is NOT monotone in the gauge.
+
+    At the mild/shallow boundary a branch straddles both zones and pays for
+    the handoff; past it the branch is entirely shallow water, the Hadamard
+    fixed point owns all of it, and the seam falls back to roundoff.  So the
+    instrument is stressed by the HANDOFF, not by the magnitude of kappa --
+    which is why pushing kappa alone finds nothing.
+    """
+    def trace(target):
+        d = inverse.design([target], G, mu)
+        e = sturm.enumerate_critical_points(d.model)
+        s = e.saddles[0]
+        side = [p for p in e.minima if p.b > s.b] or \
+               [p for p in e.minima if p.b < s.b]
+        t = min(side, key=lambda p: abs(p.b - s.b))
+        br = charts.trace_unstable(d.model, s.b, (t.a, t.b),
+                                   box=(-1e9, 1e9, -1e9, 1e9),
+                                   ds=abs(t.b - s.b) / 2000.0)
+        seams = br.certs.get("seam_residuals", [])
+        return br, max((abs(float(x)) for x in seams), default=0.0)
+
+    transition, seam_mid = trace(F(2) ** 14)
+    extreme, seam_far = trace(F(2) ** 18)
+
+    assert transition.term == "capture" and extreme.term == "capture"
+    # the far case is uniformly shallow: one zone, no chart handoffs
+    assert len(extreme.diag.get("zones", [])) == 1
+    assert extreme.diag.get("switches", 0) == 0
+    # and is orders of magnitude cleaner than the straddling case
+    assert seam_far < seam_mid
+
+
+def test_the_depth_gauge_saturates_and_the_cap_is_known(mu):
+    """depth_gauge_floor divides by max(|w1'|, 1e-16 |a*'|), so it cannot
+    report more than 2e16.  A reading AT the cap means 'at least', not 'equal'
+    -- anything gating on the magnitude beyond that needs the raw ratio."""
+    d = inverse.design([F(2) ** 20], G, mu)
+    assert inverse.depth_gauge_at(d.model, F(2) ** 20) == pytest.approx(2e16,
+                                                                       rel=1e-9)
