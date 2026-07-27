@@ -255,26 +255,57 @@ static double gl6_step(Kernel *k, FJ fj, double x, double y, double h) {
         if (n1 == 0.0 || n2 == 0.0 || n3 == 0.0) {
             return NAN;
         }
-        m11 /= n1; m12 /= n1; m13 /= n1;
-        m21 /= n2; m22 /= n2; m23 /= n2;
-        m31 /= n3; m32 /= n3; m33 /= n3;
-        double s1 = r1 / n1, s2 = r2 / n2, s3 = r3 / n3;
-        double C11 = m22 * m33 - m23 * m32;
-        double C12 = -(m21 * m33 - m23 * m31);
-        double C13 = m21 * m32 - m22 * m31;
-        double det = m11 * C11 + m12 * C12 + m13 * C13;
-        if (fabs(det) < STAGE_GUARD) {
-            return NAN;         /* caller rejects the step */
+        /* Row-equilibrate, then LU with PARTIAL PIVOTING: half the flops of
+         * an adjugate, determinant just as free (product of pivots), and every
+         * multiplier bounded by 1 -- removing the overflow hazard structurally
+         * (the unscaled adjugate died at |h*J| ~ 1e150 on triple products).
+         * Must stay bit-comparable with gauss.gl6_scalar. */
+        double A_[3][3] = {{m11 / n1, m12 / n1, m13 / n1},
+                           {m21 / n2, m22 / n2, m23 / n2},
+                           {m31 / n3, m32 / n3, m33 / n3}};
+        double v_[3] = {r1 / n1, r2 / n2, r3 / n3};
+        double det = 1.0;
+        for (int col = 0; col < 3; col++) {
+            int p = col;
+            double big = fabs(A_[col][col]);
+            for (int row = col + 1; row < 3; row++) {
+                if (fabs(A_[row][col]) > big) {
+                    big = fabs(A_[row][col]);
+                    p = row;
+                }
+            }
+            if (p != col) {
+                for (int k2 = 0; k2 < 3; k2++) {
+                    double t = A_[col][k2];
+                    A_[col][k2] = A_[p][k2];
+                    A_[p][k2] = t;
+                }
+                double t = v_[col];
+                v_[col] = v_[p];
+                v_[p] = t;
+                det = -det;
+            }
+            double piv = A_[col][col];
+            det *= piv;
+            if (piv == 0.0) break;
+            for (int row = col + 1; row < 3; row++) {
+                double f2 = A_[row][col] / piv;
+                for (int k2 = col; k2 < 3; k2++) {
+                    A_[row][k2] -= f2 * A_[col][k2];
+                }
+                v_[row] -= f2 * v_[col];
+            }
         }
-        double C21 = -(m12 * m33 - m13 * m32);
-        double C22 = m11 * m33 - m13 * m31;
-        double C23 = -(m11 * m32 - m12 * m31);
-        double C31 = m12 * m23 - m13 * m22;
-        double C32 = -(m11 * m23 - m13 * m21);
-        double C33 = m11 * m22 - m12 * m21;
-        K1 -= (C11 * s1 + C21 * s2 + C31 * s3) / det;
-        K2 -= (C12 * s1 + C22 * s2 + C32 * s3) / det;
-        K3 -= (C13 * s1 + C23 * s2 + C33 * s3) / det;
+        /* |det| of the equilibrated matrix IS the Hadamard ratio */
+        if (fabs(det) < STAGE_GUARD) {
+            return NAN;         /* caller rejects the step; it halves */
+        }
+        double d3 = v_[2] / A_[2][2];
+        double d2 = (v_[1] - A_[1][2] * d3) / A_[1][1];
+        double d1 = (v_[0] - A_[0][1] * d2 - A_[0][2] * d3) / A_[0][0];
+        K1 -= d1;
+        K2 -= d2;
+        K3 -= d3;
     }
     return y + h * (5.0 / 18.0 * K1 + 4.0 / 9.0 * K2 + 5.0 / 18.0 * K3);
 }

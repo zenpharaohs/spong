@@ -1075,3 +1075,54 @@ affects BOTH methods equally, so it is not the GL6 port.  Note also that these
 are step sizes the adaptive controller would never take (the probe sampled `h`
 independently of local stiffness), so production never visits them — but the
 parity test currently pins only three benign points and should be widened.
+
+### Closing the parity gap, and LU instead of the adjugate
+
+**LU with partial pivoting replaces the 3x3 adjugate** (Andrew: in the
+diagonally dominant case LU is guaranteed stable, and partial pivoting is cheap
+at 3x3).  It is better on every axis that matters:
+
+| | mults | divs | overflow risk | det for the guard |
+|---|--:|--:|---|---|
+| adjugate | ~30 | 3 | TRIPLE products | free |
+| **LU + partial pivot** | **~13** | 6 | multipliers bounded by 1 | free (prod of pivots) |
+
+Pivoting removes the overflow hazard *structurally* rather than by scaling
+around it, and both regimes are covered: unpivoted LU is provably stable below
+the dominance threshold |h·J| < 1.64, pivoting handles above it, 3x3 growth
+factor at most 4.  Row equilibration is kept so |det| of the reduced matrix
+remains exactly the Hadamard ratio the guard uses.
+
+Cost, measured where it matters: **1.18x GL4 per step in the native kernel**
+(0.067s vs 0.057s over 400k steps) — against ~10x fewer steps at 1e-12.  The
+Python `gl6_scalar` reads 2.47x (was 2.01x with the adjugate) because list
+indexing costs more than straight-line locals, but that path is the ORACLE, not
+production: it exists to pin the C implementation via the parity test, so
+clarity wins over speed there and it is deliberately left as the plain loop.
+
+**The parity test was widened and now covers the operating range.**  The old
+version pinned three benign points and could not have caught a divergence.  The
+new one sweeps both charts with `h` chosen from the LOCAL stiffness (|h·J| across
+mild and stiff), which matters: sampling `h` independently of stiffness
+generates |h·J| ~ 1e4 steps the adaptive controller never takes, where GL4
+disagrees with itself just as much as GL6 does.
+
+It also restricts to states where the stage Newton CONVERGED.  Of 3000 samples
+only 3 diverged, all with Newton residual 4.8-23.2 instead of ~1e-13: both paths
+exhaust their iterations and land on different non-solutions.  That is a
+property of the problem, not a discrepancy between implementations — parity is a
+claim about the method, and an unsolved stage system has no defined answer to
+compare.  (The engine rejects such a step and halves.)
+
+**Out-of-sample verdict, final.**  GL6 now matches GL4 exactly:
+
+| | GL4 | GL6 |
+|---|--:|--:|
+| captures / box exits (545 branches) | 254 / 291 | **254 / 291** |
+| clean portraits (arm 1) | 28/30 | **28/30** |
+| capture rate | 94.4% | **94.4%** |
+| max seam | 4.31e-12 | **7.36e-13** |
+| angle energy | — | 49 of 55 ties within 5%, median ratio 1.0000 |
+
+No lost branches, no `abort_nonfinite`, no `abort_step_failure`; identical
+outcomes on every branch, with the seam 6x better.  GL6 qualifies out of sample.

@@ -295,31 +295,54 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         if abs(m33) > n3: n3 = abs(m33)
         if n1 == 0.0 or n2 == 0.0 or n3 == 0.0:
             raise FloatingPointError("GL6 stage matrix has a zero row")
-        m11 /= n1; m12 /= n1; m13 /= n1; s1 = r1 / n1
-        m21 /= n2; m22 /= n2; m23 /= n2; s2 = r2 / n2
-        m31 /= n3; m32 /= n3; m33 /= n3; s3 = r3 / n3
-        C11 = m22 * m33 - m23 * m32
-        C12 = -(m21 * m33 - m23 * m31)
-        C13 = m21 * m32 - m22 * m31
-        det = m11 * C11 + m12 * C12 + m13 * C13
+        # Row-equilibrate, then LU with PARTIAL PIVOTING.  Half the flops of an
+        # adjugate (~13 mults vs ~30), the determinant is just as free (product
+        # of pivots), and pivoting bounds every multiplier by 1 — which removes
+        # the overflow hazard structurally rather than by scaling around it
+        # (the unscaled adjugate died at |h·J| ~ 1e150 on triple products).
+        # Both regimes are covered: below the diagonal-dominance threshold
+        # |h·J| < 1.64 LU is stable even unpivoted, and pivoting handles above
+        # it, with a 3x3 growth factor of at most 4.
+        a = [[m11 / n1, m12 / n1, m13 / n1],
+             [m21 / n2, m22 / n2, m23 / n2],
+             [m31 / n3, m32 / n3, m33 / n3]]
+        v = [r1 / n1, r2 / n2, r3 / n3]
+        det = 1.0
+        for col in range(3):
+            p = col
+            big = abs(a[col][col])
+            for row in range(col + 1, 3):
+                if abs(a[row][col]) > big:
+                    big, p = abs(a[row][col]), row
+            if p != col:
+                a[col], a[p] = a[p], a[col]
+                v[col], v[p] = v[p], v[col]
+                det = -det
+            piv = a[col][col]
+            det *= piv
+            if piv == 0.0:
+                break
+            for row in range(col + 1, 3):
+                f_ = a[row][col] / piv
+                for k_ in range(col, 3):
+                    a[row][k_] -= f_ * a[col][k_]
+                v[row] -= f_ * v[col]
         # Ill-conditioning guard (the ONLY guard needed: entries are
         # essentially exact, so small backward error IS small forward error
         # via forward <= cond * backward, and any backward-stable solve does).
+        # |det| of the equilibrated matrix IS the Hadamard ratio.
         if abs(det) < _STAGE_GUARD:
             raise FloatingPointError(
                 "GL6 stage matrix is ill-conditioned "
                 f"(Hadamard ratio {abs(det):.2e} < {_STAGE_GUARD:.0e}); "
                 "h*lambda is not dissipative, so the Pade/A-stability bound "
                 "does not apply here")
-        C21 = -(m12 * m33 - m13 * m32)
-        C22 = m11 * m33 - m13 * m31
-        C23 = -(m11 * m32 - m12 * m31)
-        C31 = m12 * m23 - m13 * m22
-        C32 = -(m11 * m23 - m13 * m21)
-        C33 = m11 * m22 - m12 * m21
-        K1 -= (C11 * s1 + C21 * s2 + C31 * s3) / det
-        K2 -= (C12 * s1 + C22 * s2 + C32 * s3) / det
-        K3 -= (C13 * s1 + C23 * s2 + C33 * s3) / det
+        d3 = v[2] / a[2][2]
+        d2 = (v[1] - a[1][2] * d3) / a[1][1]
+        d1 = (v[0] - a[0][1] * d2 - a[0][2] * d3) / a[0][0]
+        K1 -= d1
+        K2 -= d2
+        K3 -= d3
     return y + h * (b1 * K1 + b2 * K2 + b3 * K3)
 
 

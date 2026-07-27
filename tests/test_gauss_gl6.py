@@ -277,21 +277,126 @@ def test_gl6_dense_differs_from_the_gl4_polynomial():
 # ---------------------------------------------------------- native parity --
 
 
+def _stage_newton_converged(f, j, x, y, h, tol=1e-13, maxit=30):
+    """Did the GL6 stage Newton actually converge at this state?
+
+    Parity is a claim about the METHOD.  Where the stage equations are not
+    solved, neither path has a defined answer: both run out of iterations and
+    land on different non-solutions, which is a property of the problem, not a
+    discrepancy between implementations.  (The engine rejects such a step and
+    halves — see the retry loop in charts._continue_curve.)
+    """
+    c, A = gauss._GL3_C, gauss._GL3_A
+    xs = [x + ci * h for ci in c]
+    K = [f(x, y)] * 3
+    for _ in range(maxit):
+        Y = [y + h * (A[i][0] * K[0] + A[i][1] * K[1] + A[i][2] * K[2])
+             for i in range(3)]
+        r = [K[i] - f(xs[i], Y[i]) for i in range(3)]
+        if max(abs(v) for v in r) < tol * (1.0 + max(abs(v) for v in K)):
+            return True
+        J = [j(xs[i], Y[i]) for i in range(3)]
+        M = [[(1.0 if i == k else 0.0) - h * A[i][k] * J[i] for k in range(3)]
+             for i in range(3)]
+        rhs = [-r[i] for i in range(3)]
+        try:
+            d = np.linalg.solve(np.array(M), np.array(rhs))
+        except np.linalg.LinAlgError:
+            return False
+        if not np.all(np.isfinite(d)):
+            return False
+        K = [K[i] + float(d[i]) for i in range(3)]
+    return False
+
+
 def test_native_and_python_agree_on_the_gl6_default():
-    """The C kernel and the Python fallback must be the SAME method: if the
-    extension shipped GL4 while Python ran GL6, behaviour would depend on
-    whether the .so was built."""
-    _native = pytest.importorskip("spong._native")
+    """The C kernel and the Python fallback must be the SAME method.
+
+    Widened after an out-of-sample probe found the previous three-point version
+    could not have detected a divergence: it pinned only benign states.  This
+    sweeps the range the adaptive controller actually operates in, choosing h
+    from the LOCAL stiffness (|h·J| spanning the mild and stiff regimes) rather
+    than independently of it — sampling h blindly generates |h·J| ~ 1e4 steps
+    that the controller would never take, where both methods are meaningless
+    and GL4 disagrees with itself just as much.
+    """
+    pytest.importorskip("spong._native")
     from fractions import Fraction as F_
     from spong import charts, model
 
-    f = [F_(1), F_(1), F_(1, 2)]
-    m = model.build(f, f, model.moments_uniform01(9))
+    rng = np.random.default_rng(20260727)
+    worst = 0.0
+    checked = 0
+    for coeffs in ([F_(1), F_(1), F_(1, 2)],
+                   [F_(1), F_(1), F_(1, 2), F_(1, 6)],
+                   [F_(1), F_(-1), F_(1, 3), F_(1, 5)]):
+        m = model.build([float(c) for c in coeffs], [float(c) for c in coeffs],
+                        model.moments_uniform01(15))
+        k = m._native_kernel
+        if k is None:
+            pytest.skip("native kernel not built")
+        sf, sj = charts.slow_rhs_s(m)
+        for _ in range(400):
+            b = float(rng.uniform(-3.0, 3.0))
+            w = float(rng.normal(0.0, 1.0) * 10.0 ** rng.uniform(-12, -2))
+            try:
+                J = sj(b, w)
+            except Exception:
+                continue
+            if not np.isfinite(J) or J == 0.0:
+                continue
+            # h chosen so |h*J| lands in the controller's real range
+            h = float(rng.choice([1e-3, 1e-2, 1e-1, 1.0]) / abs(J))
+            h *= float(rng.choice([1.0, -1.0]))
+            if not _stage_newton_converged(sf, sj, b, w, h):
+                continue                      # no defined answer to compare
+            try:
+                nv, pv = k.slow_step(b, w, h), gauss.gl6_scalar(sf, sj, b, w, h)
+            except Exception:
+                continue
+            if not (np.isfinite(nv) and np.isfinite(pv)):
+                assert not np.isfinite(nv) and not np.isfinite(pv), (
+                    "one path produced a finite step and the other did not")
+                continue
+            checked += 1
+            worst = max(worst, abs(nv - pv) / max(abs(pv), abs(w), 1e-16))
+    assert checked > 500, f"only {checked} usable samples"
+    assert worst < 1e-10, f"native/python divergence {worst:.2e}"
+
+
+def test_native_and_python_agree_on_the_fast_chart():
+    """Same, for the other chart — the earlier test covered only the slow one."""
+    pytest.importorskip("spong._native")
+    from fractions import Fraction as F_
+    from spong import charts, model
+
+    rng = np.random.default_rng(11)
+    m = model.build([1.0, 1.0, 0.5], [1.0, 1.0, 0.5], model.moments_uniform01(15))
     k = m._native_kernel
     if k is None:
         pytest.skip("native kernel not built")
-    sf, sj = charts.slow_rhs_s(m)
-    for b0, w0, h in ((0.4, 0.05, 1e-3), (-0.7, -0.02, 5e-4), (1.1, 0.01, 2e-3)):
-        native = k.slow_step(b0, w0, h)
-        py = gauss.gl6_scalar(sf, sj, b0, w0, h)
-        assert abs(native - py) <= 1e-12 * max(abs(py), 1e-9)
+    ff, fj = charts.fast_rhs_s(m)
+    worst, checked = 0.0, 0
+    for _ in range(600):
+        w = float(rng.normal(0.0, 1.0) * 10.0 ** rng.uniform(-10, -2))
+        b = float(rng.uniform(-3.0, 3.0))
+        try:
+            J = fj(w, b)
+        except Exception:
+            continue
+        if not np.isfinite(J) or J == 0.0:
+            continue
+        h = float(rng.choice([1e-3, 1e-2, 1e-1]) / abs(J)) * float(
+            rng.choice([1.0, -1.0]))
+        if not _stage_newton_converged(ff, fj, w, b, h):
+            continue
+        try:
+            nv, pv = k.fast_step(w, b, h), gauss.gl6_scalar(ff, fj, w, b, h)
+        except Exception:
+            continue
+        if not (np.isfinite(nv) and np.isfinite(pv)):
+            continue
+        checked += 1
+        worst = max(worst, abs(nv - pv) / max(abs(pv), abs(b), 1e-16))
+    assert checked > 200, f"only {checked} usable samples"
+    assert worst < 1e-10, f"native/python divergence {worst:.2e}"
