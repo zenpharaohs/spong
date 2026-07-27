@@ -758,3 +758,54 @@ does its production work), not as a way to push back the handoff.  Cost to weigh
 against it: `gl4_scalar` is a Tier-0 pure-float fast path built on a CLOSED-FORM
 2x2 stage Newton; three stages needs a 3x3 stage solve and that closed form does
 not carry over.
+
+### What the wider overlap actually buys: certification, not consensus
+
+The point of GL6 is not to beat the transform (it cannot -- fixed factor vs
+unbounded `1/kappa`).  It is that a wider band in which BOTH methods are
+genuinely accurate is what makes *matching* possible.  With GL4 the overlap is
+where both are fraying, which is why averaging failed there.
+
+**The band widens by five decades.**  Relative errors at matched `n`, and the
+count of stretches where BOTH methods are usable (rel err < 1e-6):
+
+| kappa band | GL4/GT | GL6/GT | both usable (GL4) | (GL6) |
+|---|--:|--:|--:|--:|
+| 1e4-1e6 | 5.2e+02 | **8.4e-03** | 23/26 | **26/26** |
+| 1e6-1e8 | 6.6e+04 | **2.2e-01** | 8/11 | **11/11** |
+| 1e8-1e10 | 1.7e+08 | 8.4e+02 | 1/4 | **4/4** |
+| 1e10-1e13 | 1.2e+10 | 1.5e+05 | 1/6 | **6/6** |
+| 1e13+ | 3.1e+295 | 1.1e+292 | 1/36 | 23/36 |
+
+With GL4 the overlap dies by kappa ~ 1e8; with GL6 it survives past 1e13.  Note
+the GL6/GT ratios BELOW 1 in 1e4-1e8: GL6 is better than the transform in the
+very band the dispatcher currently gives away at `KAPPA_HI = 1e4`.
+
+**In that band the disagreement is a perfect error estimator** (41 stretches,
+kappa in [1e4,1e10)):
+
+```
+median |w6 - wGT| / max(err) = 1.000
+within 10x of max(err)        : 41/41
+never UNDER-estimates by >10x : 41/41
+```
+
+This is the prize.  Every accuracy measurement in this note has been limited by
+needing a reference trajectory that is itself an engine run, self-consistent only
+to ~1e-8.  Two independent representations of comparable accuracy give a
+**reference-free certified error bound** at every point of the overlap.
+
+**Consensus (averaging) still fails, and now the reason is visible.**  Better
+than both in 1/41, worse than both in 0/41, but median consensus 3.30e-19 against
+GL6's 1.24e-20 -- 27x worse than simply taking the better method.  The two errors
+differ by ~24x, so the average drags the good estimate toward the bad one.
+Blending needs errors that are comparable AND independent; these are neither.
+
+**So the overlap is for certification and placement, not blending.**  Hand off to
+whichever method is better, and use the disagreement to (a) certify the result
+without a reference and (b) choose WHERE to hand off -- minimizing disagreement
+within the overlap, which is the matched-asymptotics answer.  That is directly
+the tool the residual problem needs: every other line of attack (raising
+`KAPPA_HI`, lowering it, spectral criteria, stencil order) ended by pointing at
+placement, and placement is what a reference-free error estimate can finally
+resolve.
