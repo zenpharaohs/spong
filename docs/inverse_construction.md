@@ -860,3 +860,40 @@ suite metric, not of the method.
 representations are near-exact across kappa in [1e4, 1e13].  That widens the
 matching band from BOTH sides — and matching, not blending, is what the overlap
 is for.
+
+### When GL6 pays: it is a TOLERANCE question, not a stiffness question
+
+An earlier note here said the order gain is "bought purely with per-step flops"
+because GL6 converges in the same number of NEWTON iterations as GL4.  That
+conflated two loops.  Newton iterations solve the stage equations and are
+governed by the contraction of the Newton map, so of course order does not enter.
+The loop where order matters is the OUTER Richardson ladder (`solve_richardson`:
+n, 2n, 4n with Aitken extrapolation, stop when successive extrapolants agree).
+
+Measured, `n0 = 8`, counting rungs climbed and wall time:
+
+| problem | tol | GL4 n | GL6 n | fewer doublings | wall time |
+|---|--:|--:|--:|--:|--:|
+| oscillatory omega=2 | 1e-08 | 64 | 64 | 0 | **0.68x** (GL6 slower) |
+| oscillatory omega=2 | 1e-12 | 2048 | 128 | 4 | **10.8x** |
+| oscillatory omega=8 | 1e-08 | 256 | 128 | 1 | 1.3x |
+| oscillatory omega=8 | 1e-12 | 8192 | 512 | 4 | 10.5x |
+| oscillatory omega=24 | 1e-08 | 1024 | 256 | 2 | 2.6x |
+| oscillatory omega=24 | 1e-12 | 16384 | 2048 | 3 | 5.2x |
+| stiff nonlinear lam=-50 | 1e-08 | 64 | 64 | 0 | **0.66x** |
+| stiff nonlinear lam=-50 | 1e-12 | 4096 | 256 | 4 | **10.4x** |
+| stiff nonlinear lam=-500 | 1e-08 | 256 | 64 | 2 | 2.8x |
+| nonlinear (vdP-like) | 1e-12 | 1024 | 128 | 3 | 4.8x |
+
+**The pattern is sharp.**  When GL4's error is not the binding constraint — easy
+problem, loose tolerance — the ladder stops at the same rung for both and GL6
+simply pays 1.93x per step for nothing (0.66-0.68x, i.e. ~1.5x SLOWER).  The
+moment GL4's error IS the constraint, GL6 climbs 3-4 fewer rungs, uses 8-16x
+fewer steps and runs 4.8-10.8x faster.  Wall-clock beats the naive
+`16x / 1.93x = 8.3x` estimate because fewer rungs also drops the whole tail of
+the ladder, not just the final trajectory.
+
+**Dispatch rule.**  Choose by TOLERANCE (and derivative richness), not by
+stiffness: GL6 above roughly 1e-10, GL4 below.  That favours GL6 where spong
+actually operates — plotting tolerance is loose, but the founding gates demand
+`angle_energy < 1e-12` and seam residuals land at ~1e-12.

@@ -51,6 +51,14 @@ _TABLEAU = {
 _NEWTON_TOL = 1e-13
 _NEWTON_MAX = 30
 
+# Ill-conditioning trip for the closed-form stage solve, as a Hadamard-style
+# ratio |det M| / prod(row inf-norms).  Measured: the ratio saturates at
+# 0.4159 for ANY dissipative stiffness (= 1/(120*prod_i max_j|a_ij|), matched
+# exactly), worst case 0.4009 over random varying-D, versus 2.9e-08 at a true
+# singularity.  Seven orders of separation; cond ~ 4-8/ratio, so this trips at
+# cond ~ 5e3 -- unreachable dissipatively, well before any loss of accuracy.
+_STAGE_GUARD = 1e-3
+
 
 def _fd_jac(F, x, y, f0):
     n = y.size
@@ -256,6 +264,25 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         C31 = m12 * m23 - m13 * m22
         C32 = -(m11 * m23 - m13 * m21)
         C33 = m11 * m22 - m12 * m21
+        # Ill-conditioning guard (the ONLY guard needed: entries are
+        # essentially exact, so small backward error IS small forward error
+        # via forward <= cond * backward, and any backward-stable solve does).
+        # Hadamard-style ratio, free here since det is already formed.
+        n1 = abs(m11)
+        if abs(m12) > n1: n1 = abs(m12)
+        if abs(m13) > n1: n1 = abs(m13)
+        n2 = abs(m21)
+        if abs(m22) > n2: n2 = abs(m22)
+        if abs(m23) > n2: n2 = abs(m23)
+        n3 = abs(m31)
+        if abs(m32) > n3: n3 = abs(m32)
+        if abs(m33) > n3: n3 = abs(m33)
+        if abs(det) < _STAGE_GUARD * n1 * n2 * n3:
+            raise FloatingPointError(
+                "GL6 stage matrix is ill-conditioned "
+                f"(Hadamard ratio {abs(det) / (n1 * n2 * n3):.2e} < "
+                f"{_STAGE_GUARD:.0e}); h*lambda is not dissipative, so the "
+                "Pade/A-stability bound does not apply here")
         K1 -= (C11 * r1 + C21 * r2 + C31 * r3) / det
         K2 -= (C12 * r1 + C22 * r2 + C32 * r3) / det
         K3 -= (C13 * r1 + C23 * r2 + C33 * r3) / det

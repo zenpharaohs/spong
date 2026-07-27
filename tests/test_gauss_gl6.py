@@ -121,6 +121,51 @@ def test_stage_matrix_conditioning_is_bounded_in_stiffness():
     assert abs(conds[-1] - conds[-2]) < 1e-6      # saturated
 
 
+def test_conditioning_guard_never_trips_on_dissipative_problems():
+    """The guard is the only thing needed: entries are essentially exact, so
+    small backward error IS small forward error, and any backward-stable solve
+    serves.  It must therefore be silent across the whole dissipative range."""
+    for lam in (-1.0, -1e3, -1e6, -1e9, -1e12, -1e15):
+        fs = lambda x, y: lam * y
+        js = lambda x, y: lam
+        y, h = 1.0, 1.0 / 50
+        for i in range(50):
+            y = gauss.gl6_scalar(fs, js, i * h, y, h)     # must not raise
+        assert np.isfinite(y)
+
+
+def test_conditioning_guard_trips_at_a_true_singularity():
+    """At a Pade-denominator root the stage matrix IS singular; the guard must
+    say so rather than dividing by a near-zero determinant."""
+    A = _A3()
+    z = 4.644371                       # real root of Q3, anti-dissipative
+    lam, h = z / 0.01, 0.01
+    fs = lambda x, y: lam * y
+    js = lambda x, y: lam
+    ratio = (abs(np.linalg.det(np.eye(3) - z * A))
+             / np.prod([max(abs((np.eye(3) - z * A)[i])) for i in range(3)]))
+    assert ratio < gauss._STAGE_GUARD          # calibration holds
+    with pytest.raises(FloatingPointError, match="ill-conditioned"):
+        gauss.gl6_scalar(fs, js, 0.0, 1.0, h)
+
+
+def test_guard_threshold_sits_between_healthy_and_singular():
+    """Seven orders of separation: healthy saturates at 0.4159, a genuine
+    singularity is ~2.9e-08.  The trip must lie strictly between."""
+    A = _A3()
+
+    def ratio(M):
+        return (abs(np.linalg.det(M))
+                / np.prod([max(abs(M[i])) for i in range(3)]))
+
+    healthy = min(ratio(np.eye(3) - z * A)
+                  for z in (-1e2, -1e4, -1e8, -1e12, -1e16))
+    singular = ratio(np.eye(3) - 4.644371 * A)
+    assert singular < gauss._STAGE_GUARD < healthy
+    assert healthy / gauss._STAGE_GUARD > 100.0
+    assert gauss._STAGE_GUARD / singular > 100.0
+
+
 def test_diagonal_dominance_threshold_covers_the_mild_regime():
     """Second, independent guarantee (Andrew): for small enough h the stage
     matrix is diagonally dominant, so LU is stable WITHOUT pivoting.
