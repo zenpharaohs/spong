@@ -48,7 +48,6 @@ TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
 # angle_energy_detail.
 ANGLE_DIGIT_BUDGET = 1e3
 
-
 # --------------------------------------------------------------------- #
 # soundings, velocities, launch data                                     #
 # --------------------------------------------------------------------- #
@@ -668,6 +667,12 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
         # dispatcher keeps sending it back into the engine.
         g_cur = max(float(g_cur), _s_depth_gauge_floor(m, b_cur))
         if g_cur >= KAPPA_HI:
+            # NB: the junction is placed by this VALIDITY threshold, not by
+            # minimising the two representations' disagreement.  That was
+            # tried and reverted — see docs/inverse_construction.md: the
+            # disagreement is a calibrated error ESTIMATE, so minimising it
+            # seeks its own zeros (sign crossings), where it reads ~0 while
+            # both errors are finite.
             # ---- shallow water: Hadamard fixed point owns it ---------- #
             # grid index always INCREASES toward the target (bg runs
             # saddle -> target regardless of the sign of the span)

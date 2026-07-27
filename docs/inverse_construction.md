@@ -981,3 +981,47 @@ needs no new code.
 to powers of two, which is why GL8's savings appear as 2x or 4x rather than the
 smooth `(1/6 - 1/8)` exponent gap — worth remembering if the ladder ever gains
 finer refinement, since that would modestly improve GL8's side of this table.
+
+### Handoff placement by minimising disagreement: tried, reverted
+
+The last open idea from the matching work.  Since the disagreement between the
+engine and the fixed point is a CALIBRATED error estimate (median
+`|w_eng − w_fp| / max(err) = 1.000`, 41/41 within 10x), the natural move is to
+place the junction where that disagreement is least, instead of at the
+`κ ≥ KAPPA_HI` crossing — which only says the fixed point has BECOME usable, not
+that this is the best place to switch.  Implemented by searching back over the
+engine vertices already computed and restarting the zone at the minimiser.
+
+**It loses, in two stages.**
+
+| placement | med seam | max seam | med \|E\| | max \|E\| | \|E\|>1 |
+|---|--:|--:|--:|--:|--:|
+| threshold (kept) | 3.58e-16 | **5.95e-10** | 5.94e-10 | **6.07e-01** | **0** |
+| min-disagreement | 3.30e-16 | 1.66e-02 | 6.00e-10 | 7.38e+01 | 14 |
+| ...restricted to the overlap | 3.97e-16 | 7.13e-04 | 7.93e-10 | 1.42e+01 | 3 |
+
+The first version searched back over engine vertices without checking the gauge,
+so it could place the junction where `κ < KAPPA_EXIT` and the fixed point is not
+valid at all.  Restricting candidates to the overlap recovers most of that
+(1.66e-02 -> 7.13e-04, 14 -> 3 failures) but still loses by six orders on the
+max seam.
+
+**Why it cannot work.**  The signed difference `w_fp − w_eng` CHANGES SIGN inside
+the overlap — measured in 6 of 8 sampled cases — and `|·|` is minimised exactly
+at that crossing, where the estimator reads ~0 while both errors are finite:
+
+| case | sign change in window | \|gap\| at minimum | \|gap\| at threshold |
+|---|--:|--:|--:|
+| g2 2^6 | YES | 1.96e-10 | 1.10e-07 |
+| g2 2^10 | YES | 9.61e-08 | 4.30e-05 |
+| g2 2^12 | YES | 1.60e-07 | 7.65e-05 |
+| g4 2^12 | YES | 5.78e-08 | 3.80e-05 |
+
+**The general lesson: do not MINIMISE an error estimator.**  One that is accurate
+generically still reads zero at its own sign changes, and minimising it seeks out
+precisely that blind spot.  The 41/41 calibration was measured at generic points
+and says nothing about the zeros.  The disagreement is a good VERIFIER and a bad
+OBJECTIVE — which is exactly how the seam residual is already used: recorded as a
+certificate, while placement is decided by the validity threshold.
+
+Reverted; `KAPPA_HI` placement stands.
