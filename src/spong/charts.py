@@ -41,6 +41,9 @@ KAPPA_EXIT = 1e3        # shallow-zone exit (hysteresis: enter at HI, leave
 R_SWITCH = 20.0         # velocity-ratio chart handoff threshold
 MAX_SWITCHES = 12
 TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
+UNSTABLE_LAUNCH_REL = 1e-6
+STABLE_LAUNCH_DELTA = 1e-4
+GEOMETRIC_IRK_PRIMARY = 8
 
 # Minimum significant digits the DIRECTION of grad L must carry for a vertex to
 # contribute to angle_energy.  R = |grad L| / g_floor; below this the vertex
@@ -65,7 +68,15 @@ def _sym2_eigh(H: np.ndarray):
     d = float(H[1, 1])
     mid = 0.5 * (a + d)
     rad = float(np.hypot(0.5 * (a - d), b))
-    lam = np.array([mid - rad, mid + rad], dtype=float)
+    lo, hi = mid-rad, mid+rad
+    determinant = a*d-b*b
+    # Recover the smaller-magnitude eigenvalue from the determinant instead
+    # of subtracting two nearly equal binary64 numbers.
+    if abs(hi) >= abs(lo) and hi != 0.0:
+        lo = determinant/hi
+    elif lo != 0.0:
+        hi = determinant/lo
+    lam = np.array([lo, hi], dtype=float)
 
     if abs(b) <= 1e-300:
         if a <= d:
@@ -141,7 +152,7 @@ def velocities(m: Model, b, w):
     return -Pv, -2.0 * m.A(b) * w + m.a_star_p(b) * Pv
 
 
-def saddle_frame(m: Model, b_s: float, a_s: float):
+def saddle_frame(m: Model, b_s: float, a_s: float, local=None):
     """Closed-form 2x2 Hessian launch data at a saddle, in chart components.
 
     Returns dict with unstable/stable eigenvectors as (d_w, d_b) pairs:
@@ -150,9 +161,17 @@ def saddle_frame(m: Model, b_s: float, a_s: float):
     formulas): the eigvecs are orthogonal, so at least one chart is
     well-posed for each manifold at every saddle.
     """
-    H = m.hessL(a_s, b_s)
-    lam, V = _sym2_eigh(H)
-    asp = m.a_star_p(b_s)
+    H = (np.asarray(local.hessian, dtype=float) if local is not None
+         else m.hessL(a_s, b_s))
+    if local is not None:
+        lam = np.asarray(local.spectral.eigenvalues)
+        V = np.asarray(local.spectral.frame)
+    else:
+        lam, V = _sym2_eigh(H)
+    # At a critical point H_ab = -H_aa a*'.  This extracts the chart
+    # derivative from the already-conditioned local jet.
+    asp = (-H[0, 1] / H[0, 0] if local is not None
+           else m.a_star_p(b_s))
     out = {}
     for name, idx in (("unstable", int(np.argmin(lam))),
                       ("stable", int(np.argmax(lam)))):
@@ -161,6 +180,86 @@ def saddle_frame(m: Model, b_s: float, a_s: float):
                      "d_w": v[0] - asp * v[1],
                      "d_b": v[1]}
     return out
+
+
+def _critical_chart_curve(local, manifold: str, sign: int,
+                          component: str, extent: float,
+                          order: int = 6) -> tuple[np.ndarray, dict]:
+    """Continue a saddle branch in its centered finite-jet chart.
+
+    The launch radius is selected by an expected-linear-flow inequality, not
+    by the magnitude of the global coordinates.  Every IRK stage thereafter
+    is evaluated by the native centered kernel.
+    """
+    H = np.asarray(local.hessian, dtype=float)
+    lam = np.asarray(local.spectral.eigenvalues)
+    V = np.asarray(local.spectral.frame)
+    idx = int(np.argmin(lam) if manifold == "unstable" else np.argmax(lam))
+    v = V[:, idx]
+    asp = -H[0, 1] / H[0, 0]
+    chart_v = v[1] if component == "b" else v[0] - asp * v[1]
+    if sign * chart_v < 0:
+        v = -v
+        chart_v = -chart_v
+    if abs(chart_v) < 1e-14:
+        raise ValueError("critical chart is singular in requested component")
+
+    # Find a point at which the nonlinear remainder is at most 1e-10 of the
+    # exact linear term.  This is the launch analogue of expected descent.
+    r = abs(extent / chart_v)
+    ratio = np.inf
+    for _ in range(60):
+        d = r * v
+        g = np.asarray(local.gradient(float(d[0]), float(d[1])))
+        linear = H @ d
+        ratio = float(np.hypot(*(g-linear))
+                      / max(np.hypot(*linear), 1e-300))
+        if ratio <= 1e-10:
+            break
+        r *= 0.5
+    if ratio > 1e-8:
+        raise ArithmeticError("unable to resolve a linear local launch")
+
+    z = r * v
+    flow_sign = -1.0 if manifold == "unstable" else 1.0
+    chord = max(abs(extent) / 64.0, np.finfo(float).tiny)
+    cur = min(chord, max(r, np.finfo(float).tiny))
+    points = [np.array([0.0, 0.0]), z.copy()]
+    for _ in range(4096):
+        value = z[1] if component == "b" else z[0] - asp * z[1]
+        remaining = abs(extent) - abs(value)
+        if remaining <= 2e-12 * abs(extent):
+            break
+        hmag = min(cur, remaining)
+        zn = None
+        for _retry in range(16):
+            trial = np.asarray(local.normalized_step(
+                float(z[0]), float(z[1]), float(flow_sign * hmag), order))
+            if np.all(np.isfinite(trial)):
+                zn = trial
+                break
+            hmag *= 0.5
+        if zn is None:
+            raise ArithmeticError("native critical-chart IRK step failed")
+        z = zn
+        points.append(z.copy())
+        cur = min(chord, 1.5 * hmag)
+    else:
+        raise ArithmeticError("critical chart exceeded step budget")
+
+    Y = np.asarray(points)
+    Y[:, 0] += local.a
+    Y[:, 1] += local.b
+    # Several centered steps may map to the same binary64 global point when
+    # the critical coordinate is large.  They are valid local states but not
+    # distinct polyline vertices; retaining them creates zero chords.
+    if len(Y) > 1:
+        keep = np.r_[True, np.any(Y[1:] != Y[:-1], axis=1)]
+        Y = Y[keep]
+    return Y, {"critical_chart": True, "critical_order": order,
+               "critical_launch_radius": float(r),
+               "critical_launch_nonlinearity": ratio,
+               "critical_steps": len(points) - 1}
 
 
 # --------------------------------------------------------------------- #
@@ -196,8 +295,8 @@ def _dw_db(w: np.ndarray, b_grid: np.ndarray) -> np.ndarray:
     return out
 
 
-def slow_fixed_point(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
-                     max_iter: int = 40):
+def _slow_fixed_point_python(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
+                             max_iter: int = 40):
     """Hadamard graph transform on a grid: w ← P·(a*' + w')/(2A).
 
     Returns (w, iterations, final relative change).  Converges at rate
@@ -222,6 +321,18 @@ def slow_fixed_point(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
         if rel < tol:
             break
     return w, it, rel
+
+
+def slow_fixed_point(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
+                     max_iter: int = 40):
+    """Production Hadamard graph transform; Python remains the parity oracle."""
+    native = getattr(m, "_native_kernel", None)
+    if native is not None and len(b_grid) >= 5:
+        h = float(b_grid[1] - b_grid[0])
+        if np.all(np.abs(np.diff(b_grid) - h) <= 1e-12 * abs(h)):
+            w, it, rel = native.slow_fixed_point(b_grid, tol, max_iter)
+            return np.asarray(w, dtype=float), it, rel
+    return _slow_fixed_point_python(m, b_grid, tol, max_iter)
 
 
 # --------------------------------------------------------------------- #
@@ -377,10 +488,501 @@ class Branch:
     diag: dict = field(default_factory=dict)
 
 
+def _segment_capture(a0, b0, a1, b1, at, bt, radius):
+    """Whether a resolved chord enters a target neighbourhood."""
+    da, db = a1-a0, b1-b0
+    denom = da*da+db*db
+    if denom == 0.0:
+        return (a1-at)**2+(b1-bt)**2 < radius*radius
+    t = ((at-a0)*da+(bt-b0)*db)/denom
+    t = min(1.0, max(0.0, t))
+    return ((a0+t*da-at)**2+(b0+t*db-bt)**2
+            < radius*radius)
+
+
+def _append_resolved_point(points, point, resolution=0.0):
+    """Append a geometric vertex only when binary64 resolves a new point."""
+    q = tuple(map(float, point))
+    if points:
+        p = points[-1]
+        scale = 1.0+max(abs(p[0]), abs(p[1]), abs(q[0]), abs(q[1]))
+        floor = max(64.0*np.finfo(float).eps*scale, float(resolution))
+        if np.hypot(q[0]-p[0], q[1]-p[1]) <= floor:
+            points[-1] = q
+            return False
+    points.append(q)
+    return True
+
+
+def _full_and_two_half(step, z, h, order):
+    """Independent same-order compositions used by the C IRK fallbacks."""
+    full = np.asarray(step(float(z[0]), float(z[1]), h, order))
+    midpoint = np.asarray(step(float(z[0]), float(z[1]), 0.5*h, order))
+    endpoint = midpoint
+    if np.all(np.isfinite(midpoint)):
+        endpoint = np.asarray(step(
+            float(midpoint[0]), float(midpoint[1]), 0.5*h, order))
+    if not (np.all(np.isfinite(full))
+            and np.all(np.isfinite(midpoint))
+            and np.all(np.isfinite(endpoint))):
+        return None
+    return full, midpoint, endpoint
+
+
+def _geometric_orders():
+    return ((8, 6) if GEOMETRIC_IRK_PRIMARY == 8 else (6, 8))
+
+
+def _cubic_hermite(z0, z1, f0, f1, h, s):
+    """Cubic dense output in the flow parameter, 0 <= s <= 1."""
+    s2, s3 = s*s, s*s*s
+    return ((2*s3-3*s2+1)*z0 + (s3-2*s2+s)*h*f0
+            + (-2*s3+3*s2)*z1 + (s3-s2)*h*f1)
+
+
+def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
+                           box, cap_r: float, engine_diag: dict,
+                           n_levels: int = 12000):
+    """Trace a resolved anisotropic connection by constant loss decrease.
+
+    This owns only the regular prefix.  The vector field
+    ``-grad(L)/|grad(L)|^2`` follows the same unparameterized integral curve
+    and satisfies dL/dt=-1, so a long narrow valley is sampled by loss events
+    instead of hundreds of thousands of microscopic arclength chords.
+    Arrival remains with the ordinary chart/capture engine because this
+    normalization is singular at the minimum.
+    """
+    native = getattr(m, "_native_kernel", None)
+    if native is None or not hasattr(native, "potential_step"):
+        return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
+    at, bt = map(float, target)
+    target_level = float(m.L(at, bt))
+    start_level = float(m.L(a0, b0))
+    gap0 = start_level-target_level
+    if not (np.isfinite(gap0) and gap0 > 0.0):
+        return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
+    base = gap0/max(int(n_levels), 1)
+    near_gap = base/16384.0
+    cur_level_step = base
+    z = np.array([a0, b0], dtype=float)
+    pts = [tuple(z)]
+    geometry_floor = 128.0*np.finfo(float).eps*(
+        1.0+max(abs(float(x)) for x in box))
+    accepted = rejected = 0
+    gl8_attempted = gl8_accepted = 0
+    max_richardson = 0.0
+    term = None
+    for _ in range(n_levels+1024):
+        level = float(m.L(float(z[0]), float(z[1])))
+        gap = level-target_level
+        if gap <= near_gap:
+            term = "near_target"
+            break
+        h = -min(cur_level_step, 0.2*gap)
+        zn = None
+        accepted_midpoint = None
+        for _retry in range(12):
+            for order in _geometric_orders():
+                if order == 8:
+                    gl8_attempted += 1
+                trial = _full_and_two_half(
+                    native.potential_step, z, h, order)
+                if trial is None:
+                    continue
+                full, midpoint, half = trial
+                chord = float(np.hypot(*(half-z)))
+                richardson = float(np.hypot(*(full-half)))
+                new_level = float(m.L(float(half[0]), float(half[1])))
+                loss_error = abs((new_level-level)-h)
+                # Independent curve and parameterization checks.  The
+                # accepted point is the two-half-step value.
+                if (new_level >= level
+                        or richardson > 1e-6*max(chord, 1e-8)
+                        or loss_error > 2e-5*max(abs(h), 1e-12)):
+                    continue
+                zn = half
+                accepted_midpoint = midpoint
+                max_richardson = max(max_richardson, richardson)
+                if order == 8:
+                    gl8_accepted += 1
+                break
+            if zn is not None:
+                break
+            h *= 0.5
+            rejected += 1
+        if zn is None:
+            term = "step_failure"
+            break
+        previous = z
+        z = zn
+        accepted += 1
+        cur_level_step = min(base, 1.5*abs(h))
+        for sample in (accepted_midpoint, z):
+            if not (box[0] <= sample[0] <= box[1]
+                    and box[2] <= sample[1] <= box[3]):
+                _append_resolved_point(pts, sample, geometry_floor)
+                z = sample
+                term = "box_exit"
+                break
+            if _segment_capture(
+                    float(previous[0]), float(previous[1]),
+                    float(sample[0]), float(sample[1]), at, bt, cap_r):
+                _append_resolved_point(pts, sample, geometry_floor)
+                _append_resolved_point(pts, (at, bt), geometry_floor)
+                z = np.array([at, bt])
+                term = "capture"
+                break
+            _append_resolved_point(pts, sample, geometry_floor)
+            previous = sample
+        if term in {"box_exit", "capture"}:
+            break
+    else:
+        term = "budget"
+    engine_diag["potential_rate"] = {
+        "accepted_steps": accepted,
+        "rejected_steps": rejected,
+        "gl8_attempted": gl8_attempted,
+        "gl8_accepted": gl8_accepted,
+        "level_step": float(base),
+        "max_richardson": float(max_richardson),
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    }
+    return pts, float(z[1]), float(z[0]-m.s_a_star(z[1])), term
+
+
+def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
+                                box, cap_r: float, engine_diag: dict,
+                                n_levels: int = 2048):
+    """Continue to the next minimum-level event without choosing a basin."""
+    native = getattr(m, "_native_kernel", None)
+    if native is None or not hasattr(native, "potential_step"):
+        return [(a0, b0)], "unavailable", None
+    z = np.array((a0, b0), dtype=float)
+    level0 = float(m.L(*z))
+    geometry_floor = 128.0*np.finfo(float).eps*(
+        1.0+max(abs(float(x)) for x in box))
+    target_levels = [
+        (float(m.L(float(a), float(b))), (float(a), float(b)))
+        for a, b in targets]
+    slack0 = 1024*np.finfo(float).eps*(1.0+abs(level0))
+    lower = [(v, q) for v, q in target_levels if v < level0-slack0]
+    if not lower:
+        return [tuple(z)], "unavailable", None
+    event_level = max(v for v, _q in lower)
+    gap0 = level0-event_level
+    base = gap0/max(int(n_levels), 1)
+    crossing_floor = max(
+        base/1024.0,
+        4096*np.finfo(float).eps*(1.0+abs(event_level)))
+    cur_level_step = base
+    pts = [tuple(z)]
+    accepted = rejected = 0
+    gl8_attempted = gl8_accepted = 0
+    max_richardson = 0.0
+    captured = None
+    term = "budget"
+    for _ in range(4*n_levels):
+        level = float(m.L(*z))
+        gap = level-event_level
+        if gap <= -crossing_floor:
+            term = "level_event"
+            break
+        # Away from the event use uniform potential samples.  Once its
+        # enclosure is reached, deliberately step across it: merely
+        # approaching from above cannot eliminate the higher minimum.
+        requested = (max(2.0*gap, crossing_floor)
+                     if gap <= crossing_floor else
+                     min(cur_level_step, 0.5*gap))
+        h = -requested
+        zn = None
+        accepted_midpoint = None
+        for _retry in range(14):
+            for order in _geometric_orders():
+                if order == 8:
+                    gl8_attempted += 1
+                trial = _full_and_two_half(
+                    native.potential_step, z, h, order)
+                if trial is None:
+                    continue
+                full, midpoint, half = trial
+                chord = float(np.hypot(*(half-z)))
+                richardson = float(np.hypot(*(full-half)))
+                new_level = float(m.L(*half))
+                loss_error = abs((new_level-level)-h)
+                if (new_level >= level
+                        or richardson > 1e-6*max(chord, 1e-8)
+                        or loss_error > 2e-5*max(abs(h), 1e-12)):
+                    continue
+                zn = half
+                accepted_midpoint = midpoint
+                max_richardson = max(max_richardson, richardson)
+                if order == 8:
+                    gl8_accepted += 1
+                break
+            if zn is not None:
+                break
+            h *= 0.5
+            rejected += 1
+        if zn is None:
+            term = "step_failure"
+            break
+        previous = z
+        z = zn
+        accepted += 1
+        cur_level_step = min(base, 1.5*abs(h))
+        _append_resolved_point(pts, accepted_midpoint, geometry_floor)
+        _append_resolved_point(pts, z, geometry_floor)
+        if not (box[0] <= z[0] <= box[1]
+                and box[2] <= z[1] <= box[3]):
+            term = "box_exit"
+            break
+        for at, bt in targets:
+            if _segment_capture(
+                    float(previous[0]), float(previous[1]),
+                    float(z[0]), float(z[1]), at, bt, cap_r):
+                pts.append((at, bt))
+                captured = (at, bt)
+                term = "capture"
+                break
+        if captured is not None:
+            break
+    engine_diag.setdefault("candidate_level_events", []).append({
+        "event_level": float(event_level),
+        "accepted_steps": accepted,
+        "rejected_steps": rejected,
+        "gl8_attempted": gl8_attempted,
+        "gl8_accepted": gl8_accepted,
+        "max_richardson": float(max_richardson),
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    })
+    return pts, term, captured
+
+
+def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
+                          engine_diag: dict, max_steps: int = 4096):
+    """Finish a known connection with the regular target-centered flow.
+
+    Constant-potential-rate and arclength parameterizations are singular at
+    a minimum.  The unnormalized gradient field is regular there.  Its full
+    translated polynomial is already stored in the zero-dimensional Morse
+    data, so this phase neither re-expands the model nor evaluates a
+    cancellation-prone global gradient.
+    """
+    if (arrival_local is None or arrival_local.native is None
+            or not hasattr(arrival_local.native, "raw_step")):
+        return [tuple(map(float, start))], "unavailable"
+    at, bt = map(float, target)
+    finish_r = max(
+        cap_r/64.0,
+        4096*np.finfo(float).eps*(1.0+np.hypot(at, bt)))
+    geometry_floor = 128.0*np.finfo(float).eps*(
+        1.0+max(abs(at), abs(bt), abs(float(start[0])),
+                abs(float(start[1]))))
+    center = np.array((float(arrival_local.a), float(arrival_local.b)))
+    z = np.asarray(start, dtype=float)-center
+    lam = np.asarray(arrival_local.spectral.eigenvalues, dtype=float)
+    if not (np.all(np.isfinite(lam)) and np.min(lam) > 0.0):
+        return [tuple(map(float, start))], "unavailable"
+
+    slow, fast = float(np.min(lam)), float(np.max(lam))
+    dt = 0.25/fast
+    dt_cap = 4.0/slow
+    pts = [tuple(map(float, start))]
+    accepted = rejected = 0
+    gl8_attempted = gl8_accepted = 0
+    max_richardson = 0.0
+    term = "budget"
+    for _ in range(max_steps):
+        physical = z+center
+        if np.hypot(physical[0]-at, physical[1]-bt) < finish_r:
+            pts.append((at, bt))
+            term = "capture"
+            break
+        value = float(arrival_local.potential(float(z[0]), float(z[1])))
+        if not (np.isfinite(value) and value > 0.0):
+            term = "invalid_potential"
+            break
+        zn = None
+        accepted_midpoint = None
+        trial_dt = dt
+        for _retry in range(16):
+            h = -trial_dt
+            for order in _geometric_orders():
+                if order == 8:
+                    gl8_attempted += 1
+                trial = _full_and_two_half(
+                    arrival_local.raw_step, z, h, order)
+                if trial is None:
+                    continue
+                full, midpoint, half = trial
+                chord = float(np.hypot(*(half-z)))
+                richardson = float(np.hypot(*(full-half)))
+                next_value = float(arrival_local.potential(
+                    float(half[0]), float(half[1])))
+                # The two-half-step curve must descend the exact centered
+                # potential, and the independent compositions must agree.
+                tolerance = 2e-7*max(chord, 0.05*finish_r, 1e-13)
+                if (not np.isfinite(next_value) or next_value >= value
+                        or richardson > tolerance):
+                    continue
+                zn = half
+                accepted_midpoint = midpoint
+                max_richardson = max(max_richardson, richardson)
+                if order == 8:
+                    gl8_accepted += 1
+                break
+            if zn is not None:
+                break
+            trial_dt *= 0.5
+            rejected += 1
+        if zn is None:
+            term = "step_failure"
+            break
+        previous = z
+        z = zn
+        accepted += 1
+        dt = min(dt_cap, 1.5*trial_dt)
+        p0 = previous+center
+        for sample in (accepted_midpoint, z):
+            p1 = sample+center
+            _append_resolved_point(pts, p1, geometry_floor)
+            if _segment_capture(
+                    float(p0[0]), float(p0[1]),
+                    float(p1[0]), float(p1[1]), at, bt, finish_r):
+                pts.append((at, bt))
+                term = "capture"
+                break
+            p0 = p1
+        if term == "capture":
+            break
+    engine_diag["centered_arrival"] = {
+        "accepted_steps": accepted,
+        "rejected_steps": rejected,
+        "gl8_attempted": gl8_attempted,
+        "gl8_accepted": gl8_accepted,
+        "max_richardson": float(max_richardson),
+        "spectral_ratio": fast/slow,
+        "finish_radius": float(finish_r),
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    }
+    return pts, term
+
+
+def _potential_rate_box_exit(m: Model, start, box, ds: float,
+                             engine_diag: dict, max_steps: int = 100000):
+    """Trace a stable branch outward with constant-potential-rate ascent."""
+    native = getattr(m, "_native_kernel", None)
+    if native is None or not hasattr(native, "potential_step"):
+        return [tuple(map(float, start))], "unavailable"
+    z = np.asarray(start, dtype=float)
+    pts = [tuple(z)]
+    geometry_floor = 128.0*np.finfo(float).eps*(
+        1.0+max(abs(float(x)) for x in box))
+    accepted = rejected = 0
+    gl8_attempted = gl8_accepted = 0
+    max_richardson = 0.0
+    max_interpolation_error = 0.0
+    # The full/two-half composition supplies a stronger local curve check
+    # than the legacy scalar-chart sampler.  Four legacy chords retain ample
+    # topology resolution while avoiding million-segment stable tails.
+    geometric_ds = 4.0*ds
+    term = "budget"
+    for _ in range(max_steps):
+        level = float(m.L(*z))
+        g = np.asarray(m.gradL(*z), dtype=float)
+        ng = float(np.hypot(*g))
+        if not (np.isfinite(level) and np.isfinite(ng) and ng > 0.0):
+            term = "unresolved_field"
+            break
+        h = max(
+            16.0*geometric_ds*ng,
+            4096*np.finfo(float).eps*(1.0+abs(level)))
+        zn = None
+        dense_data = None
+        for _retry in range(14):
+            for order in _geometric_orders():
+                if order == 8:
+                    gl8_attempted += 1
+                trial = _full_and_two_half(
+                    native.potential_step, z, h, order)
+                if trial is None:
+                    continue
+                full, midpoint, half = trial
+                chord = float(np.hypot(*(half-z)))
+                richardson = float(np.hypot(*(full-half)))
+                new_level = float(m.L(*half))
+                loss_error = abs((new_level-level)-h)
+                g1 = np.asarray(m.gradL(*half), dtype=float)
+                q1 = float(g1[0]*g1[0]+g1[1]*g1[1])
+                if not (q1 > 0.0 and np.isfinite(q1)):
+                    continue
+                f0 = g/(ng*ng)
+                f1 = g1/q1
+                hermite_mid = _cubic_hermite(
+                    z, half, f0, f1, h, 0.5)
+                interpolation_error = float(
+                    np.hypot(*(hermite_mid-midpoint)))
+                curve_tol = 2e-6*max(chord, geometric_ds, 1e-8)
+                if (new_level <= level
+                        or richardson > 1e-6*max(chord, 1e-8)
+                        or interpolation_error > curve_tol
+                        or loss_error > 2e-5*max(abs(h), 1e-12)):
+                    continue
+                zn = half
+                dense_data = (f0, f1, h, chord, interpolation_error)
+                max_richardson = max(max_richardson, richardson)
+                if order == 8:
+                    gl8_accepted += 1
+                break
+            if zn is not None:
+                break
+            h *= 0.5
+            rejected += 1
+        if zn is None:
+            term = "step_failure"
+            break
+        z0 = z
+        z = zn
+        f0, f1, h_used, chord, interpolation_error = dense_data
+        max_interpolation_error = max(
+            max_interpolation_error, interpolation_error)
+        subdivisions = max(1, int(np.ceil(chord/geometric_ds)))
+        exited = False
+        for j in range(1, subdivisions+1):
+            p = _cubic_hermite(
+                z0, z, f0, f1, h_used, j/subdivisions)
+            _append_resolved_point(pts, p, geometry_floor)
+            if not (box[0] <= p[0] <= box[1]
+                    and box[2] <= p[1] <= box[3]):
+                z = p
+                term = "box_exit"
+                exited = True
+                break
+        accepted += 1
+        if exited:
+            break
+    engine_diag["potential_rate_ascent"] = {
+        "accepted_steps": accepted,
+        "rejected_steps": rejected,
+        "gl8_attempted": gl8_attempted,
+        "gl8_accepted": gl8_accepted,
+        "max_richardson": float(max_richardson),
+        "max_interpolation_error": float(max_interpolation_error),
+        "geometric_ds": float(geometric_ds),
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    }
+    return pts, term
+
+
 def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                     targets, box, ds: float, max_steps: int = 200000,
                     cap_r: float = 2e-3, ds0: float | None = None,
-                    shallow_gate=None):
+                    shallow_gate=None, engine_diag: dict | None = None,
+                    centered_local=None):
     """Walk the trajectory through chart pieces.
 
     flow: +1 descent (unstable branches), -1 ascent (separatrices).
@@ -408,6 +1010,63 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     # geometric launch ramp: begin at the launch scale, grow into ds, so
     # polyline spacing is smooth and the angle-energy carries no launch kink
     cur = ds if ds0 is None else min(ds, max(ds0, 1e-12))
+    # A fixed resolution floor belongs to this handoff, not to the possibly
+    # enormous eventual portrait spacing and not to the moving current step.
+    # The former can forbid all seam adjustment; the latter can shrink
+    # forever.  Seven halvings of the certified incoming chord is the finite
+    # local retry budget.
+    continuation_floor = cur/128.0
+
+    def centered_trial(a_start, b_start, chord):
+        if centered_local is None or centered_local.native is None:
+            return None
+        z = np.array([
+            a_start-centered_local.a,
+            b_start-centered_local.b])
+        glocal = np.asarray(
+            centered_local.gradient(float(z[0]), float(z[1])))
+        preferred = int(abs(glocal[1]) > abs(glocal[0]))
+        for independent in (preferred, 1-preferred):
+            dependent = 1-independent
+            if abs(glocal[independent]) < 1e-300:
+                continue
+            h = chord / np.hypot(
+                1.0, glocal[dependent]/glocal[independent])
+            h *= 1.0 if -flow*glocal[independent] > 0.0 else -1.0
+            for order in (6, 4):
+                try:
+                    y_try = centered_local.native.curve_step(
+                        float(z[independent]), float(z[dependent]), float(h),
+                        independent, order)
+                except (ArithmeticError, ValueError,
+                        FloatingPointError, OverflowError):
+                    continue
+                z_try = z.copy()
+                z_try[independent] += h
+                z_try[dependent] = y_try
+                if not np.all(np.isfinite(z_try)):
+                    continue
+                delta = z_try-z
+                actual_chord = float(np.hypot(*delta))
+                if actual_chord > 2.0*chord or actual_chord == 0.0:
+                    continue
+                expected = flow*float(glocal @ delta)
+                p0 = centered_local.potential(float(z[0]), float(z[1]))
+                p1 = centered_local.potential(
+                    float(z_try[0]), float(z_try[1]))
+                actual = flow*float(p1-p0)
+                slack = 64.0*np.finfo(float).eps*(1.0+abs(p0))
+                if expected >= 0.0 or actual > 1e-4*expected+slack:
+                    continue
+                a_try = centered_local.a+z_try[0]
+                b_try = centered_local.b+z_try[1]
+                if not (np.isfinite(a_try) and np.isfinite(b_try)):
+                    continue
+                key = (
+                    f"centered_{'a' if independent == 0 else 'b'}_"
+                    f"gl{order}")
+                return float(a_try), float(b_try), key
+        return None
 
     for _ in range(max_steps):
         vb, vw = _s_velocities(m, b, w)
@@ -463,7 +1122,9 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         # more than the turn budget at the new vertex, revert, halve,
         # retry — the zoom-proof guarantee enforced at trace time
         b_prev, w_prev = b, w
+        retry_floor = continuation_floor
         for _retry in range(7):
+            h = np.nan
             try:
                 if chart == "slow":
                     h = cur / (1.0 + (vw / vb) ** 2) ** 0.5 * (
@@ -482,6 +1143,26 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                 step_failed = False
             except (ZeroDivisionError, FloatingPointError, OverflowError):
                 step_failed = True
+            # A nonlinear Gauss stage system can have several roots.  Newton
+            # (especially its Armijo restart) must select the root connected
+            # to the local flow, not merely a small-residual reversible root.
+            # The gradient supplies the branch-independent discriminator:
+            # descent/ascent must realize a fixed fraction of its first-order
+            # expected change.  Rejection is a step-size signal.
+            if (not step_failed
+                    and np.isfinite(b_new) and np.isfinite(w_new)):
+                a_prev = m.s_a_star(b_prev) + w_prev
+                a_new_test = m.s_a_star(b_new) + w_new
+                da, db = a_new_test-a_prev, b_new-b_prev
+                expected = flow * float(m.gradL(a_prev, b_prev) @
+                                        np.array([da, db]))
+                actual = flow * float(
+                    m.L(a_new_test, b_new) - m.L(a_prev, b_prev))
+                descent_slack = 64.0*np.finfo(float).eps * (
+                    1.0 + abs(float(m.L(a_prev, b_prev))))
+                if (expected >= 0.0
+                        or actual > 1e-4*expected + descent_slack):
+                    step_failed = True
             # A failed stage solve is a STEP-SIZE signal, not a fatal error.
             # The stage matrix is M = I − h·diag(J_i)·A, which is diagonally
             # dominant — hence trivially solvable — for small enough h, so
@@ -491,10 +1172,122 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
             # where GL4 silently proceeds; without halving that showed up out
             # of sample as abort_nonfinite on branches GL4 captured.
             if step_failed or not (np.isfinite(b_new) and np.isfinite(w_new)):
-                if cur > ds / 128.0:
+                if cur > retry_floor:
                     cur *= 0.5
                     continue
-                return pts, "abort_step_failure", switches, (b_prev, w_prev)
+                # At the spatial resolution floor, further halving moves into
+                # cancellation.  The two graph charts describe the same curve,
+                # and GL4 has a different stage system, so exhaust those
+                # equivalent representations before declaring the state
+                # numerically undefined.  GL6 remains the normal engine; this
+                # ladder is reached only after its retry budget is exhausted.
+                rescued = False
+                alternatives = [
+                    (chart, "gl4"),
+                    ("fast" if chart == "slow" else "slow", "gl6"),
+                    ("fast" if chart == "slow" else "slow", "gl4"),
+                ]
+                for alt_chart, method in alternatives:
+                    try:
+                        if alt_chart == "slow":
+                            h = cur / (1.0 + (vw / vb) ** 2) ** 0.5 * (
+                                1.0 if vb > 0 else -1.0)
+                            if native is not None:
+                                step = native.slow_step if method == "gl6" \
+                                    else native.slow_step_gl4
+                                w_new = step(b_prev, w_prev, h)
+                            else:
+                                step = gauss.gl6_scalar if method == "gl6" \
+                                    else gauss.gl4_scalar
+                                w_new = step(sf, sj, b_prev, w_prev, h)
+                            b_new = b_prev + h
+                        else:
+                            h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
+                                1.0 if vw > 0 else -1.0)
+                            if native is not None:
+                                step = native.fast_step if method == "gl6" \
+                                    else native.fast_step_gl4
+                                b_new = step(w_prev, b_prev, h)
+                            else:
+                                step = gauss.gl6_scalar if method == "gl6" \
+                                    else gauss.gl4_scalar
+                                b_new = step(ff, fj, w_prev, b_prev, h)
+                            w_new = w_prev + h
+                    except (ZeroDivisionError, FloatingPointError, OverflowError):
+                        continue
+                    if np.isfinite(b_new) and np.isfinite(w_new):
+                        a_prev = m.s_a_star(b_prev) + w_prev
+                        a_new_test = m.s_a_star(b_new) + w_new
+                        da, db = a_new_test-a_prev, b_new-b_prev
+                        expected = flow * float(
+                            m.gradL(a_prev, b_prev) @ np.array([da, db]))
+                        actual = flow * float(
+                            m.L(a_new_test, b_new) - m.L(a_prev, b_prev))
+                        descent_slack = 64.0*np.finfo(float).eps * (
+                            1.0 + abs(float(m.L(a_prev, b_prev))))
+                        if (expected >= 0.0
+                                or actual > 1e-4*expected + descent_slack):
+                            continue
+                        if engine_diag is not None:
+                            key = f"floor_fallback_{alt_chart}_{method}"
+                            engine_diag[key] = engine_diag.get(key, 0) + 1
+                        rescued = True
+                        break
+                # Both graph parameterizations can become singular at the
+                # same geometric point (most commonly on arrival).  The curve
+                # itself is still regular there.  Continue it by arclength in
+                # the native 2-D normalized-gradient field before declaring
+                # FP64 defeat; this is representation-independent and its
+                # Armijo expected-change check selects the local stage root.
+                if not rescued and native is not None:
+                    for order in (*_geometric_orders(), 4):
+                        a_prev = m.s_a_star(b_prev) + w_prev
+                        try:
+                            a_try, b_try = native.normalized_step(
+                                a_prev, b_prev, -flow*cur, order)
+                        except (ArithmeticError, ValueError,
+                                FloatingPointError, OverflowError):
+                            continue
+                        if not (np.isfinite(a_try) and np.isfinite(b_try)):
+                            continue
+                        da, db = a_try-a_prev, b_try-b_prev
+                        expected = flow * float(
+                            m.gradL(a_prev, b_prev) @ np.array([da, db]))
+                        actual = flow * float(
+                            m.L(a_try, b_try) - m.L(a_prev, b_prev))
+                        descent_slack = 64.0*np.finfo(float).eps * (
+                            1.0 + abs(float(m.L(a_prev, b_prev))))
+                        if (expected >= 0.0
+                                or actual > 1e-4*expected + descent_slack):
+                            continue
+                        b_new, w_new = float(b_try), float(
+                            a_try-m.s_a_star(b_try))
+                        if engine_diag is not None:
+                            key = f"floor_fallback_normalized_gl{order}"
+                            engine_diag[key] = engine_diag.get(key, 0) + 1
+                        rescued = True
+                        break
+                if not rescued:
+                    a_prev = m.s_a_star(b_prev)+w_prev
+                    centered = centered_trial(a_prev, b_prev, cur)
+                    if centered is not None:
+                        a_try, b_new, centered_key = centered
+                        w_new = a_try-m.s_a_star(b_new)
+                        if engine_diag is not None:
+                            key = f"floor_fallback_{centered_key}"
+                            engine_diag[key] = engine_diag.get(key, 0)+1
+                        rescued = True
+                if rescued:
+                    step_failed = False
+                else:
+                    if engine_diag is not None:
+                        engine_diag["step_failure"] = {
+                            "b": float(b_prev), "w": float(w_prev),
+                            "cur": float(cur), "ds": float(ds), "chart": chart,
+                            "h": float(h), "vb": float(vb), "vw": float(vw),
+                            "retry": _retry,
+                        }
+                    return pts, "abort_step_failure", switches, (b_prev, w_prev)
             if len(pts) >= 2:
                 a_new = m.s_a_star(b_new) + w_new
                 p1, p0 = pts[-1], pts[-2]
@@ -504,11 +1297,12 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                 n2 = (d2a * d2a + d2b * d2b) ** 0.5
                 if (n1 > 1e-14 and n2 > 1e-14
                         and (d1a * d2a + d1b * d2b) / (n1 * n2) < TURN_MAX
-                        and cur > ds / 128.0):
+                        and cur > retry_floor):
                     cur *= 0.5
                     continue
             break
         b, w = b_new, w_new
+        a = m.s_a_star(b) + w
         cur = min(ds, cur * 1.06)   # gentle ramp: the angle-energy
         # functional is a symmetric difference — 2nd-order on uniform
         # spacing, 1st-order under spacing jumps
@@ -516,14 +1310,21 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         if not (np.isfinite(b) and np.isfinite(w)):
             return pts, "abort_nonfinite", switches, (b, w)
 
-        a = m.s_a_star(b) + w
-        pts.append((a, b))
-
         for (at, bt) in targets:
-            if (a - at) ** 2 + (b - bt) ** 2 < cap_r**2:
+            captured = _segment_capture(
+                a_prev, b_prev, a, b, at, bt, cap_r)
+            if captured:
+                target_level = float(m.L(at, bt))
+                current_level = float(m.L(a_prev, b_prev))
+                level_slack = 128.0*np.finfo(float).eps*(
+                    1.0+abs(current_level))
+                if flow > 0 and target_level > current_level+level_slack:
+                    continue
+                pts.append((a, b))
                 if (a - at) ** 2 + (b - bt) ** 2 > 1e-24:
                     pts.append((at, bt))
                 return pts, "capture", switches, (b, w)
+        pts.append((a, b))
 
         if not (box[0] <= a <= box[1] and box[2] <= b <= box[3]):
             return pts, "box_exit", switches, (b, w)
@@ -536,7 +1337,8 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
 # --------------------------------------------------------------------- #
 
 
-def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None):
+def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None,
+                        start: int = 1):
     """(E, n_resolved, n_unresolved) — angle energy over resolved vertices.
 
     E = Σ ½‖d_⊥‖² is the discrete integral-curve certificate (E = 0 ⟺ the
@@ -572,7 +1374,7 @@ def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None):
     used = 0
     skipped = 0
     eps = np.finfo(float).eps
-    for k in range(1, len(Y) - 1):
+    for k in range(max(1, start), len(Y) - 1):
         a, b = Y[k, 0], Y[k, 1]
         d = Y[k + 1] - Y[k - 1]
         g = m.gradL(a, b)
@@ -597,7 +1399,8 @@ def angle_energy(m: Model, Y: np.ndarray) -> float:
     return angle_energy_detail(m, Y)[0]
 
 
-def backbone_residual(m: Model, Y: np.ndarray, digits: float = None) -> float:
+def backbone_residual(m: Model, Y: np.ndarray, digits: float = None,
+                      start: int = 1) -> float:
     """max |w| / |a*| over the vertices `angle_energy` could NOT resolve.
 
     The ALGEBRAIC certificate.  Where the geometric one runs out of digits the
@@ -617,7 +1420,7 @@ def backbone_residual(m: Model, Y: np.ndarray, digits: float = None) -> float:
     K = ANGLE_DIGIT_BUDGET if digits is None else digits
     eps = np.finfo(float).eps
     worst = 0.0
-    for k in range(1, len(Y) - 1):
+    for k in range(max(1, start), len(Y) - 1):
         a, b = float(Y[k, 0]), float(Y[k, 1])
         g = m.gradL(a, b)
         ng = float(np.hypot(g[0], g[1]))
@@ -636,7 +1439,11 @@ def backbone_residual(m: Model, Y: np.ndarray, digits: float = None) -> float:
 def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                    box=(-50.0, 50.0, -50.0, 50.0), n_grid: int = 4001,
                    ds: float | None = None,
-                   cap_r: float | None = None) -> Branch:
+                   cap_r: float | None = None,
+                   _launch_rel: float | None = None,
+                   critical_local=None, critical_stub=None,
+                   capture_targets=None, arrival_local=None,
+                   candidate_minima=None, candidate_enumeration=None) -> Branch:
     """Unstable branch: saddle → adjacent minimum (or box exit).
 
     Zone loop per the dispatcher contract: whenever the sounding says
@@ -647,6 +1454,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     residual (fixed point vs engine at the handoff point).
     """
     a_t, b_t = target
+    targets = ([tuple(map(float, target))] if capture_targets is None else
+               [tuple(map(float, q)) for q in capture_targets])
     span = b_t - b_saddle
     sgn = 1.0 if span > 0 else -1.0
     if ds is None:
@@ -675,29 +1484,236 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     launch_scale = None
 
     diag["kappa_spectral_saddle"] = float(sounding(m, b_saddle))
-    if kap[0] < KAPPA_HI:
-        # mild saddle: exact-eigenvector jet launch into the engine
-        a_s = float(m.a_star(b_saddle))
-        fr = saddle_frame(m, b_saddle, a_s)["unstable"]
+    launch_rel = UNSTABLE_LAUNCH_REL if _launch_rel is None else _launch_rel
+    db0 = sgn*min(
+        abs(launch_rel*span), 1e-3*(1.0+abs(b_saddle)))
+    saddle_mild = diag["kappa_spectral_saddle"] < KAPPA_HI
+    if critical_stub is not None:
+        local_Y = np.asarray(critical_stub.curve)
+        pts.extend(map(tuple, local_Y))
+        a_cur, b_cur = local_Y[-1]
+        w_cur = float(a_cur - m.a_star(b_cur))
+        sc = dict(critical_stub.certificates)
+        physical_reach = max(
+            float(np.hypot(*(local_Y[-1]-local_Y[0]))),
+            np.finfo(float).tiny)
+        # The first global step must continue the *spacing* at the handoff,
+        # not jump by the total physical reach of a finely sampled stub.
+        # Confusing the two made a 0.05-reach/512-chord stub request a first
+        # global step of 0.05 and could overflow an otherwise resolved GL6
+        # launch.  The gentle 1.06 ramp below grows from the last certified
+        # chord instead.
+        launch_scale = max(
+            float(np.hypot(*(local_Y[-1]-local_Y[-2])))
+            if len(local_Y) > 1 else physical_reach,
+            np.finfo(float).tiny)
+        diag.update({
+            "materialized_stub": True,
+            "stub_reach": float(sc["reach"]),
+            "stub_physical_reach": physical_reach,
+            "stub_handoff_chord": launch_scale,
+            "stub_global_field_ready": bool(sc["global_field_ready"]),
+            "stub_endpoint_evaluator": (
+                "global" if sc["global_field_ready"] else "centered"),
+            "critical_chart": True,
+            "critical_order": 6,
+            "critical_steps": len(local_Y) - 1,
+        })
+        if not sc["global_field_ready"]:
+            diag["conditioning_refusal"] = {
+                "global_resolution_margin":
+                    sc.get("global_resolution_margin"),
+                "field_absolute_error": sc.get("field_absolute_error"),
+                "global_roundoff_floor": sc.get("global_roundoff_floor"),
+                "injectivity_margin": sc.get("injectivity_margin"),
+                "spectral_resolution_margin":
+                    sc.get("spectral_resolution_margin"),
+                "fp64_spectral_resolved":
+                    sc.get("fp64_spectral_resolved"),
+            }
+            return Branch(
+                "unstable", local_Y, "abort_conditioning_handoff",
+                {"handoff_certified": False}, diag)
+    elif (saddle_mild and critical_local is not None
+            and critical_local.native is not None):
+        # The centered critical chart precedes either downstream owner:
+        # continuation in deep water or Hadamard graph transform in shallow.
+        try:
+            local_Y, local_diag = _critical_chart_curve(
+                critical_local, "unstable", 1 if db0 > 0 else -1,
+                "b", abs(db0))
+        except (ArithmeticError, ValueError) as exc:
+            diag["critical_chart_rejected"] = str(exc)
+            fr = saddle_frame(m, b_saddle, critical_local.a,
+                              critical_local)["unstable"]
+            d_b = fr["d_b"] if fr["d_b"] * span >= 0 else -fr["d_b"]
+            d_w = fr["d_w"] * (1 if fr["d_b"] * span >= 0 else -1)
+            pts.append((critical_local.a, b_saddle))
+            b_cur, w_cur = b_saddle + db0, (d_w / d_b) * db0
+        else:
+            pts.extend(map(tuple, local_Y))
+            a_cur, b_cur = local_Y[-1]
+            w_cur = float(a_cur - m.a_star(b_cur))
+            diag.update(local_diag)
+        launch_scale = abs(db0)
+    elif saddle_mild:
+        # Compatibility path when the native local chart is unavailable.
+        a_s = (critical_local.a if critical_local is not None
+               else float(m.a_star(b_saddle)))
+        fr = saddle_frame(m, b_saddle, a_s, critical_local)["unstable"]
         d_b = fr["d_b"] if fr["d_b"] * span >= 0 else -fr["d_b"]
         d_w = fr["d_w"] * (1 if fr["d_b"] * span >= 0 else -1)
         if abs(d_b) < 1e-12:
             return Branch("unstable", np.array([[a_s, b_saddle]]),
                           "abort_not_graph", certs, diag)
-        db0 = 1e-6 * span
         pts.append((a_s, b_saddle))
         b_cur, w_cur = b_saddle + db0, (d_w / d_b) * db0
         launch_scale = abs(db0)
 
     term = None
-    for _zone in range(32):
+    live_minima = list(candidate_minima or ())
+    if (critical_stub is not None and len(live_minima) > 1):
+        sc = dict(critical_stub.certificates)
+        if (sc.get("global_field_ready", 0.0)
+                and sc.get("global_resolution_margin", 0.0) >= 1024.0):
+            from . import topology
+            for _event in range(len(live_minima)):
+                event_curve, event_term, captured = (
+                    _potential_rate_level_event(
+                        m, float(m.s_a_star(b_cur)+w_cur), float(b_cur),
+                        [(q.a, q.b) for q in live_minima],
+                        box, cap_r, diag))
+                pts.extend(event_curve[1:])
+                if event_term == "capture":
+                    term = "capture"
+                    b_cur = float(captured[1])
+                    w_cur = float(captured[0]-m.s_a_star(b_cur))
+                    break
+                if event_term == "box_exit":
+                    term = "box_exit"
+                    break
+                if len(event_curve) > 1:
+                    endpoint = event_curve[-1]
+                    b_cur = float(endpoint[1])
+                    w_cur = float(endpoint[0]-m.s_a_star(b_cur))
+                    launch_scale = float(np.hypot(*(
+                        np.asarray(event_curve[-1])
+                        - np.asarray(event_curve[-2]))))
+                if event_term == "step_failure":
+                    event_level = diag["candidate_level_events"][-1][
+                        "event_level"]
+                    level_slack = 2048*np.finfo(float).eps*(
+                        1.0+abs(event_level))
+                    event_minima = [
+                        q for q in live_minima
+                        if abs(float(m.L(q.a, q.b))-event_level)
+                        <= level_slack]
+                    if len(event_minima) == 1:
+                        q = event_minima[0]
+                        arrival, arrival_term = _centered_raw_arrival(
+                            event_curve[-1], (q.a, q.b), q.local,
+                            cap_r, diag)
+                        pts.extend(arrival[1:])
+                        if arrival_term == "capture":
+                            term = "capture"
+                            b_cur = float(q.b)
+                            w_cur = float(q.a-m.s_a_star(b_cur))
+                    break
+                if event_term != "level_event":
+                    break
+                endpoint = event_curve[-1]
+                feasible_ids = None
+                if candidate_enumeration is not None:
+                    feasible_ids = {
+                        id(q) for q in topology.sublevel_component_minima(
+                            m, candidate_enumeration, endpoint)}
+                # Combine the newly measured exact sublevel component with
+                # the loss event.  In particular, a minimum strictly above
+                # the current loss cannot terminate a descent orbit.
+                current_level = float(m.L(*endpoint))
+                level_slack = 2048*np.finfo(float).eps*(
+                    1.0+abs(current_level))
+                reduced = [
+                    q for q in live_minima
+                    if (feasible_ids is None or id(q) in feasible_ids)
+                    and float(m.L(q.a, q.b)) <= current_level+level_slack]
+                if len(reduced) >= len(live_minima):
+                    break
+                live_minima = reduced
+                targets = [(float(q.a), float(q.b)) for q in live_minima]
+                diag.setdefault("candidate_domain_sizes", []).append(
+                    len(live_minima))
+                if len(live_minima) <= 1:
+                    break
+            if term is None and len(live_minima) == 1:
+                chosen = live_minima[0]
+                a_t, b_t = float(chosen.a), float(chosen.b)
+                target = (a_t, b_t)
+                arrival_local = chosen.local
+                span = b_t-b_saddle
+                bg = np.linspace(b_saddle, b_t, n_grid)
+                kap = depth_gauge_floor(m, bg)
+                kap[0], kap[-1] = kap[1], kap[-2]
+                kap = np.where(np.isfinite(kap), kap, np.inf)
+                hstep = abs(span)/(n_grid-1)
+
+    if (critical_stub is not None and arrival_local is not None
+            and critical_local is not None):
+        # `target` is the independently discovered destination used to
+        # parameterize this refinement.  `targets` deliberately remains the
+        # complete live capture set: numerical refinement must not turn a
+        # coarse topological label into an assumption.
+        at_unique, bt_unique = map(float, target)
+        anisotropy = (
+            abs(at_unique-critical_local.a)
+            / max(abs(bt_unique-b_saddle), 1e-300))
+        diag["target_anisotropy"] = float(anisotropy)
+        sc = dict(critical_stub.certificates)
+        if (sc.get("global_field_ready", 0.0)
+                and sc.get("global_resolution_margin", 0.0) >= 1024.0):
+            prefix, b_cur, w_cur, prefix_term = _potential_rate_prefix(
+                m, float(m.s_a_star(b_cur)+w_cur), float(b_cur),
+                (at_unique, bt_unique), box, cap_r, diag)
+            pts.extend(prefix[1:])
+            if prefix_term == "capture":
+                term = "capture"
+            elif prefix_term == "box_exit":
+                term = "box_exit"
+            elif prefix_term in {"near_target", "step_failure", "budget"}:
+                arrival, arrival_term = _centered_raw_arrival(
+                    prefix[-1], (at_unique, bt_unique),
+                    arrival_local, cap_r, diag)
+                pts.extend(arrival[1:])
+                if arrival_term == "capture":
+                    term = "capture"
+                    b_cur = bt_unique
+                    w_cur = float(at_unique-m.s_a_star(b_cur))
+                elif len(arrival) > 1:
+                    b_cur = float(arrival[-1][1])
+                    w_cur = float(arrival[-1][0]-m.s_a_star(b_cur))
+            launch_scale = (
+                float(np.hypot(*(np.asarray(prefix[-1])
+                                 - np.asarray(prefix[-2]))))
+                if len(prefix) > 1 else launch_scale)
+
+    for _zone in range(0 if term is not None else 32):
         i_cur = grid_index(b_cur)
-        g_cur = kap[min(max(i_cur, 0), n_grid - 1)]
-        # The handoff point can lie just across KAPPA_HI from its nearest
-        # precomputed grid node.  Use the exact scalar gauge too, otherwise
-        # the engine can immediately return enter_shallow while the outer
-        # dispatcher keeps sending it back into the engine.
-        g_cur = max(float(g_cur), _s_depth_gauge_floor(m, b_cur))
+        # Continuation may legitimately overshoot the nominal saddle/target
+        # interval before capture is discovered.  The sounding grid is only a
+        # lookup table on that interval: never use its unbounded extrapolated
+        # index for NumPy access or to size a graph-transform zone.
+        i_grid = min(max(i_cur, 0), n_grid - 1)
+        # Ownership is a pointwise decision.  On very large target intervals
+        # the nearest sounding node can be tens of thousands of units away
+        # and may lie in a completely different conditioning regime.
+        g_cur = _s_depth_gauge_floor(m, b_cur)
+        if (not pts and abs(b_cur-b_saddle)
+                <= 16.0*np.finfo(float).eps*(1.0+abs(b_saddle))):
+            # The slow-depth expression is 0/0 at the critical point itself.
+            # Its Hessian spectral ratio is the exact limiting ownership
+            # datum.  This compatibility path is used only when no
+            # materialized local stub has already moved the state away.
+            g_cur = max(g_cur, diag["kappa_spectral_saddle"])
         if g_cur >= KAPPA_HI:
             # NB: the junction is placed by this VALIDITY threshold, not by
             # minimising the two representations' disagreement.  That was
@@ -708,7 +1724,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             # ---- shallow water: Hadamard fixed point owns it ---------- #
             # grid index always INCREASES toward the target (bg runs
             # saddle -> target regardless of the sign of the span)
-            j = i_cur
+            j = i_grid
             while j < n_grid and kap[j] >= KAPPA_EXIT:
                 j += 1
             j = min(max(j, 0), n_grid - 1)
@@ -721,7 +1737,15 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             # started.
             while j < n_grid - 1 and (bg[j] - b_cur) * sgn <= 0.0:
                 j += 1
-            n_pts = max(abs(j - i_cur) + 1, 8)
+            # The sounding grid locates a candidate zone; it does not set the
+            # graph's geometric resolution.  In a 2^17 targeted case one
+            # sounding cell spanned about 58,000 units and the old minimum of
+            # eight samples necessarily rejected an otherwise smooth slow
+            # graph.  Resolve it at the continuation chord scale.
+            zone_span = abs(float(bg[j])-float(b_cur))
+            n_pts = max(
+                abs(j-i_grid)+1, 8,
+                int(np.ceil(zone_span/max(ds, np.finfo(float).tiny)))+1)
             j = min(j, n_grid - 1)
             b_zone = np.linspace(b_cur, bg[j], n_pts)
             w_zone, iters, rel = slow_fixed_point(m, b_zone)
@@ -735,9 +1759,10 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                                       float(bg[j]), iters))
                 shallow_gate = (float(bg[min(j, n_grid - 1)]), sgn)
                 tail, term_e, sw, (b_cur, w_cur) = _continue_curve(
-                    m, b_cur, w_cur, +1, [(a_t, b_t)], box, ds,
+                    m, b_cur, w_cur, +1, targets, box, ds,
                     cap_r=cap_r, ds0=launch_scale,
-                    shallow_gate=shallow_gate)
+                    shallow_gate=shallow_gate, engine_diag=diag,
+                    centered_local=critical_local)
                 pts.extend(tail if not pts else tail[1:])
                 diag["switches"] += sw
                 launch_scale = ds
@@ -753,19 +1778,47 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             if pts and abs(pts[-1][1] - float(b_zone[0])) < 1e-12 * (
                     1 + abs(b_cur)):
                 start = 1                    # grid re-includes current point
+            previous = (np.asarray(pts[-1]) if pts else
+                        np.array([a_zone[0], b_zone[0]]))
             pts.extend(zip(a_zone.tolist()[start:], b_zone.tolist()[start:]))
+            captured_at = None
+            for k, (az, bz) in enumerate(zip(a_zone[start:], b_zone[start:]),
+                                         start=start):
+                for at, bt in targets:
+                    if _segment_capture(
+                            float(previous[0]), float(previous[1]),
+                            float(az), float(bz), at, bt, cap_r):
+                        target_level = float(m.L(at, bt))
+                        current_level = float(m.L(
+                            float(previous[0]), float(previous[1])))
+                        level_slack = 128.0*np.finfo(float).eps*(
+                            1.0+abs(current_level))
+                        if target_level > current_level+level_slack:
+                            continue
+                        captured_at = (k, at, bt)
+                        break
+                if captured_at is not None:
+                    break
+                previous = np.array([az, bz])
+            if captured_at is not None:
+                k, at, bt = captured_at
+                keep = len(pts) - (len(b_zone)-k)
+                pts = pts[:max(keep, 0)]
+                pts.append((at, bt))
+                b_cur, w_cur = bt, float(at-m.a_star(bt))
+                term = "capture"
+                break
             b_cur, w_cur = float(b_zone[-1]), float(w_zone[-1])
             launch_scale = hstep
             if abs(b_cur - b_t) <= hstep * 1.5:
-                if (pts[-1][0] - a_t) ** 2 + (pts[-1][1] - b_t) ** 2 > 1e-24:
-                    pts.append((a_t, b_t))
-                term = "capture"
+                term = "box_exit"
                 break
         else:
             # ---- deep water / steep: the continuation engine ---------- #
             tail, term_e, sw, (b_cur, w_cur) = _continue_curve(
-                m, b_cur, w_cur, +1, [(a_t, b_t)], box, ds,
-                cap_r=cap_r, ds0=launch_scale)
+                m, b_cur, w_cur, +1, targets, box, ds,
+                cap_r=cap_r, ds0=launch_scale, engine_diag=diag,
+                centered_local=critical_local)
             pts.extend(tail if not pts else tail[1:])
             diag["switches"] += sw
             diag["zones"].append(("engine", tail[0][1], b_cur, term_e))
@@ -775,18 +1828,23 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             term = term_e
             break
     else:
-        term = "abort_zone_limit"
+        if term is None:
+            term = "abort_zone_limit"
 
     Y = np.array(pts)
-    _E, _used, _skip = angle_energy_detail(m, Y)
+    certificate_start = int(diag.get("critical_steps", 0)) + 1
+    _E, _used, _skip = angle_energy_detail(
+        m, Y, start=certificate_start)
     certs["angle_energy"] = _E
     certs["angle_resolved"] = _used
     certs["angle_unresolved"] = _skip
-    certs["backbone_residual"] = backbone_residual(m, Y)
+    certs["backbone_residual"] = backbone_residual(
+        m, Y, start=certificate_start)
     certs["endpoint"] = tuple(Y[-1])
     if certs["seam_residuals"]:
         certs["seam_residual"] = max(certs["seam_residuals"])
     diag["stiff_frac"] = float(np.mean(kap >= KAPPA_HI))
+    diag["final_state_bw"] = (float(b_cur), float(w_cur))
     return Branch("unstable", Y, term, certs, diag)
 
 
@@ -808,7 +1866,8 @@ def _slaved_valley_points(m: Model, b0: float, b1: float,
 def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
                       box=(-50.0, 50.0, -50.0, 50.0),
                       n_grid: int = 4001,
-                      local_until: float | None = None) -> Branch:
+                      local_until: float | None = None,
+                      critical_local=None, critical_stub=None) -> Branch:
     """Unstable branch with no finite minimum on that side: valley → box edge.
 
     This is the pseudo-target case from portrait assembly.  The branch needs
@@ -824,6 +1883,9 @@ def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
 
     b_tail0 = float(b_saddle)
     prefix = None
+    if local_until is None and critical_stub is not None:
+        local_until = b_saddle + direction*min(
+            10.0, abs(b_exit-b_saddle))
     if local_until is not None:
         b_local = float(local_until)
         if direction * (b_local - b_saddle) > 0:
@@ -837,7 +1899,9 @@ def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
             if np.isfinite(a_local):
                 local = trace_unstable(
                     m, b_saddle, (a_local, b_local), box=box,
-                    ds=abs(b_local - b_saddle) / 4000.0)
+                    ds=abs(b_local - b_saddle) / 4000.0,
+                    critical_local=critical_local,
+                    critical_stub=critical_stub)
                 if local.term in ("capture", "box_exit"):
                     prefix = local.Y
                     b_tail0 = float(prefix[-1, 1])
@@ -876,14 +1940,16 @@ def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
 
 def trace_stable(m: Model, b_saddle: float, sign: int,
                  box=(-25.0, 25.0, -12.0, 16.0), ds: float | None = None,
-                 delta: float = 1e-4) -> Branch:
+                 delta: float | None = None, critical_local=None,
+                 critical_stub=None) -> Branch:
     """Stable branch (separatrix): saddle → box exit, ascent flow.
 
     Fast-graph launch from the exact eigenvector jet; the continuation
     engine handles any folds back to the slow chart.
     """
-    a_s = float(m.a_star(b_saddle))
-    fr = saddle_frame(m, b_saddle, a_s)["stable"]
+    a_s = (critical_local.a if critical_local is not None
+           else float(m.a_star(b_saddle)))
+    fr = saddle_frame(m, b_saddle, a_s, critical_local)["stable"]
     d_w = fr["d_w"] if sign * fr["d_w"] >= 0 else -fr["d_w"]
     d_b = fr["d_b"] * (1 if sign * fr["d_w"] >= 0 else -1)
     if abs(d_w) < 1e-12:
@@ -891,16 +1957,90 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
                       "abort_not_graph")
     if ds is None:
         ds = (abs(box[1] - box[0]) + abs(box[3] - box[2])) / 30000.0
+    if delta is None:
+        delta = STABLE_LAUNCH_DELTA
 
-    w0 = sign * delta
-    b0 = b_saddle + (d_b / d_w) * w0
-
-    pts, term, sw, _ = _continue_curve(m, b0, w0, -1, [], box, ds,
-                                       ds0=abs(delta))
+    diag = {"switches": 0}
+    prefix = []
+    launch_scale = abs(delta)
+    if critical_stub is not None:
+        local_Y = np.asarray(critical_stub.curve)
+        prefix = list(map(tuple, local_Y[1:]))
+        a0, b0 = local_Y[-1]
+        w0 = float(a0 - m.a_star(b0))
+        sc = dict(critical_stub.certificates)
+        launch_scale = max(
+            float(np.hypot(*(local_Y[-1]-local_Y[0]))),
+            np.finfo(float).tiny)
+        diag.update({
+            "materialized_stub": True,
+            "stub_reach": float(sc["reach"]),
+            "stub_physical_reach": launch_scale,
+            "stub_global_field_ready": bool(sc["global_field_ready"]),
+            "stub_endpoint_evaluator": (
+                "global" if sc["global_field_ready"] else "centered"),
+            "critical_chart": True,
+            "critical_order": 6,
+            "critical_steps": len(local_Y) - 1,
+        })
+        if not sc["global_field_ready"]:
+            diag["conditioning_refusal"] = {
+                "global_resolution_margin":
+                    sc.get("global_resolution_margin"),
+                "field_absolute_error": sc.get("field_absolute_error"),
+                "global_roundoff_floor": sc.get("global_roundoff_floor"),
+                "injectivity_margin": sc.get("injectivity_margin"),
+                "spectral_resolution_margin":
+                    sc.get("spectral_resolution_margin"),
+                "fp64_spectral_resolved":
+                    sc.get("fp64_spectral_resolved"),
+            }
+            return Branch(
+                "stable", local_Y, "abort_conditioning_handoff",
+                {"handoff_certified": False}, diag)
+    elif critical_local is not None and critical_local.native is not None:
+        try:
+            local_Y, local_diag = _critical_chart_curve(
+                critical_local, "stable", sign, "w", abs(delta))
+        except (ArithmeticError, ValueError) as exc:
+            diag["critical_chart_rejected"] = str(exc)
+            w0 = sign * delta
+            b0 = b_saddle + (d_b / d_w) * w0
+        else:
+            prefix = list(map(tuple, local_Y[1:]))
+            a0, b0 = local_Y[-1]
+            w0 = float(a0 - m.a_star(b0))
+            diag.update(local_diag)
+    else:
+        w0 = sign * delta
+        b0 = b_saddle + (d_b / d_w) * w0
+    potential_term = None
+    if (critical_stub is not None
+            and dict(critical_stub.certificates).get(
+                "global_field_ready", 0.0)):
+        potential_pts, potential_term = _potential_rate_box_exit(
+            m, (m.a_star(b0)+w0, b0), box, ds, diag)
+        if prefix:
+            prefix.extend(potential_pts[1:])
+        else:
+            prefix = potential_pts
+        b0 = float(potential_pts[-1][1])
+        w0 = float(potential_pts[-1][0]-m.a_star(b0))
+    if potential_term == "box_exit":
+        engine_pts, term, sw = [prefix[-1]], "box_exit", 0
+    else:
+        engine_pts, term, sw, _ = _continue_curve(
+            m, b0, w0, -1, [], box, ds, ds0=launch_scale,
+            engine_diag=diag, centered_local=critical_local)
+    pts = prefix + engine_pts[1:] if prefix else engine_pts
     Y = np.array([(a_s, b_saddle)] + pts)
-    _E, _used, _skip = angle_energy_detail(m, Y)
+    certificate_start = int(diag.get("critical_steps", 0)) + 1
+    _E, _used, _skip = angle_energy_detail(
+        m, Y, start=certificate_start)
     certs = {"angle_energy": _E, "angle_resolved": _used,
              "angle_unresolved": _skip,
-             "backbone_residual": backbone_residual(m, Y),
+             "backbone_residual": backbone_residual(
+                 m, Y, start=certificate_start),
              "endpoint": tuple(Y[-1])}
-    return Branch("stable", Y, term, certs, {"switches": sw})
+    diag["switches"] = sw
+    return Branch("stable", Y, term, certs, diag)

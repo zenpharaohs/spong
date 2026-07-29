@@ -1,10 +1,12 @@
 """Phase-5 gates: full ledger emitted; parity on the tricky portrait;
 rendering guarantees; the d=2 oracle end-to-end."""
 
+from fractions import Fraction
+
 import numpy as np
 import pytest
 
-from spong import model, portrait, render
+from spong import inverse, model, portrait, render
 from tests.test_enumeration import TRICKY_F
 
 
@@ -30,9 +32,9 @@ def test_tricky_branch_parity(tricky_portrait):
               if b["kind"] == "unstable"
               and abs(b["saddle_b"] - (-2.738230515199397)) < 1e-6]
     assert len(tricky) == 2
+    assert {b["term"] for b in tricky} == {"capture", "box_exit"}
     for b in tricky:
-        assert b["term"] == "capture"
-        assert b["adjacency[RESIDUAL,thm-backed]"]
+        assert b["connection[RESIDUAL]"]
         assert b["angle_energy[RESIDUAL]"] < 1e-12
         # ...and it must have measured something: angle_energy skips vertices
         # whose grad L direction is below the digit budget, so E alone cannot
@@ -43,10 +45,10 @@ def test_tricky_branch_parity(tricky_portrait):
             assert b["backbone_residual[RESIDUAL]"] < 1e-8
 
 
-def test_adjacency_everywhere(tricky_portrait):
+def test_connections_are_discovered_and_certified(tricky_portrait):
     for b in tricky_portrait.ledger["branches"]:
         if b["kind"] == "unstable":
-            assert b["adjacency[RESIDUAL,thm-backed]"]
+            assert b["connection[RESIDUAL]"]
 
 
 def test_asymptote_certificates_present(tricky_portrait):
@@ -182,6 +184,105 @@ def test_linear_vs_d17_horizontal_branch_reaches_global_minimum():
     assert len(br.Y) < 100000
 
 
+def test_arrival_switches_from_singular_graph_to_geometric_flow():
+    """Seed 3961976233: both scalar graph charts lose their stage basin just
+    outside the minimum.  A native geometric-flow fallback must carry the
+    same integral curve through that coordinate singularity."""
+    f = [
+        -0.843007825559568, -0.05274436784577235,
+        -0.8892793596127176, -0.0540101358721694,
+        1.0627292476672185, 0.28037291466934844,
+    ]
+    g = [
+        -0.1262351806720851, -0.6939851784051513,
+        -0.07378562184257083, -1.1676968794174307,
+        -0.7877423377195685,
+    ]
+    m = model.build(f, g, model.moments_uniform01(11))
+    p = portrait.compute(m, trace_stable_branches=False)
+    rescued = [
+        br for br in p.branches
+        if (br.diag.get("floor_fallback_normalized_gl6", 0) > 0
+            or br.diag.get("potential_rate", {}).get("accepted_steps", 0) > 0)
+    ]
+    assert rescued
+    assert all(br.term == "capture" for br in rescued)
+    assert rescued[0].term == "capture"
+    assert p.ledger["summary"]["all_branches_clean"]
+
+
+def test_refinement_can_replace_a_coarse_wrong_basin_label():
+    """Seed 2149547: coarse discovery crossed a separatrix and nominated
+    b=-1.0296 for three branches which refined into b=0 or b=+1.0296.
+    Refinement must keep every minimum live rather than turning arrival at
+    the true minimum into a stage failure."""
+    f = [-0.7142857148120779, 1.0, 1.0, 1.0, 1.0, 1.0]
+    g = [1.0, 0.0, -4.0, 0.0, -4.0]
+    m = model.build(f, g, model.moments_uniform01(11))
+    p = portrait.compute(m, trace_stable_branches=False)
+    moderate = [
+        br for br in p.branches
+        if abs(br.diag.get("saddle_b", np.inf)) < 1.0
+    ]
+    assert len(moderate) == 4
+    assert all(br.term == "capture" for br in moderate)
+    assert sorted(round(br.diag["target"][1], 6) for br in moderate) == [
+        -1.029578, 0.0, 0.0, 1.029578]
+
+
+def _targeted_qualification_model(seed, exponent):
+    rng = np.random.default_rng(seed)
+    degree = int(rng.integers(3, 7))
+    coefficients = [
+        int(x) for x in rng.integers(-4, 5, size=degree+1)]
+    if coefficients[0] == 0:
+        coefficients[0] = int(rng.choice([-1, 1]))
+    if coefficients[-1] == 0:
+        coefficients[-1] = int(rng.choice([-1, 1]))
+    radius = Fraction(int(rng.choice([-1, 1]))*(2**exponent))
+    moments = model.moments_uniform01(2*(degree+1)+1)
+    return inverse.design(
+        [radius], coefficients, moments, deg_f=degree+1).model
+
+
+def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
+    """Seed 3759027027 has a minimum at b=-2048.
+
+    Scaling every capture ball by that connection length made a radius-two
+    ball around the *near* minimum and falsely captured both branches there.
+    Critical-point separation must bound all-minima capture neighbourhoods.
+    """
+    m = _targeted_qualification_model(3759027027, 11)
+    p = portrait.certified_compute(m, max_geometry_level=0)
+    assert p.ledger["topology"]["status"] == "certified"
+    assert set(p.ledger["timing"]) == {
+        "enumeration_sec", "stub_materialization_sec",
+        "geometry_sec", "total_sec"}
+    assert all(value >= 0.0 for value in p.ledger["timing"].values())
+    assert sum(br.term == "capture" for br in p.branches) == 3
+    captured = [br.diag["target"][1] for br in p.branches
+                if br.kind == "unstable" and br.term == "capture"]
+    assert len(set(captured)) == 2
+    assert captured.count(-2048.0) == 1
+
+
+def test_stiff_stub_extends_before_global_handoff():
+    """Seed 3389434578 has eigenvalue ratio about 9.9e11 at b≈8.
+
+    The quadratic Poincare graph loses contraction on the larger interval,
+    but the exact centered graph remains certified and carries the branch
+    far enough for the global dispatcher to finish.
+    """
+    m = _targeted_qualification_model(3389434578, 11)
+    p = portrait.certified_compute(m, max_geometry_level=0)
+    assert p.ledger["topology"]["status"] == "certified"
+    saddle = max(p.enumeration.saddles, key=lambda q: q.b)
+    unstable = [stub for stub in saddle.stubs
+                if stub.manifold == "unstable"]
+    assert any(dict(stub.certificates)["centered_extension"] for stub in unstable)
+    assert all(br.term in ("capture", "box_exit") for br in p.branches)
+
+
 def test_d2_end_to_end():
     m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
     p = portrait.compute(m)
@@ -193,3 +294,14 @@ def test_d2_end_to_end():
     assert led["summary"]["worst_angle_energy"] < 1e-6
     svg = render.plane_view(p)
     assert svg.startswith("<svg")
+
+
+def test_geometry_launches_from_materialized_critical_stubs():
+    m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
+    p = portrait.compute(m)
+    assert all(len(s.stubs) == 4 for s in p.enumeration.saddles)
+    launched = [br for br in p.branches
+                if br.diag.get("materialized_stub")]
+    assert len(launched) == len(p.branches)
+    assert all(br.diag["stub_endpoint_evaluator"] in ("centered", "global")
+               for br in launched)

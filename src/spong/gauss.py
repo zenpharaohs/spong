@@ -1,8 +1,8 @@
 """The only integrators: the Gauss collocation family.
 
 SPONG_FOUNDING Part II, section 10.  IMM (implicit midpoint = 1-stage
-Gauss, order 2), IRK4-GL (2-stage, order 4) and IRK6-GL (3-stage,
-order 6).  Symmetric
+Gauss, order 2), IRK4-GL (2-stage, order 4), IRK6-GL (3-stage,
+order 6), and IRK8-GL (4-stage, order 8).  Symmetric
 (anadromic: Φ₋ₕ = Φₕ⁻¹), symplectic, A-stable, portable.  Anadromicity is
 REQUIRED (manifold duality; level-set conservation), not preferred.
 
@@ -41,11 +41,27 @@ _GL3_A = ((5/36,               2/9 - _S15/15,  5/36 - _S15/30),
           (5/36 + _S15/30,     2/9 + _S15/15,  5/36))
 _GL3_B = (5/18, 4/9, 5/18)
 
+# 4-stage Gauss (IRK8-GL)
+_GL4_C = (0.06943184420297371, 0.33000947820757187,
+          0.66999052179242813, 0.93056815579702629)
+_GL4_A = (
+    (0.08696371128436346, -0.02660418008499879,
+     0.012627462689404725, -0.003555149685795683),
+    (0.18811811749986807, 0.16303628871563654,
+     -0.027880428602470895, 0.006735500594538155),
+    (0.16719192197418877, 0.35395300603374397,
+     0.16303628871563654, -0.014190694931141142),
+    (0.17748257225452260, 0.31344511474186835,
+     0.35267675751627190, 0.08696371128436346))
+_GL4_B = (0.17392742256872693, 0.32607257743127307,
+          0.32607257743127307, 0.17392742256872693)
+
 # (c, A, b) by name — the family, in increasing order
 _TABLEAU = {
     "imm": ((0.5,), ((0.5,),), (1.0,)),
     "gl4": (_GL2_C, _GL2_A, _GL2_B),
     "gl6": (_GL3_C, _GL3_A, _GL3_B),
+    "gl8": (_GL4_C, _GL4_A, _GL4_B),
 }
 
 # stage nodes by stage count, for the dense-output collocation polynomial
@@ -83,6 +99,52 @@ def _fd_jac(F, x, y, f0):
     return J
 
 
+def _guarded_linear_solve(matrix, rhs):
+    """Row-equilibrated pivoted solve with an a posteriori certificate.
+
+    This is the general-dimensional Python oracle path.  Portrait production
+    uses native scalar GL4/GL6 and vector GL4/GL6/GL8 kernels, but the oracle
+    must
+    still refuse an unresolvable Newton correction instead of delegating an
+    opaque conditioning decision to ``np.linalg.solve``.
+    """
+    original = np.asarray(matrix, dtype=float)
+    right = np.asarray(rhs, dtype=float)
+    n = len(right)
+    row_scale = np.max(np.abs(original), axis=1)
+    if np.any(row_scale == 0.0) or not np.all(np.isfinite(row_scale)):
+        raise FloatingPointError("singular/nonfinite Newton stage matrix")
+    A = original/row_scale[:, None]
+    b = right/row_scale
+    pivot_floor = 64*np.finfo(float).eps
+    for k in range(n):
+        pivot_row = k+int(np.argmax(np.abs(A[k:, k])))
+        if abs(A[pivot_row, k]) <= pivot_floor:
+            raise FloatingPointError(
+                "Newton stage matrix is unresolved after equilibration")
+        if pivot_row != k:
+            A[[k, pivot_row]] = A[[pivot_row, k]]
+            b[[k, pivot_row]] = b[[pivot_row, k]]
+        for i in range(k+1, n):
+            multiplier = A[i, k]/A[k, k]
+            A[i, k] = 0.0
+            A[i, k+1:] -= multiplier*A[k, k+1:]
+            b[i] -= multiplier*b[k]
+    solution = np.empty(n)
+    for i in range(n-1, -1, -1):
+        solution[i] = (
+            b[i]-A[i, i+1:]@solution[i+1:])/A[i, i]
+    residual = original@solution-right
+    denominator = (
+        n*np.max(np.abs(original))*np.max(np.abs(solution))
+        + np.max(np.abs(right)))
+    backward_error = np.max(np.abs(residual))/max(denominator, 1e-300)
+    if not np.isfinite(backward_error) or backward_error > 1e-11:
+        raise FloatingPointError(
+            f"Newton correction backward error {backward_error:.3g}")
+    return solution
+
+
 def _newton_stages(F, jac, x, y, h, c, A):
     """Solve the Gauss stage equations Y_i = y + h Σ_j A_ij F(x + c_j h, Y_j).
 
@@ -92,27 +154,55 @@ def _newton_stages(F, jac, x, y, h, c, A):
     xs = [x + ci * h for ci in c]
     # warm start: explicit Euler stage guesses
     f0 = np.atleast_1d(F(x, y))
-    K = np.tile(f0, (s, 1))
+    K0 = np.tile(f0, (s, 1))
 
-    for _ in range(_NEWTON_MAX):
+    def evaluate(K):
         Y = [y + h * sum(A[i][j] * K[j] for j in range(s)) for i in range(s)]
         Fv = [np.atleast_1d(F(xs[i], Y[i])) for i in range(s)]
         R = np.concatenate([K[i] - Fv[i] for i in range(s)])
-        if np.max(np.abs(R)) < _NEWTON_TOL * (1.0 + np.max(np.abs(K))):
-            break
-        # block Newton on K: dR_i/dK_j = δ_ij I − h A_ij J(x_j, Y_j)... with
-        # J evaluated at the stage values (chain rule through Y_i).
-        Js = [np.atleast_2d(jac(xs[i], Y[i])) if jac is not None
-              else _fd_jac(F, xs[i], Y[i], Fv[i]) for i in range(s)]
-        M = np.zeros((s * n, s * n))
-        for i in range(s):
-            for j in range(s):
-                blk = -h * A[i][j] * (Js[i] @ np.eye(n))
-                if i == j:
-                    blk += np.eye(n)
-                M[i * n:(i + 1) * n, j * n:(j + 1) * n] = blk
-        dK = np.linalg.solve(M, -R).reshape(s, n)
-        K = K + dK
+        return Y, Fv, R
+
+    def run(K, armijo):
+        for _ in range(_NEWTON_MAX):
+            Y, Fv, R = evaluate(K)
+            scale = 1.0 + np.max(np.abs(K))
+            if np.max(np.abs(R)) < _NEWTON_TOL * scale:
+                return K
+            # block Newton on K: dR_i/dK_j = δ_ij I − h A_ij J_i.
+            Js = [np.atleast_2d(jac(xs[i], Y[i])) if jac is not None
+                  else _fd_jac(F, xs[i], Y[i], Fv[i]) for i in range(s)]
+            M = np.zeros((s * n, s * n))
+            for i in range(s):
+                for j in range(s):
+                    blk = -h * A[i][j] * (Js[i] @ np.eye(n))
+                    if i == j:
+                        blk += np.eye(n)
+                    M[i * n:(i + 1) * n, j * n:(j + 1) * n] = blk
+            dK = _guarded_linear_solve(M, -R).reshape(s, n)
+            if np.max(np.abs(dK)) < _NEWTON_TOL * scale:
+                return K + dK
+            alpha = 1.0
+            if armijo:
+                phi = 0.5 * float(R @ R)
+                while alpha >= 2.0 ** -12:
+                    Rc = evaluate(K + alpha * dK)[2]
+                    if 0.5 * float(Rc @ Rc) <= phi * (1.0 - 1e-4 * alpha):
+                        break
+                    alpha *= 0.5
+                else:
+                    return None
+            K = K + alpha * dK
+        return None
+
+    # Full Newton has the widest local basin on these stage equations.  Armijo
+    # is a globalization fallback, not a replacement: restart it only when the
+    # undamped iteration exhausts its budget.
+    K = run(K0.copy(), armijo=False)
+    if K is None:
+        K = run(K0.copy(), armijo=True)
+    if K is None:
+        raise FloatingPointError(
+            f"{len(c)}-stage Newton did not converge in {_NEWTON_MAX} iterations")
     return K
 
 
@@ -178,6 +268,7 @@ def gl4_scalar(f, j, x: float, y: float, h: float,
     x1, x2 = x + c1 * h, x + c2 * h
     k = f(x, y)
     K1 = K2 = k
+    converged = False
     for _ in range(maxit):
         Y1 = y + h * (a11 * K1 + a12 * K2)
         Y2 = y + h * (a21 * K1 + a22 * K2)
@@ -187,6 +278,7 @@ def gl4_scalar(f, j, x: float, y: float, h: float,
         if abs(K2) > m_:
             m_ = abs(K2)
         if (abs(r1) if abs(r1) > abs(r2) else abs(r2)) < tol * (1.0 + m_):
+            converged = True
             break
         J1 = j(x1, Y1)
         J2 = j(x2, Y2)
@@ -195,8 +287,16 @@ def gl4_scalar(f, j, x: float, y: float, h: float,
         m21 = -h * a21 * J2
         m22 = 1.0 - h * a22 * J2
         det = m11 * m22 - m12 * m21
-        K1 += (-m22 * r1 + m12 * r2) / det
-        K2 += (m21 * r1 - m11 * r2) / det
+        d1 = (-m22 * r1 + m12 * r2) / det
+        d2 = (m21 * r1 - m11 * r2) / det
+        K1 += d1
+        K2 += d2
+        if max(abs(d1), abs(d2)) < tol * (1.0 + m_):
+            converged = True
+            break
+    if not converged:
+        raise FloatingPointError(
+            f"GL4 stage Newton did not converge in {maxit} iterations")
     return y + h * 0.5 * (K1 + K2)
 
 
@@ -248,6 +348,7 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
     x1, x2, x3 = x + c1 * h, x + c2 * h, x + c3 * h
     k = f(x, y)
     K1 = K2 = K3 = k
+    converged = False
     for _ in range(maxit):
         Y1 = y + h * (a11 * K1 + a12 * K2 + a13 * K3)
         Y2 = y + h * (a21 * K1 + a22 * K2 + a23 * K3)
@@ -266,6 +367,7 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         if abs(r3) > rm:
             rm = abs(r3)
         if rm < tol * (1.0 + m_):
+            converged = True
             break
         J1, J2, J3 = j(x1, Y1), j(x2, Y2), j(x3, Y3)
         m11 = 1.0 - h * a11 * J1
@@ -343,6 +445,12 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         K1 -= d1
         K2 -= d2
         K3 -= d3
+        if max(abs(d1), abs(d2), abs(d3)) < tol * (1.0 + m_):
+            converged = True
+            break
+    if not converged:
+        raise FloatingPointError(
+            f"GL6 stage Newton did not converge in {maxit} iterations")
     return y + h * (b1 * K1 + b2 * K2 + b3 * K3)
 
 

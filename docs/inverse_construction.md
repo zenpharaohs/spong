@@ -937,7 +937,15 @@ under-resolved at the seam.  That is why every tuning sweep was ambiguous —
 raising and lowering each looked defensible and neither helped much, because
 the knob being turned was not the one that mattered.
 
-### Due diligence: IRK8-GL, and why GL6 is the stopping point
+### Historical due diligence: the pre-conditioning IRK8-GL experiment
+
+> **Superseded (July 2026).**  This experiment preceded the exact centered
+> jets, corrected analytic Jacobians, row-scaled native stage solve,
+> potential-rate parametrization, and certified dense output.  Under the
+> repaired arithmetic, native GL8 reduces refinement rejections and
+> full-versus-two-half discrepancies at essentially equal runtime, and is now
+> the primary 2D geometric collocation method.  GL6 remains the secondary
+> control and the default scalar graph-chart method.
 
 Not expected to help much, checked anyway so the choice is measured.  The
 4-stage tableau was built programmatically from the Gauss-Legendre nodes
@@ -977,7 +985,8 @@ implementation to keep in step with the Python one.  One thing that would carry
 free: `Step.dense()` is written for any stage count, so a 4-stage interpolant
 needs no new code.
 
-**Conclusion: stop at GL6.**  Not implemented.  Ladder step counts are quantized
+**Historical conclusion: stop at GL6.**  This conclusion no longer governs
+the conditioned 2D engine.  Ladder step counts in this experiment were quantized
 to powers of two, which is why GL8's savings appear as 2x or 4x rather than the
 smooth `(1/6 - 1/8)` exponent gap — worth remembering if the ladder ever gains
 finer refinement, since that would modestly improve GL8's side of this table.
@@ -1109,10 +1118,24 @@ disagrees with itself just as much as GL6 does.
 
 It also restricts to states where the stage Newton CONVERGED.  Of 3000 samples
 only 3 diverged, all with Newton residual 4.8-23.2 instead of ~1e-13: both paths
-exhaust their iterations and land on different non-solutions.  That is a
-property of the problem, not a discrepancy between implementations — parity is a
-claim about the method, and an unsolved stage system has no defined answer to
-compare.  (The engine rejects such a step and halves.)
+exhausted their iterations and landed on different non-solutions.  That exposed
+a missing contract: iteration exhaustion used to return the last finite iterate.
+It now rejects the step in both implementations, and the engine halves.  Success
+requires either the scaled residual tolerance or a Newton correction below the
+requested relative scale (the attainable-residual-floor case).  The general
+solver additionally retries from the initial stages with Armijo damping after
+full Newton exhausts; damping is a fallback because measurements found cases
+that undamped Newton solves but monotone merit descent does not.
+
+The production C scalar GL6 solver now has the same Armijo restart.  A small
+stage residual is not by itself enough to accept a nonlinear collocation root:
+the continuation controller also requires the step to realize the
+gradient-predicted potential descent (ascent for stable separatrices).  At the
+spatial floor, if both scalar graph coordinates fail, the controller takes a
+C-native GL6 normalized-gradient step (then GL4) and returns to the graph
+dispatcher.  This is a change of parameterization of the same integral curve,
+not an RK fallback.  On the 24-case continuation corpus it removed the final
+three unclean portraits: 24/24 clean, with no exceptions or branch aborts.
 
 **Out-of-sample verdict, final.**  GL6 now matches GL4 exactly:
 
@@ -1133,8 +1156,8 @@ outcomes on every branch, with the seam 6x better.  GL6 qualifies out of sample.
 radius 2^k, GL4 vs GL6 on identical models, both arms in C.  Two claims tested
 separately, because pooling them would hide the second.
 
-**(a) GL6 is not worse on untargeted random portraits — confirmed, and it is
-better where it is supposed to be.**
+**(a) GL6 materially improves the seam and angle-energy tails, with a one-event
+capture/clean regression in this sample.**
 
 | | GL4 | GL6 |
 |---|--:|--:|

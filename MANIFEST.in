@@ -1,0 +1,5 @@
+include CMakeLists.txt
+recursive-include include *.h
+recursive-include src/c *.c
+recursive-include tests/c *.c
+recursive-include docs *.md

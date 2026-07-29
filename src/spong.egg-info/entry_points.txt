@@ -1,2 +1,3 @@
 [console_scripts]
 spong-random-portrait = spong.cli:main
+spong-validate-native = spong.validate:main

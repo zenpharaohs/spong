@@ -9,6 +9,27 @@ from spong import charts, model, sturm
 from tests.test_enumeration import TRICKY_F
 
 
+def test_closed_form_sym2_eigh_recovers_small_value_from_determinant():
+    lam, frame = charts._sym2_eigh(np.diag((-1e-8, 1e8)))
+    np.testing.assert_allclose(lam, (-1e-8, 1e8), rtol=2e-16)
+    np.testing.assert_allclose(frame, np.eye(2), rtol=0, atol=0)
+
+
+def test_native_hadamard_transform_matches_python_oracle():
+    """The production fourth-order graph transform is native; Python pins it."""
+    m = model.build([1.0, 1.0, 0.5], [1.0, 1.0, 0.5],
+                    model.moments_uniform01(15))
+    if m._native_kernel is None:
+        pytest.skip("native kernel not built")
+    b = np.linspace(4.0, 8.0, 1001)
+    py_w, py_it, py_rel = charts._slow_fixed_point_python(m, b)
+    c_w, c_it, c_rel = m._native_kernel.slow_fixed_point(b, 1e-13, 40)
+    c_w = np.asarray(c_w)
+    assert c_it == py_it
+    assert np.allclose(c_w, py_w, rtol=5e-14, atol=1e-25)
+    assert abs(c_rel - py_rel) < 1e-15
+
+
 def _lowest_saddle_and_adjacent_min(e):
     saddles = sorted(e.saddles, key=lambda p: p.b)
     s = saddles[0]

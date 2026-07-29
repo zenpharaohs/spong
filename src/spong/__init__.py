@@ -6,3 +6,11 @@ Phase 0: scaffold only.
 """
 
 __version__ = "0.0.1"
+
+from .resolution import (Resolution, ResolutionPolicy, ResolutionReason,
+                         ResolutionStatus, resolve)
+
+__all__ = [
+    "Resolution", "ResolutionPolicy", "ResolutionReason", "ResolutionStatus",
+    "resolve",
+]

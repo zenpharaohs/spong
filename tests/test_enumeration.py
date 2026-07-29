@@ -144,6 +144,26 @@ def test_far_root_classification():
         assert np.isfinite(p.b) and p.kind in ("min", "saddle")
 
 
+def test_complex_common_factor_does_not_make_real_loss_nonmorse():
+    """Morse is a condition at real critical points, not complex roots.
+
+    For X~N(0,1), f=1 and g=1+2x+2x² give
+      A=(1+2b²)(1+6b²), B=1+2b².
+    The common factor has no real root and cancels from B²/A.  The reduced
+    u' numerator is proportional to b, so the sole real critical point is a
+    nondegenerate minimum.
+    """
+    m = model.build([1], [1, 2, 2], model.moments_normal01(7))
+    e = sturm.enumerate_critical_points(m)
+    assert e.psi_positive and e.morse and e.alternates
+    assert len(e.points) == 1
+    q = e.points[0]
+    assert q.source == "H"
+    assert q.b == pytest.approx(0.0)
+    assert q.kind == "min" and q.u2_sign > 0
+    assert q.local.spectral.determinant > 0
+
+
 @pytest.mark.slow
 def test_zoo_uniform_alternation_1000():
     """Founding Phase-1 gate at full width: alternation on 1000 random

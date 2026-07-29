@@ -75,10 +75,9 @@ when the target is a finite minimum.  It means the compute box was too small.
 Current policy:
 
 1. Trace finite unstable branches first.
-2. If a branch exits the current compute box before capturing its finite
-   target, expand the relevant `a` side and retry.
-3. Once finite connections are settled, trace unbounded branches and stable
-   separatrices against the final enlarged box.
+2. Continue each unstable branch against every minimum until it captures one
+   or exits the compute box; no destination is inferred from backbone order.
+3. Trace stable separatrices against the final box.
 
 This makes the expensive behavior demand-driven: spong only pays for a larger
 box when a finite branch proves the existing box inadequate.
@@ -89,7 +88,7 @@ The readable picture and the integration domain are not the same object.
 
 The default display view is chosen to show the finite critical skeleton with
 moderate padding.  That is the right first picture for inspection: minima,
-saddles, local separatrix geometry, and branch adjacency should not be pushed
+saddles, local separatrix geometry, and discovered connections should not be pushed
 into a tiny corner by a far excursion.
 
 The trace box must be larger.  A stable separatrix can leave the display view
@@ -230,8 +229,11 @@ need to be integrated.**
 Found by bisecting a regression in the founding MATLAB-parity gate
 (`test_tricky_branch_parity`).  It passes at `1ca22ed` and fails at `3938060`
 (`angle_energy` 3.70e-14 -> 2.01e-08 against a `< 1e-12` bound).  The cause is
-NOT the closed-form `_sym2_eigh` (verified bit-identical to `np.linalg.eigh`
-here) but `_trace_box`, which enlarged the integration box 1.35x:
+not the eigendecomposition in that particular moderate-scale regression but
+`_trace_box`, which enlarged the integration box 1.35x.  This observation is
+case-specific: critical-point elaboration now derives its spectral frame from
+the exact centered Hessian, because an FP64 eigensolver can erase the smaller
+eigenvalue at large dynamic range.
 
 | | b-range | arc | vertices | E | E/vertex |
 |---|---|--:|--:|--:|--:|

@@ -134,6 +134,44 @@ def test_conditioning_guard_never_trips_on_dissipative_problems():
         assert np.isfinite(y)
 
 
+def test_scalar_stage_newton_rejects_iteration_exhaustion():
+    """A finite iterate is not an accepted step unless its stage residual met
+    the termination criterion."""
+    f = lambda x, y: y * y + np.sin(x)
+    j = lambda x, y: 2.0 * y
+    with pytest.raises(FloatingPointError, match="did not converge"):
+        gauss.gl6_scalar(f, j, 0.0, 1.0, 3.0, maxit=1)
+
+
+def test_general_stage_newton_rejects_iteration_exhaustion(monkeypatch):
+    """The vector path obeys the same residual-based contract."""
+    f = lambda x, y: np.array([y[0] * y[0] + np.sin(x)])
+    j = lambda x, y: np.array([[2.0 * y[0]]])
+    monkeypatch.setattr(gauss, "_NEWTON_MAX", 1)
+    with pytest.raises(FloatingPointError, match="did not converge"):
+        gauss.step(f, 0.0, np.array([1.0]), 3.0, method="gl6", jac=j)
+
+
+def test_native_armijo_restart_certifies_stage_solve_python_rejects():
+    """The C Armijo restart may enlarge Newton's basin, but its accepted step
+    must retain the defining anadromic certificate."""
+    pytest.importorskip("spong._native")
+    from spong import charts, model
+
+    m = model.build([1.0, 1.0, 0.5], [1.0, 1.0, 0.5],
+                    model.moments_uniform01(15))
+    f, j = charts.slow_rhs_s(m)
+    x, y, h = -0.27105203823092516, 1.7261330563357526e-6, -8.062546477701309
+    with pytest.raises(FloatingPointError, match="did not converge"):
+        gauss.gl6_scalar(f, j, x, y, h)
+    y1 = m._native_kernel.slow_step(x, y, h)
+    assert np.isfinite(y1)
+    assert m._native_kernel.slow_step(x + h, y1, -h) == pytest.approx(
+        y, rel=0, abs=5e-15)
+    assert np.isfinite(gauss.gl6_scalar(f, j, x, y, h / 2.0))
+    assert np.isfinite(m._native_kernel.slow_step(x, y, h / 2.0))
+
+
 def test_conditioning_guard_trips_at_a_true_singularity():
     """At a Pade-denominator root the stage matrix IS singular; the guard must
     say so rather than dividing by a near-zero determinant."""
@@ -400,3 +438,60 @@ def test_native_and_python_agree_on_the_fast_chart():
         worst = max(worst, abs(nv - pv) / max(abs(pv), abs(b), 1e-16))
     assert checked > 200, f"only {checked} usable samples"
     assert worst < 1e-10, f"native/python divergence {worst:.2e}"
+
+
+@pytest.mark.parametrize("order", [4, 6, 8])
+def test_native_normalized_2d_step_matches_general_irk(order):
+    """The native geometric-flow kernel is the same vector IRK method."""
+    pytest.importorskip("spong._native")
+    from spong import model
+
+    m = model.build([1.0, 2.0, 1.0], [0.5, -1.0, 2.0],
+                    model.moments_uniform01(7))
+    k = m._native_kernel
+    if k is None:
+        pytest.skip("native kernel not built")
+
+    def F(_x, z):
+        g = m.gradL(float(z[0]), float(z[1]))
+        return g / np.linalg.norm(g)
+
+    def J(_x, z):
+        g = m.gradL(float(z[0]), float(z[1]))
+        H = m.hessL(float(z[0]), float(z[1]))
+        ng = np.linalg.norm(g)
+        return H / ng - np.outer(g, H @ g) / ng**3
+
+    method = f"gl{order}"
+    for z in (np.array([0.3, 0.4]), np.array([2.0, -1.0])):
+        native = np.asarray(k.normalized_step(*z, 1e-3, order))
+        python = gauss.step(F, 0.0, z, 1e-3, method=method, jac=J).y1
+        assert np.allclose(native, python, rtol=2e-14, atol=2e-15)
+
+
+@pytest.mark.parametrize("order", [4, 6, 8])
+def test_native_potential_rate_step_has_expected_loss_change(order):
+    """The geometric reparameterization satisfies dL/dt=1."""
+    pytest.importorskip("spong._native")
+    from spong import model
+
+    m = model.build([1.0, 2.0, 1.0], [0.5, -1.0, 2.0],
+                    model.moments_uniform01(7))
+    k = m._native_kernel
+    if k is None:
+        pytest.skip("native kernel not built")
+    z = np.array((0.3, 0.4))
+    h = 1e-5
+    zn = np.asarray(k.potential_step(*z, h, order))
+    assert np.all(np.isfinite(zn))
+    assert m.L(*zn)-m.L(*z) == pytest.approx(h, rel=2e-10, abs=2e-15)
+
+
+def test_gl8_tableau_satisfies_gauss_moments_and_stage_consistency():
+    c = np.asarray(gauss._GL4_C)
+    A = np.asarray(gauss._GL4_A)
+    b = np.asarray(gauss._GL4_B)
+    np.testing.assert_allclose(np.sum(A, axis=1), c, rtol=0, atol=2e-16)
+    for degree in range(8):
+        assert np.sum(b*c**degree) == pytest.approx(
+            1.0/(degree+1), rel=0, abs=4e-16)

@@ -131,7 +131,11 @@ Consequences (all load-bearing):
   no other types exist (A > 0 ⇒ no maxima).  At a simple B-root,
   N = −2B′A there, so u″ = −2B′²/A < 0 automatically: **every B-root is a
   saddle** (det H = 2A·u″ = −4B′², the same universal identity).  L is
-  Morse ⟺ B·N is square-free with gcd(B, N) constant.
+  Reduce \(B^2/A=P/D\) and write \(u'=H/D^2\), where
+  \(H=PD'-P'D\).  Then \(L\) is Morse iff \(H\) and \(H'\) have no
+  common **real** root.  Squarefree, coprime \(B,N\) are the fast generic
+  factorized case, not a necessary condition: common complex factors can
+  cancel without affecting the real phase portrait.
 - **Alternation**: the SIGNS of u″ alternate along b (1D Morse on u);
   L-types follow u″ everywhere, and since B-roots force u″ < 0,
   consecutive L-saddles occur legitimately.  Branch targeting therefore

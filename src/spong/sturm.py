@@ -23,7 +23,7 @@ sign at the root — EXACT.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 
 from . import _poly as P
@@ -65,6 +65,16 @@ def sturm_chain(p: Poly) -> tuple[tuple[int, ...], ...]:
     return tuple(chain)
 
 
+@lru_cache(maxsize=512)
+def _native_sturm_plan(integers: tuple[int, ...]):
+    """Persistent frontend-independent exact plan, or None without C core."""
+    try:
+        from . import _native
+    except ImportError:
+        return None
+    return _native.SturmPlan(integers)
+
+
 def _sign_int(p: tuple[int, ...], x: Fraction) -> int:
     """Exact sign of an integer polynomial at a rational point (bigint).
 
@@ -104,13 +114,9 @@ def variations_at(chain, x: Fraction | None, positive_inf: bool = True) -> int:
     return _variations(signs)
 
 
-def count_roots(p: Poly, lo: Fraction | None = None,
-                hi: Fraction | None = None) -> int:
-    """EXACT number of distinct real roots of p in (lo, hi].
-
-    None bounds mean -infinity / +infinity.  For counting purposes p is
-    replaced by its squarefree part, so multiple roots count once.
-    """
+def _count_roots_python(p: Poly, lo: Fraction | None = None,
+                        hi: Fraction | None = None) -> int:
+    """Fraction/bigint oracle for exact distinct-real-root counting."""
     sf = squarefree_part(p)
     ch = sturm_chain(sf)
     if not ch:
@@ -118,6 +124,32 @@ def count_roots(p: Poly, lo: Fraction | None = None,
     v_lo = variations_at(ch, lo, positive_inf=False)
     v_hi = variations_at(ch, hi, positive_inf=True)
     return v_lo - v_hi
+
+
+def count_roots(p: Poly, lo: Fraction | None = None,
+                hi: Fraction | None = None) -> int:
+    """EXACT number of distinct real roots of p in (lo, hi].
+
+    Production counting uses the frontend-independent GMP C core, with one
+    persistent squarefree Sturm chain per primitive integer polynomial.
+    The Fraction implementation remains the independent qualification oracle.
+    """
+    integers = P.int_primitive(P.trim(p))
+    if not integers:
+        return 0
+    plan = _native_sturm_plan(integers)
+    if plan is not None:
+        if lo is None and hi is None:
+            # The analysis already computed this count while certifying
+            # squarefreeness/repeated roots; avoid endpoint evaluation.
+            result = plan.stats()
+            if result["status"] != 0:
+                raise ArithmeticError(
+                    f"native exact Sturm analysis refused with status "
+                    f"{result['status']}")
+            return int(result["distinct_real_roots"])
+        return int(plan.count(lo, hi))
+    return _count_roots_python(p, lo, hi)
 
 
 @lru_cache(maxsize=512)
@@ -160,10 +192,12 @@ class RootInterval:
         return (self.lo + self.hi) / 2
 
 
-def isolate_roots(p: Poly) -> list[RootInterval]:
+def _isolate_roots_python(
+        p: Poly, stats: dict | None = None) -> list[RootInterval]:
     """Disjoint intervals, one distinct real root each.  EXACT.
 
     Rational roots hit by a bisection point are returned exactly.
+    If ``stats`` is supplied, algorithmic work counters are accumulated in it.
     """
     sf = squarefree_part(p)
     ch = sturm_chain(sf)
@@ -171,11 +205,34 @@ def isolate_roots(p: Poly) -> list[RootInterval]:
         return []
     bound = cauchy_bound(sf)
     out: list[RootInterval] = []
+    if stats is not None:
+        stats["chain_length"] = len(ch)
+        stats["chain_coefficients"] = sum(len(q) for q in ch)
+        stats["chain_peak_coefficient_bits"] = max(
+            (abs(c).bit_length() for q in ch for c in q), default=0)
+        stats.setdefault("variation_evaluations", 0)
+        stats.setdefault("variation_signs", 0)
+        stats.setdefault("subdivision_nodes", 0)
+        stats.setdefault("polynomial_evaluations", 0)
+        stats.setdefault("puncture_halvings", 0)
+        stats.setdefault("max_subdivision_depth", 0)
+        stats.setdefault("max_endpoint_bits", 0)
 
     def var(x: Fraction) -> int:
+        if stats is not None:
+            stats["variation_evaluations"] += 1
+            stats["variation_signs"] += len(ch)
         return variations_at(ch, x)
 
-    def rec(lo: Fraction, hi: Fraction, v_lo: int, v_hi: int):
+    def rec(lo: Fraction, hi: Fraction, v_lo: int, v_hi: int, depth: int):
+        if stats is not None:
+            stats["subdivision_nodes"] += 1
+            stats["max_subdivision_depth"] = max(
+                stats["max_subdivision_depth"], depth)
+            stats["max_endpoint_bits"] = max(
+                stats["max_endpoint_bits"],
+                abs(lo.numerator).bit_length(), lo.denominator.bit_length(),
+                abs(hi.numerator).bit_length(), hi.denominator.bit_length())
         n = v_lo - v_hi
         if n == 0:
             return
@@ -183,6 +240,8 @@ def isolate_roots(p: Poly) -> list[RootInterval]:
             out.append(RootInterval(lo, hi, False))
             return
         mid = (lo + hi) / 2
+        if stats is not None:
+            stats["polynomial_evaluations"] += 1
         if P.eval_at(sf, mid) == 0:
             out.append(RootInterval(mid, mid, True))
             # Punctured split around the exact root.  The puncture must be
@@ -195,22 +254,75 @@ def isolate_roots(p: Poly) -> list[RootInterval]:
             left, right = mid - eps, mid + eps
             while (P.eval_at(sf, left) == 0 or P.eval_at(sf, right) == 0
                    or var(left) - var(right) != 1):
+                if stats is not None:
+                    stats["puncture_halvings"] += 1
+                    stats["polynomial_evaluations"] += 2
                 eps /= 2
                 left, right = mid - eps, mid + eps
-            rec(lo, left, v_lo, var(left))
-            rec(right, hi, var(right), v_hi)
+            rec(lo, left, v_lo, var(left), depth+1)
+            rec(right, hi, var(right), v_hi, depth+1)
         else:
             v_mid = var(mid)
-            rec(lo, mid, v_lo, v_mid)
-            rec(mid, hi, v_mid, v_hi)
+            rec(lo, mid, v_lo, v_mid, depth+1)
+            rec(mid, hi, v_mid, v_hi, depth+1)
 
-    rec(-bound, bound, var(-bound), var(bound))
+    rec(-bound, bound, var(-bound), var(bound), 0)
     out.sort(key=lambda r: r.lo)
+    if stats is not None:
+        stats["isolated_roots"] = len(out)
+        stats["exact_roots"] = sum(iv.exact for iv in out)
     return out
 
 
-def refine(p: Poly, iv: RootInterval, rel: Fraction = Fraction(1, 2**48)
-           ) -> RootInterval:
+def isolate_roots(p: Poly, stats: dict | None = None) -> list[RootInterval]:
+    """Disjoint exact rational intervals, one distinct real root each.
+
+    Production isolation runs in the reusable GMP C core.  The Fraction
+    implementation remains available as ``_isolate_roots_python`` for
+    differential qualification.
+    """
+    integers = P.int_primitive(P.trim(p))
+    if not integers:
+        return []
+    plan = _native_sturm_plan(integers)
+    if plan is None:
+        return _isolate_roots_python(p, stats)
+    result = plan.isolate()
+    if result["status"] != 0:
+        raise ArithmeticError(
+            f"native exact root isolation refused with status "
+            f"{result['status']}")
+    out = [
+        RootInterval(
+            Fraction(int(lo_num), int(lo_den)),
+            Fraction(int(hi_num), int(hi_den)),
+            bool(exact))
+        for lo_num, lo_den, hi_num, hi_den, exact in result["intervals"]
+    ]
+    if stats is not None:
+        plan_stats = plan.stats()
+        stats["chain_length"] = plan_stats["sturm_chain_length"]
+        stats["chain_coefficients"] = \
+            plan_stats["sturm_chain_coefficients"]
+        # The construction peak includes intermediate PRS coefficients and
+        # is therefore a conservative chain-coefficient bound.
+        stats["chain_peak_coefficient_bits"] = \
+            plan_stats["peak_coefficient_bits"]
+        for key in (
+                "variation_evaluations", "subdivision_nodes",
+                "polynomial_evaluations", "puncture_halvings",
+                "max_subdivision_depth", "max_endpoint_bits"):
+            stats[key] = result[key]
+        stats["variation_signs"] = \
+            result["variation_evaluations"] * stats["chain_length"]
+        stats["isolated_roots"] = len(out)
+        stats["exact_roots"] = sum(iv.exact for iv in out)
+    return out
+
+
+def _refine_python(p: Poly, iv: RootInterval,
+                   rel: Fraction = Fraction(1, 2**48),
+                   stats: dict | None = None) -> RootInterval:
     """Bisect an isolating interval to relative width `rel`.  EXACT."""
     if iv.exact:
         return iv
@@ -219,6 +331,9 @@ def refine(p: Poly, iv: RootInterval, rel: Fraction = Fraction(1, 2**48)
     s_lo = P.eval_at(sf, lo)
     # Sturm guarantees exactly one root; endpoints are non-roots by isolation.
     while hi - lo > rel * (1 + abs(lo) + abs(hi)):
+        if stats is not None:
+            stats["refinement_bisections"] = \
+                stats.get("refinement_bisections", 0)+1
         mid = (lo + hi) / 2
         v = P.eval_at(sf, mid)
         if v == 0:
@@ -227,7 +342,41 @@ def refine(p: Poly, iv: RootInterval, rel: Fraction = Fraction(1, 2**48)
             lo, s_lo = mid, v
         else:
             hi = mid
+    if stats is not None:
+        stats["max_refined_endpoint_bits"] = max(
+            stats.get("max_refined_endpoint_bits", 0),
+            abs(lo.numerator).bit_length(), lo.denominator.bit_length(),
+            abs(hi.numerator).bit_length(), hi.denominator.bit_length())
     return RootInterval(lo, hi, False)
+
+
+def refine(p: Poly, iv: RootInterval,
+           rel: Fraction = Fraction(1, 2**48),
+           stats: dict | None = None) -> RootInterval:
+    """Refine an isolating interval using the persistent exact C plan."""
+    if iv.exact:
+        return iv
+    integers = P.int_primitive(P.trim(p))
+    plan = _native_sturm_plan(integers) if integers else None
+    if plan is None:
+        return _refine_python(p, iv, rel, stats)
+    result = plan.refine(iv.lo, iv.hi, rel)
+    if result["status"] != 0:
+        raise ArithmeticError(
+            f"native exact root refinement refused with status "
+            f"{result['status']}")
+    lo_num, lo_den, hi_num, hi_den, exact = result["interval"]
+    refined = RootInterval(
+        Fraction(int(lo_num), int(lo_den)),
+        Fraction(int(hi_num), int(hi_den)),
+        bool(exact))
+    if stats is not None:
+        stats["refinement_bisections"] = \
+            stats.get("refinement_bisections", 0) + result["bisections"]
+        stats["max_refined_endpoint_bits"] = max(
+            stats.get("max_refined_endpoint_bits", 0),
+            result["max_endpoint_bits"])
+    return refined
 
 
 def interval_sign(p: Poly, iv: RootInterval) -> int | None:
@@ -236,15 +385,24 @@ def interval_sign(p: Poly, iv: RootInterval) -> int | None:
     Returns +1/-1 (EXACT), or None if p vanishes inside (caller must refine
     the interval or declare degeneracy).
     """
+    integers = P.int_primitive(P.trim(p))
+    if not integers:
+        return 0 if iv.exact else None
+    plan = _native_sturm_plan(integers)
+    if plan is None:
+        if iv.exact:
+            v = P.eval_at(p, iv.lo)
+            return (v > 0) - (v < 0)
+        if _count_roots_python(p, iv.lo, iv.hi) != 0:
+            return None
+        v = P.eval_at(p, iv.mid)
+        return None if v == 0 else (1 if v > 0 else -1)
     if iv.exact:
-        v = P.eval_at(p, iv.lo)
-        return (v > 0) - (v < 0)
-    if count_roots(p, iv.lo, iv.hi) != 0:
+        return int(plan.sign_at(iv.lo))
+    if plan.count(iv.lo, iv.hi) != 0:
         return None
-    v = P.eval_at(p, iv.mid)
-    if v == 0:   # can only happen at a root of p — excluded above for p != 0
-        return None
-    return 1 if v > 0 else -1
+    sign = int(plan.sign_at(iv.mid))
+    return None if sign == 0 else sign
 
 
 def _simple_root_derivative_sign(p: Poly, iv: RootInterval) -> int:
@@ -271,16 +429,18 @@ class CriticalPoint:
     b: float                     # float midpoint (cosmetic; RESIDUAL)
     a: float
     kind: str                    # 'min' | 'saddle' | 'degenerate'
-    source: str                  # 'N' | 'B' | 'both'
+    source: str                  # 'N' | 'B' | 'H' (reduced u' numerator)
     interval: RootInterval       # EXACT isolating interval for b
     u2_sign: int                 # sign of u'' at the root (0 if degenerate)
+    local: object | None = None  # conditioned finite jet (post-enumeration)
+    stubs: tuple = ()             # certified physical invariant-manifold stubs
 
 
 @dataclass(frozen=True)
 class Enumeration:
     points: tuple[CriticalPoint, ...]
     psi_positive: bool           # EXACT
-    morse: bool                  # EXACT: B·N squarefree and no common roots
+    morse: bool                  # EXACT: u' has no multiple REAL root
     alternates: bool             # EXACT (trivially true if not Morse: skipped)
 
     @property
@@ -301,8 +461,15 @@ def enumerate_critical_points(m: Model) -> Enumeration:
     has_common = P.degree(common) > 0
     B_squarefree = is_squarefree(B)
     N_squarefree = is_squarefree(N)
-    morse = (not has_common) and B_squarefree and N_squarefree \
-        and P.degree(B) >= 0
+    H = m.critical_reduced
+    repeated_H = P.gcd_poly(H, P.deriv(H))
+    has_repeated_real = (
+        P.degree(repeated_H) > 0 and count_roots(repeated_H) > 0)
+    morse = bool(H) and not has_repeated_real
+    # B and N are the cheapest exact factorization in the generic case.
+    # Algebraically repeated/common COMPLEX factors do not affect real Morse
+    # structure; when present, enumerate the reduced numerator of u' instead.
+    use_factorized = not has_common and B_squarefree and N_squarefree
 
     pts: list[CriticalPoint] = []
 
@@ -348,28 +515,59 @@ def enumerate_critical_points(m: Model) -> Enumeration:
             kind, s2 = ("min" if s > 0 else "saddle"), s
         pts.append(CriticalPoint(bf, af, kind, source, cur, s2))
 
-    BNp = P.mul(B, P.deriv(N))       # sign of u'' at N-roots
-    BpN = P.mul(P.deriv(B), N)       # sign of u'' at B-roots
-
-    if has_common:
-        for iv in isolate_roots(common):
-            classify(iv, "both", P.mul(B, N))
-
-    for iv in isolate_roots(N):
-        if has_common and count_roots(common, iv.lo, iv.hi) > 0:
-            continue                     # already reported as degenerate
-        if iv.exact and P.eval_at(common, iv.lo) == 0:
-            continue
-        classify(iv, "N", BNp)
-
-    for iv in isolate_roots(B):
-        if has_common and count_roots(common, iv.lo, iv.hi) > 0:
-            continue
-        if iv.exact and P.eval_at(common, iv.lo) == 0:
-            continue
-        classify(iv, "B", BpN)
+    if use_factorized:
+        BNp = P.mul(B, P.deriv(N))       # sign of u'' at N-roots
+        BpN = P.mul(P.deriv(B), N)       # sign of u'' at B-roots
+        for iv in isolate_roots(N):
+            classify(iv, "N", BNp)
+        for iv in isolate_roots(B):
+            classify(iv, "B", BpN)
+    else:
+        Hp = P.deriv(H)
+        for iv in isolate_roots(H):
+            cur = refine(H, iv)
+            repeated_here = (
+                P.degree(repeated_H) > 0
+                and ((cur.exact and P.eval_at(repeated_H, cur.lo) == 0)
+                     or (not cur.exact
+                         and count_roots(
+                             repeated_H, cur.lo, cur.hi) > 0)))
+            s = None if repeated_here else interval_sign(Hp, cur)
+            for _ in range(64):
+                if s is not None or repeated_here or cur.exact:
+                    break
+                cur = refine(
+                    H, cur,
+                    rel=(cur.hi-cur.lo)/(1+abs(cur.mid))/4)
+                s = interval_sign(Hp, cur)
+            bf = float(cur.mid)
+            af = float(
+                P.eval_at(B, cur.mid)/P.eval_at(m.alpha, cur.mid))
+            if repeated_here or s is None:
+                kind, s2 = "degenerate", 0
+            else:
+                kind, s2 = ("min" if s > 0 else "saddle"), s
+            pts.append(CriticalPoint(
+                bf, af, kind, "H", cur, s2))
 
     pts.sort(key=lambda p: (p.interval.lo, p.interval.hi))
+
+    # Only after the exact zero-dimensional skeleton is complete do we
+    # elaborate each point numerically.  Neighbor distances used to size
+    # local normal-form candidates are therefore known and immutable.
+    from .local import build_local_jet
+    centers = [p.b for p in pts]
+    elaborated = []
+    for i, p in enumerate(pts):
+        if p.kind == "degenerate":
+            elaborated.append(p)
+            continue
+        local = build_local_jet(
+            m, p.interval, p.source,
+            tuple(x for j, x in enumerate(centers) if j != i),
+            root_poly=H if p.source == "H" else None)
+        elaborated.append(replace(p, b=local.b, a=local.a, local=local))
+    pts = elaborated
 
     # Alternation invariant (Theorem 2, corrected): the 1D Morse
     # alternation is a statement about u — the SIGNS of u'' alternate
@@ -380,3 +578,13 @@ def enumerate_critical_points(m: Model) -> Enumeration:
                      for i in range(len(signs) - 1))
 
     return Enumeration(tuple(pts), psi_ok, morse, alternates)
+
+
+def materialize_stubs(m: Model, e: Enumeration) -> Enumeration:
+    """Elaborate saddles into four certified, reusable physical stubs."""
+    from .local import build_stubs
+    points = tuple(
+        replace(p, stubs=build_stubs(m, p, e.minima))
+        if p.kind == "saddle" else p
+        for p in e.points)
+    return replace(e, points=points)

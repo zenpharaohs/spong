@@ -8,7 +8,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install numpy pytest
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y libgmp-dev
+      - run: pip install -e . pytest
+      - name: Standalone C ABI
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -Iinclude \
+            src/c/spong_resolution.c tests/c/test_spong_resolution.c \
+            -lm -o /tmp/test_spong_resolution
+          /tmp/test_spong_resolution
+          cc -std=c99 -Wall -Wextra -Werror -Iinclude \
+            src/c/spong_exact_gmp.c tests/c/test_spong_exact.c \
+            -lgmp -o /tmp/test_spong_exact
+          /tmp/test_spong_exact
+      - name: Installed native differential validation
+        run: |
+          spong-validate-native \
+            --mundane 16 \
+            --targeted-per-exponent 4 \
+            --exponents 8 20 \
+            --jobs 3 \
+            --output /tmp/spong-native-validation.json
       - run: python -m pytest tests -q
-        env:
-          PYTHONPATH: src

@@ -11,6 +11,20 @@ import pytest
 from spong import gauss, model
 
 
+def test_guarded_newton_solve_equilibrates_extreme_row_scales():
+    matrix = np.array([[1e300, 2e300], [3e-300, 5e-300]])
+    want = np.array([1.25, -0.75])
+    rhs = matrix @ want
+    got = gauss._guarded_linear_solve(matrix, rhs)
+    np.testing.assert_allclose(got, want, rtol=2e-15, atol=2e-15)
+
+
+def test_guarded_newton_solve_rejects_unresolved_rank():
+    matrix = np.array([[1.0, 1.0], [1.0, 1.0+np.finfo(float).eps]])
+    with pytest.raises(FloatingPointError):
+        gauss._guarded_linear_solve(matrix, np.ones(2))
+
+
 # ------------------------- order / convergence ------------------------- #
 
 def _endpoint_error(method, n):

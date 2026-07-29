@@ -11,6 +11,11 @@ dependencies = ["numpy"]
 
 [project.scripts]
 spong-random-portrait = "spong.cli:main"
+spong-validate-native = "spong.validate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["spong*"]
 
 [project.optional-dependencies]
 render = ["matplotlib"]

@@ -18,6 +18,7 @@ class ZooCase:
     description: str
     seed: int | None = None
     default_view: tuple[float, float, float, float] | None = None
+    expected_connections: tuple[tuple[float, float], ...] = ()
 
 
 QUADRATIC_STIFF = ZooCase(
@@ -73,9 +74,34 @@ LINEAR_TARGET_D17_THRASH = ZooCase(
 )
 
 
+NONNEAREST_ATTACHMENT = ZooCase(
+    name="nonnearest-attachment",
+    seed=1802198452,
+    f=(1.256187626797893,
+       0.9685879451467192,
+       -1.060859505649057),
+    g=(0.20863543789521677,
+       0.8523899399870873,
+       0.005344187300176611,
+       0.29270298657261434,
+       -0.3638988208301866,
+       -0.827925335821442),
+    moment_dist="uniform01",
+    default_view=None,
+    expected_connections=((-0.4770682827686173, 0.9668071440250788),),
+    description=(
+        "Counterexample to nearest-minimum attachment.  The positive-b "
+        "unstable branch from the saddle b=-0.477068... terminates at the "
+        "nonadjacent minimum b=0.966807... because a stable separatrix "
+        "crosses the backbone away from a critical point."
+    ),
+)
+
+
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
     LINEAR_TARGET_D17_THRASH.name: LINEAR_TARGET_D17_THRASH,
+    NONNEAREST_ATTACHMENT.name: NONNEAREST_ATTACHMENT,
 }
 
 

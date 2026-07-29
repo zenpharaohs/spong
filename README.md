@@ -49,6 +49,21 @@ portraits: [docs/gallery/](docs/gallery/).
 Run the fast suite: `PYTHONPATH=src python -m pytest tests` (slow founding
 gates: add `-m slow`).
 
+Validate the installed native exact-arithmetic core:
+
+    spong-validate-native --output spong-validation.json
+
+This differentially compares the shipped C implementation with the independent
+Python `Fraction` oracle on reproducible mundane random polynomials, targeted
+close/far/repeated-root families, and every named zoo model.  It validates
+analysis, bounded counts, isolation, refinement, and original-polynomial
+signs.  The command runs cases in parallel when the host permits it, prints a
+compact summary, writes a reproducible JSON report when `--output` is supplied,
+and exits nonzero on any disagreement.  The zoo tier currently takes about a
+minute on a laptop; use `--no-zoo` for a seconds-scale installation smoke test,
+or increase `--mundane`, `--targeted-per-exponent`, and `--exponents` for a
+larger stress qualification.
+
 Random portrait inspection:
 
     PYTHONPATH=src python -m spong.cli --same --f-degree 5 --count 3 --pause
@@ -70,10 +85,34 @@ Use `--no-stable` only for quick scans; it deliberately omits the red stable
 separatrices.
 Installed environments also get the `spong-random-portrait` console command.
 
+Public resolution calls have a total three-outcome contract:
+
+```python
+from spong import ResolutionStatus, model, resolve
+
+m = model.build(f, g, mu)
+answer = resolve(m)
+
+if answer.status is ResolutionStatus.CERTIFIED_NON_MORSE:
+    # Exact algebraic certificate; geometry was not attempted.
+    ...
+elif answer.status is ResolutionStatus.MORSE_NUMERICALLY_UNRESOLVED:
+    # Morse exactly, with structured arithmetic/geometry refusal diagnostics.
+    ...
+else:
+    portrait = answer.portrait       # certified portrait and topology ledger
+```
+
+Thus a valid call never silently drops a difficult model or returns a guessed
+portrait.  Frontends may supply a `ResolutionPolicy` with frozen calibrated
+binary64 margins; the default records the margins and lets the a-posteriori
+geometry certificate decide.
+
 Named zoo portraits:
 
     PYTHONPATH=src python -m spong.cli --zoo quadratic-stiff --pause
     PYTHONPATH=src python -m spong.cli --zoo linear-target-d17-thrash --pause
+    PYTHONPATH=src python -m spong.cli --zoo nonnearest-attachment --pause
 
 `quadratic-stiff` is the degree-2 `f=g` case discovered at random seed
 `2735729614`: three minima, three saddles, and a bounded unstable branch from
@@ -86,6 +125,12 @@ Hadamard/engine handoff at the shallow-water threshold.
 descent routes exist, but the attractor reached can be a local minimum.  It
 also guards the nearly horizontal finite-branch tracer regression.
 
+`nonnearest-attachment` is seed `1802198452`, the counterexample to assigning
+an unstable branch to the nearest minimum in backbone order.  The branch from
+the saddle at `b=-0.477068...` reaches the nonadjacent minimum at
+`b=0.966807...`; a stable separatrix crosses the backbone between them.  Its
+zoo gate checks that exact connection and the certified topology.
+
 ## Layout
 
     src/spong/model.py      exact model coefficients; the (b, w) chart      [§1–3]
@@ -94,11 +139,17 @@ also guards the nearly horizontal finite-branch tracer regression.
     src/spong/charts.py     graph transforms, jet charts, dispatcher        [§6–7]
     src/spong/atlas.py      Poincaré disk, rim charts, index bookkeeping    [§8]
     src/spong/portrait.py   assembly + certificate ledger                   [§11]
+    src/spong/resolution.py total public three-outcome resolution contract
+    include/spong/         stable frontend-independent C99 ABI
+    src/c/                 reusable native core (Python/MATLAB/mobile)
     src/spong/render.py     zoom-proof polylines, contours, disk/plane views
     src/spong/cli.py        random portrait inspection command
     docs/theorems.md        named theorems and their proof obligations
     docs/effective_bounds.md near-poles, box contracts, ineffective bounds
     demos/                  descent-method overlays; NOT part of the library
+
+The native library and frontend migration contract are documented in
+[docs/c_api.md](docs/c_api.md).
 
 ## Development
 

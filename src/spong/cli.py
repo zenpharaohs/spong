@@ -359,7 +359,7 @@ def zoo_phase_portrait(args: argparse.Namespace) -> int:
 
     t0 = time.perf_counter()
     m = model.build(z.f, z.g, moments)
-    p = portrait.compute(
+    p = portrait.certified_compute(
         m, view=view,
         trace_stable_branches=not args.no_stable)
     elapsed = time.perf_counter() - t0

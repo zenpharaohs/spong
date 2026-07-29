@@ -58,6 +58,10 @@ class Model:
     beta: Poly = field(init=False)       # B(b) = E[f(X) g(bX)]
     C: Fraction = field(init=False)      # E[f(X)^2]
     N: Poly = field(init=False)          # A'B - 2B'A
+    backbone_common: Poly = field(init=False)  # gcd(B², A)
+    backbone_num: Poly = field(init=False)     # reduced B² numerator
+    backbone_den: Poly = field(init=False)     # reduced A denominator
+    critical_reduced: Poly = field(init=False) # numerator of u'
 
     def __post_init__(self):
         f, g, mu = self.f, self.g, self.mu
@@ -83,11 +87,24 @@ class Model:
         b = P.trim(tuple(beta))
         n = P.sub(P.mul(P.deriv(a), b),
                   P.scale(P.mul(P.deriv(b), a), Fraction(2)))
+        b2 = P.mul(b, b)
+        common = P.gcd_poly(b2, a)
+        reduced_num, rem_num = P.divmod_exact(b2, common)
+        reduced_den, rem_den = P.divmod_exact(a, common)
+        if rem_num or rem_den:
+            raise ArithmeticError("failed to reduce exact backbone loss")
+        critical_reduced = P.sub(
+            P.mul(reduced_num, P.deriv(reduced_den)),
+            P.mul(P.deriv(reduced_num), reduced_den))
 
         object.__setattr__(self, "alpha", a)
         object.__setattr__(self, "beta", b)
         object.__setattr__(self, "C", c)
         object.__setattr__(self, "N", n)
+        object.__setattr__(self, "backbone_common", common)
+        object.__setattr__(self, "backbone_num", reduced_num)
+        object.__setattr__(self, "backbone_den", reduced_den)
+        object.__setattr__(self, "critical_reduced", critical_reduced)
 
         # floating coefficient caches
         object.__setattr__(self, "_ca", _npc(a))
