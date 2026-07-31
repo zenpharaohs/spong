@@ -36,7 +36,7 @@ def test_native_policy_matches_python_oracle_across_margin_combinations():
 
 
 def test_native_exact_and_geometry_terminal_states_are_stable():
-    assert _native.SPONG_ABI_VERSION == 1
+    assert _native.SPONG_ABI_VERSION == 2
     none = 0.0
     exact_non_morse = _native.resolution_preflight(
         False, True, True, False, none, False, none, False, none,

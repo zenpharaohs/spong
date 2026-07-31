@@ -144,6 +144,58 @@ def _native_contact_available():
     return hasattr(_native, "ContactScan")
 
 
+def _topology_decision_python(
+        saddle_count, branch_count, stable_count, unstable_count,
+        segment_count, segment_budget, raw_event_count, raw_event_budget,
+        forbidden_count, ambiguous_count, uncertified_unstable_ends,
+        uncertified_stable_tails, branch_aborted):
+    """Independent oracle for the portable C topology state machine."""
+    expected = 2*saddle_count
+    inventory = (stable_count == expected
+                 and unstable_count == expected
+                 and branch_count == 2*expected)
+    segment_ok = segment_count <= segment_budget
+    event_ok = raw_event_count <= raw_event_budget
+    certified = (not branch_aborted and segment_ok and event_ok and inventory
+                 and forbidden_count == 0 and ambiguous_count == 0
+                 and uncertified_unstable_ends == 0
+                 and uncertified_stable_tails == 0)
+    reason = (
+        "branch_abort" if branch_aborted else
+        "certification_segment_budget" if not segment_ok else
+        "certification_event_budget" if not event_ok else
+        "branch_inventory_incomplete" if not inventory else
+        "topology_contact" if forbidden_count or ambiguous_count else
+        "unstable_endpoint_unresolved"
+        if uncertified_unstable_ends else
+        "stable_escape_unresolved" if uncertified_stable_tails else None)
+    return {
+        "certified": certified,
+        "audit_complete": not branch_aborted and segment_ok and event_ok,
+        "branch_inventory_certified": inventory,
+        "reason": reason,
+        "expected_stable": expected,
+        "expected_unstable": expected,
+    }
+
+
+def _topology_decision(*values):
+    try:
+        from . import _native
+        decide = _native.topology_decide
+    except (ImportError, AttributeError):
+        return _topology_decision_python(*values)
+    certified, complete, inventory, reason, stable, unstable = decide(*values)
+    return {
+        "certified": bool(certified),
+        "audit_complete": bool(complete),
+        "branch_inventory_certified": bool(inventory),
+        "reason": None if reason == "none" else reason,
+        "expected_stable": int(stable),
+        "expected_unstable": int(unstable),
+    }
+
+
 def _pair_contact_events(Y1, root1, Y2, root2, tol):
     """Production contact stream, with the Python BVH retained as oracle."""
     try:
@@ -745,20 +797,23 @@ def audit(m, enumeration, branches, box) -> dict:
     predicate_tol = 128*np.finfo(float).eps*scale
     segment_count = sum(max(0, len(br.Y)-1) for br in branches)
     segment_budget = 1000000
-    expected_per_kind = 2*len(enumeration.saddles)
+    raw_event_budget = 5000
     observed_stable = sum(br.kind == "stable" for br in branches)
     observed_unstable = sum(br.kind == "unstable" for br in branches)
-    branch_inventory = {
-        "expected_stable": expected_per_kind,
-        "observed_stable": observed_stable,
-        "expected_unstable": expected_per_kind,
-        "observed_unstable": observed_unstable,
-        "certified": (observed_stable == expected_per_kind
-                      and observed_unstable == expected_per_kind
-                      and len(branches) == 2*expected_per_kind),
-    }
     aborted = [i for i, br in enumerate(branches)
                if br.term not in ("capture", "box_exit")]
+    initial_decision = _topology_decision(
+        len(enumeration.saddles), len(branches),
+        observed_stable, observed_unstable,
+        segment_count, segment_budget, 0, raw_event_budget,
+        0, 0, 0, 0, bool(aborted))
+    branch_inventory = {
+        "expected_stable": initial_decision["expected_stable"],
+        "observed_stable": observed_stable,
+        "expected_unstable": initial_decision["expected_unstable"],
+        "observed_unstable": observed_unstable,
+        "certified": initial_decision["branch_inventory_certified"],
+    }
     if aborted:
         # A partial invariant manifold cannot support a topology
         # certificate.  In particular, enlarging the trace box cannot repair
@@ -779,14 +834,14 @@ def audit(m, enumeration, branches, box) -> dict:
         } for i, br in enumerate(branches) if br.kind == "unstable"]
         return {
             "status": "fp64_unresolved",
-            "audit_complete": False,
-            "resolution_reason": "branch_abort",
+            "audit_complete": initial_decision["audit_complete"],
+            "resolution_reason": initial_decision["reason"],
             "aborted_branches": aborted,
             "segment_count": segment_count,
             "segment_budget": segment_budget,
             "branch_inventory": branch_inventory,
             "raw_event_count": 0,
-            "raw_event_budget": 5000,
+            "raw_event_budget": raw_event_budget,
             "event_sample_limit": 256,
             "forbidden_count": 0,
             "ambiguous_count": 0,
@@ -873,7 +928,6 @@ def audit(m, enumeration, branches, box) -> dict:
     # nearly coincident.  Certification needs the existence and count of such
     # events, not millions of retained Python dictionaries.
     event_sample_limit = 256
-    raw_event_budget = 5000
     raw_event_count = 0
     event_budget_exceeded = False
     forbidden, ambiguous = [], []
@@ -1006,26 +1060,21 @@ def audit(m, enumeration, branches, box) -> dict:
         candidates.append({"branch": i, "sampled_loss_floor": sampled_floor,
                            "eligible_minimum_b": eligible})
 
-    resolved = (not budget_exceeded and not event_budget_exceeded
-                and branch_inventory["certified"]
-                and forbidden_count == 0 and ambiguous_count == 0
-                and all(x["certified"] for x in unstable_ends)
-                and all(x["certified"] for x in stable_tails)
-                and all(br.term in ("capture", "box_exit") for br in branches))
-    unresolved_end = any(not x["certified"] for x in unstable_ends)
-    unresolved_stable_tail = any(
-        not x["certified"] for x in stable_tails)
+    decision = _topology_decision(
+        len(enumeration.saddles), len(branches),
+        observed_stable, observed_unstable,
+        segment_count, segment_budget, raw_event_count, raw_event_budget,
+        forbidden_count, ambiguous_count,
+        sum(not x["certified"] for x in unstable_ends),
+        sum(not x["certified"] for x in stable_tails), False)
+    # The inventory in the returned ledger is the same native decision used
+    # for the terminal status, not a separately reimplemented frontend rule.
+    branch_inventory["certified"] = decision["branch_inventory_certified"]
     return {
-        "status": "certified" if resolved else "fp64_unresolved",
-        "audit_complete": not budget_exceeded and not event_budget_exceeded,
-        "resolution_reason": (
-            "certification_segment_budget" if budget_exceeded else
-            "certification_event_budget" if event_budget_exceeded else
-            "branch_inventory_incomplete"
-            if not branch_inventory["certified"] else
-            "topology_contact" if forbidden_count or ambiguous_count else
-            "unstable_endpoint_unresolved" if unresolved_end else
-            "stable_escape_unresolved" if unresolved_stable_tail else None),
+        "status": ("certified" if decision["certified"]
+                   else "fp64_unresolved"),
+        "audit_complete": decision["audit_complete"],
+        "resolution_reason": decision["reason"],
         "segment_count": segment_count,
         "segment_budget": segment_budget,
         "branch_inventory": branch_inventory,

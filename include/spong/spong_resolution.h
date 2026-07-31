@@ -27,7 +27,7 @@
 extern "C" {
 #endif
 
-#define SPONG_ABI_VERSION UINT32_C(1)
+#define SPONG_ABI_VERSION UINT32_C(2)
 
 typedef enum {
     SPONG_RESOLUTION_PROCEED = 0,

@@ -1,6 +1,7 @@
 #include "spong/spong_topology.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 enum { SPONG_CONTACT_LEAF_SEGMENTS = 32 };
@@ -32,6 +33,65 @@ struct spong_contact_scan {
     int leaf_active;
     size_t ilo, ihi, jlo, jhi, i, j;
 };
+
+int spong_topology_decide(const spong_topology_analysis *analysis,
+                          spong_topology_result *result) {
+    if (analysis == NULL || result == NULL
+            || analysis->saddle_count > UINT64_MAX/2) return -1;
+    uint64_t expected = 2*analysis->saddle_count;
+    int inventory = (analysis->stable_count == expected
+                     && analysis->unstable_count == expected
+                     && analysis->branch_count == 2*expected);
+    int segment_ok = analysis->segment_count <= analysis->segment_budget;
+    int event_ok = analysis->raw_event_count <= analysis->raw_event_budget;
+    int contacts_ok = (analysis->forbidden_count == 0
+                       && analysis->ambiguous_count == 0);
+    int ends_ok = analysis->uncertified_unstable_ends == 0;
+    int tails_ok = analysis->uncertified_stable_tails == 0;
+    result->expected_stable = expected;
+    result->expected_unstable = expected;
+    result->branch_inventory_certified = inventory;
+    result->audit_complete = (!analysis->branch_aborted
+                              && segment_ok && event_ok);
+    result->certified = (result->audit_complete && inventory && contacts_ok
+                         && ends_ok && tails_ok);
+    if (analysis->branch_aborted)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_BRANCH_ABORT;
+    else if (!segment_ok)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_SEGMENT_BUDGET;
+    else if (!event_ok)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_EVENT_BUDGET;
+    else if (!inventory)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_BRANCH_INVENTORY;
+    else if (!contacts_ok)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_CONTACT;
+    else if (!ends_ok)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_UNSTABLE_END;
+    else if (!tails_ok)
+        result->primary_reason = SPONG_TOPOLOGY_REASON_STABLE_TAIL;
+    else
+        result->primary_reason = SPONG_TOPOLOGY_REASON_NONE;
+    return 0;
+}
+
+const char *spong_topology_reason_name(int32_t reason) {
+    switch (reason) {
+    case SPONG_TOPOLOGY_REASON_NONE: return "none";
+    case SPONG_TOPOLOGY_REASON_BRANCH_ABORT: return "branch_abort";
+    case SPONG_TOPOLOGY_REASON_SEGMENT_BUDGET:
+        return "certification_segment_budget";
+    case SPONG_TOPOLOGY_REASON_EVENT_BUDGET:
+        return "certification_event_budget";
+    case SPONG_TOPOLOGY_REASON_BRANCH_INVENTORY:
+        return "branch_inventory_incomplete";
+    case SPONG_TOPOLOGY_REASON_CONTACT: return "topology_contact";
+    case SPONG_TOPOLOGY_REASON_UNSTABLE_END:
+        return "unstable_endpoint_unresolved";
+    case SPONG_TOPOLOGY_REASON_STABLE_TAIL:
+        return "stable_escape_unresolved";
+    default: return "unknown";
+    }
+}
 
 static const double *point_at(const double *points, size_t i) {
     return points + 2*i;

@@ -4,6 +4,27 @@
 #include <math.h>
 
 int main(void) {
+    spong_topology_analysis analysis = {
+        3, 12, 6, 6, 100, 1000, 0, 5000, 0, 0, 0, 0, 0
+    };
+    spong_topology_result result;
+    assert(spong_topology_decide(&analysis, &result) == 0);
+    assert(result.certified);
+    assert(result.audit_complete);
+    assert(result.branch_inventory_certified);
+    assert(result.expected_stable == 6 && result.expected_unstable == 6);
+    assert(result.primary_reason == SPONG_TOPOLOGY_REASON_NONE);
+
+    analysis.forbidden_count = 1;
+    analysis.uncertified_unstable_ends = 1;
+    assert(spong_topology_decide(&analysis, &result) == 0);
+    assert(!result.certified);
+    assert(result.primary_reason == SPONG_TOPOLOGY_REASON_CONTACT);
+    analysis.branch_aborted = 1;
+    assert(spong_topology_decide(&analysis, &result) == 0);
+    assert(!result.audit_complete);
+    assert(result.primary_reason == SPONG_TOPOLOGY_REASON_BRANCH_ABORT);
+
     const double rising[] = {-1.0, -1.0, 1.0, 1.0};
     const double falling[] = {-1.0, 1.0, 1.0, -1.0};
     spong_contact_scan *pair = spong_contact_scan_create(

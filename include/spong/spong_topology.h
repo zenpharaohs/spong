@@ -27,6 +27,49 @@ typedef struct {
 
 typedef struct spong_contact_scan spong_contact_scan;
 
+typedef enum {
+    SPONG_TOPOLOGY_REASON_NONE = 0,
+    SPONG_TOPOLOGY_REASON_BRANCH_ABORT = 1,
+    SPONG_TOPOLOGY_REASON_SEGMENT_BUDGET = 2,
+    SPONG_TOPOLOGY_REASON_EVENT_BUDGET = 3,
+    SPONG_TOPOLOGY_REASON_BRANCH_INVENTORY = 4,
+    SPONG_TOPOLOGY_REASON_CONTACT = 5,
+    SPONG_TOPOLOGY_REASON_UNSTABLE_END = 6,
+    SPONG_TOPOLOGY_REASON_STABLE_TAIL = 7
+} spong_topology_reason;
+
+typedef struct {
+    uint64_t saddle_count;
+    uint64_t branch_count;
+    uint64_t stable_count;
+    uint64_t unstable_count;
+    uint64_t segment_count;
+    uint64_t segment_budget;
+    uint64_t raw_event_count;
+    uint64_t raw_event_budget;
+    uint64_t forbidden_count;
+    uint64_t ambiguous_count;
+    uint64_t uncertified_unstable_ends;
+    uint64_t uncertified_stable_tails;
+    int32_t branch_aborted;
+} spong_topology_analysis;
+
+typedef struct {
+    int32_t certified;
+    int32_t audit_complete;
+    int32_t branch_inventory_certified;
+    int32_t primary_reason;    /* spong_topology_reason */
+    uint64_t expected_stable;
+    uint64_t expected_unstable;
+} spong_topology_result;
+
+/* Reduce measured topology evidence to the frontend-independent outcome. */
+SPONG_API int spong_topology_decide(
+    const spong_topology_analysis *analysis,
+    spong_topology_result *result);
+
+SPONG_API const char *spong_topology_reason_name(int32_t reason);
+
 /*
  * The coordinate arrays are packed (a,b) pairs and remain owned by the
  * caller. They must stay alive until spong_contact_scan_destroy(). A self

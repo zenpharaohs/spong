@@ -125,6 +125,11 @@ The caller retains the packed `(a,b)` arrays until
 `spong_contact_scan_destroy` and can stop immediately when its event budget is
 exhausted.  The standalone C test and randomized Python differential test
 exercise the same orientation, proximity, and intersection-point formulas.
+`spong_topology_decide` then reduces branch counts, work budgets, contacts,
+and endpoint-certificate counts to the common status and deterministic refusal
+reason.  This state machine is separately compared against the Python oracle
+over randomized evidence combinations.  These topology entry points comprise
+ABI version 2; version 1 resolution callers remain source- and binary-compatible.
 
 ## Migration boundary
 

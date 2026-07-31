@@ -42,6 +42,25 @@ def test_native_contact_scan_matches_python_bvh_oracle():
             rtol=0.0, atol=4*np.finfo(float).eps)
 
 
+def test_native_topology_decision_matches_python_oracle():
+    native = pytest.importorskip("spong._native")
+    if not hasattr(native, "topology_decide"):
+        pytest.skip("native topology state machine not built")
+    rng = np.random.default_rng(9817)
+    for _ in range(1000):
+        values = tuple(int(x) for x in rng.integers(0, 20, size=12)) + (
+            bool(rng.integers(0, 2)),)
+        oracle = topology._topology_decision_python(*values)
+        certified, complete, inventory, reason, stable, unstable = (
+            native.topology_decide(*values))
+        assert bool(certified) == oracle["certified"]
+        assert bool(complete) == oracle["audit_complete"]
+        assert bool(inventory) == oracle["branch_inventory_certified"]
+        assert (None if reason == "none" else reason) == oracle["reason"]
+        assert stable == oracle["expected_stable"]
+        assert unstable == oracle["expected_unstable"]
+
+
 def test_bvh_audit_finds_a_forbidden_transverse_crossing(d2):
     m, e = d2
     branches = [

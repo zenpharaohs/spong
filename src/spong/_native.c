@@ -1340,6 +1340,44 @@ static PyObject *native_resolution_finalize(
         (unsigned int)out.reason_mask);
 }
 
+static PyObject *native_topology_decide(PyObject *self, PyObject *args) {
+    (void)self;
+    spong_topology_analysis analysis;
+    unsigned long long value[12];
+    int branch_aborted;
+    if (!PyArg_ParseTuple(
+            args, "KKKKKKKKKKKKp",
+            &value[0], &value[1], &value[2], &value[3],
+            &value[4], &value[5], &value[6], &value[7],
+            &value[8], &value[9], &value[10], &value[11],
+            &branch_aborted))
+        return NULL;
+    analysis.saddle_count = (uint64_t)value[0];
+    analysis.branch_count = (uint64_t)value[1];
+    analysis.stable_count = (uint64_t)value[2];
+    analysis.unstable_count = (uint64_t)value[3];
+    analysis.segment_count = (uint64_t)value[4];
+    analysis.segment_budget = (uint64_t)value[5];
+    analysis.raw_event_count = (uint64_t)value[6];
+    analysis.raw_event_budget = (uint64_t)value[7];
+    analysis.forbidden_count = (uint64_t)value[8];
+    analysis.ambiguous_count = (uint64_t)value[9];
+    analysis.uncertified_unstable_ends = (uint64_t)value[10];
+    analysis.uncertified_stable_tails = (uint64_t)value[11];
+    analysis.branch_aborted = branch_aborted;
+    spong_topology_result result;
+    if (spong_topology_decide(&analysis, &result) != 0) {
+        PyErr_SetString(PyExc_ValueError, "invalid topology analysis");
+        return NULL;
+    }
+    return Py_BuildValue(
+        "iiisKK", (int)result.certified, (int)result.audit_complete,
+        (int)result.branch_inventory_certified,
+        spong_topology_reason_name(result.primary_reason),
+        (unsigned long long)result.expected_stable,
+        (unsigned long long)result.expected_unstable);
+}
+
 static PyObject *native_sturm_analyze(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *coefficients;
@@ -1916,6 +1954,8 @@ static PyMethodDef module_methods[] = {
      "Apply the shared C resolution policy to exact-Morse measurements."},
     {"resolution_finalize", native_resolution_finalize, METH_VARARGS,
      "Map a geometry certificate to the shared terminal resolution state."},
+    {"topology_decide", native_topology_decide, METH_VARARGS,
+     "Reduce topology evidence to the shared certificate outcome."},
     {"sturm_analyze", native_sturm_analyze, METH_VARARGS,
      "Exact GMP Sturm analysis of an integer polynomial."},
     {"sturm_count_interval", native_sturm_count_interval, METH_VARARGS,
