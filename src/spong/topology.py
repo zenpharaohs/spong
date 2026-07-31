@@ -683,7 +683,7 @@ def _polynomial_interval(polynomial, interval):
     return lo, hi
 
 
-def _sign_at_critical_point(m, point, polynomial):
+def _sign_at_critical_point_python(m, point, polynomial):
     """Certified sign of ``polynomial`` at an isolated critical b-value."""
     interval = point.interval
     root_polynomial = _critical_root_polynomial(m, point)
@@ -701,6 +701,27 @@ def _sign_at_critical_point(m, point, polynomial):
             root_polynomial, interval,
             rel=width/(4*(1+abs(interval.mid))))
     return None
+
+
+def _sign_at_critical_point(m, point, polynomial):
+    """Certified sign at a critical b-value, using the exact C core."""
+    integers = P.int_primitive(P.trim(polynomial))
+    if not integers:
+        return 0
+    root_integers = P.int_primitive(P.trim(
+        _critical_root_polynomial(m, point)))
+    plan = sturm._native_sturm_plan(root_integers) if root_integers else None
+    if plan is None:
+        return _sign_at_critical_point_python(m, point, polynomial)
+    interval = point.interval
+    result = plan.sign_polynomial_at_root(
+        integers, interval.lo, interval.hi, interval.exact,
+        max_bisections=160)
+    if result["status"] != 0:
+        raise ArithmeticError(
+            "native algebraic sign evaluation refused with status "
+            f"{result['status']}")
+    return result["sign"]
 
 
 def _stable_escape_certificate(m, enumeration, branch, box,

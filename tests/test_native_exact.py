@@ -6,6 +6,7 @@ import random
 from spong import _native
 from spong import _poly as P
 from spong import sturm
+from spong import topology
 
 
 def _python_analysis(p):
@@ -33,6 +34,36 @@ def _native_interval_count(p, lo, hi):
         0, 0, 0)
     assert result["status"] == _native.SPONG_EXACT_OK
     return result["count"]
+
+
+def _python_sign_polynomial_at_root(root_polynomial, query, interval,
+                                    max_bisections=160):
+    """Independent Fraction oracle for the native algebraic-sign kernel."""
+    if interval.exact:
+        value = P.eval_at(query, interval.lo)
+        return (value > 0) - (value < 0)
+    squarefree = sturm.squarefree_part(root_polynomial)
+    lo, hi = interval.lo, interval.hi
+    sign_lo = P.eval_at(squarefree, lo)
+    for bisections in range(max_bisections + 1):
+        enclosed_lo, enclosed_hi = topology._polynomial_interval(
+            query, sturm.RootInterval(lo, hi, False))
+        if enclosed_lo > 0:
+            return 1
+        if enclosed_hi < 0:
+            return -1
+        if bisections == max_bisections:
+            break
+        mid = (lo+hi)/2
+        sign_mid = P.eval_at(squarefree, mid)
+        if sign_mid == 0:
+            value = P.eval_at(query, mid)
+            return (value > 0) - (value < 0)
+        if (sign_mid > 0) == (sign_lo > 0):
+            lo, sign_lo = mid, sign_mid
+        else:
+            hi = mid
+    return None
 
 
 def _native_isolate(p):
@@ -207,6 +238,45 @@ def test_native_original_polynomial_sign_matches_fraction_evaluation():
         expected_sign = (expected > 0) - (expected < 0)
         assert _native.SturmPlan(P.int_primitive(p)).sign_at(x) == \
             expected_sign
+
+
+def test_native_polynomial_sign_at_algebraic_root_matches_interval_oracle():
+    rng = random.Random(20260806)
+    compared = 0
+    for _ in range(120):
+        root_degree = rng.randrange(1, 7)
+        root_coefficients = [rng.randrange(-64, 65)
+                             for _ in range(root_degree + 1)]
+        root_coefficients[-1] = rng.choice([-1, 1]) * rng.randrange(1, 65)
+        root_polynomial = tuple(Fraction(x) for x in root_coefficients)
+        plan = _native.SturmPlan(P.int_primitive(root_polynomial))
+        for interval in sturm._isolate_roots_python(root_polynomial):
+            query_degree = rng.randrange(0, 7)
+            query = tuple(Fraction(rng.randrange(-64, 65))
+                          for _ in range(query_degree + 1))
+            query = P.trim(query)
+            if not query:
+                query = (Fraction(1),)
+            expected = _python_sign_polynomial_at_root(
+                root_polynomial, query, interval)
+            result = plan.sign_polynomial_at_root(
+                P.int_primitive(query), interval.lo, interval.hi,
+                interval.exact, max_bisections=160)
+            assert result["status"] == _native.SPONG_EXACT_OK
+            assert result["sign"] == expected
+            compared += 1
+    assert compared > 100
+
+
+def test_native_polynomial_sign_at_shared_algebraic_root_is_unresolved():
+    root = (-2, 0, 1)
+    plan = _native.SturmPlan(root)
+    result = plan.sign_polynomial_at_root(
+        root, Fraction(1), Fraction(2), False, max_bisections=24)
+    assert result["status"] == _native.SPONG_EXACT_OK
+    assert result["sign"] is None
+    assert result["resolved"] == 0
+    assert result["bisections"] == 24
 
 
 def test_native_refinement_work_limit_refuses_without_partial_answer():

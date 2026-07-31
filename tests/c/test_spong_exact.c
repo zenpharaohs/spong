@@ -33,6 +33,24 @@ int main(void) {
     assert(spong_sturm_plan_count(
         plan, "0", "1", "2", "1", &count) == 0);
     assert(count == 1);
+    const char *positive_at_sqrt2[] = {"-1", "0", "1"};
+    spong_algebraic_sign_policy sign_policy = {160, 0};
+    spong_algebraic_sign_result algebraic_sign;
+    assert(spong_sturm_plan_sign_polynomial_at_root(
+        plan, positive_at_sqrt2, 3, "1", "1", "2", "1", 0,
+        &sign_policy, &algebraic_sign) == 0);
+    assert(algebraic_sign.status == SPONG_EXACT_OK);
+    assert(algebraic_sign.resolved == 1);
+    assert(algebraic_sign.sign == 1);
+    assert(algebraic_sign.bisections > 0);
+    const char *shared_root[] = {"-2", "0", "1"};
+    sign_policy.max_bisections = 12;
+    assert(spong_sturm_plan_sign_polynomial_at_root(
+        plan, shared_root, 3, "1", "1", "2", "1", 0,
+        &sign_policy, &algebraic_sign) == 0);
+    assert(algebraic_sign.status == SPONG_EXACT_OK);
+    assert(algebraic_sign.resolved == 0);
+    assert(algebraic_sign.bisections == 12);
     spong_isolation_policy isolation_policy = {0, 0, 0, 0};
     spong_isolation_work isolation_work;
     spong_root_interval *intervals = 0;

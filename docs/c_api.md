@@ -77,6 +77,14 @@ original polynomial retained by the plan—not its squarefree reduction—so
 multiplicity and global-sign information are preserved for interval
 certificates.
 
+`spong_sturm_plan_sign_polynomial_at_root` certifies the sign of a second
+integer polynomial at the unique algebraic root in an isolating interval.
+Exact Horner interval arithmetic and direct root bisection are fused in GMP;
+the policy bounds both bisections and endpoint growth.  If the query may share
+the algebraic root, the result is explicitly unresolved instead of assigning a
+sign.  This fused path also avoids a historical frontend refinement stall in
+which a relative-width request could already exceed a symmetric interval.
+
 The production Python path delegates unbounded counts, bounded rational
 counts, root isolation, refinement, and interval-sign evaluation to this C
 implementation.  It caches the persistent plan by primitive integer

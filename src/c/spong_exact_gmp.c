@@ -26,6 +26,7 @@ struct spong_sturm_plan {
 };
 
 static int observe_poly(exact_context *ctx, const qpoly *p, int count_work);
+static uint64_t rational_bits(const mpq_t x);
 
 static int qpoly_init(qpoly *p, size_t cap) {
     p->c = NULL;
@@ -617,6 +618,51 @@ static int qpoly_sign_at(const qpoly *p, const mpq_t x) {
     return sign;
 }
 
+static int qpoly_interval_sign(
+        const qpoly *p, const mpq_t x_lo, const mpq_t x_hi,
+        int32_t *sign) {
+    if (p == NULL || sign == NULL)
+        return -1;
+    if (p->n == 0) {
+        *sign = 0;
+        return 1;
+    }
+    mpq_t lo, hi, products[4], next_lo, next_hi;
+    mpq_inits(
+        lo, hi, products[0], products[1], products[2], products[3],
+        next_lo, next_hi, NULL);
+    mpq_set(lo, p->c[p->n-1]);
+    mpq_set(hi, p->c[p->n-1]);
+    for (size_t i = p->n-1; i-- > 0;) {
+        mpq_mul(products[0], lo, x_lo);
+        mpq_mul(products[1], lo, x_hi);
+        mpq_mul(products[2], hi, x_lo);
+        mpq_mul(products[3], hi, x_hi);
+        mpq_set(next_lo, products[0]);
+        mpq_set(next_hi, products[0]);
+        for (size_t j = 1; j < 4; ++j) {
+            if (mpq_cmp(products[j], next_lo) < 0)
+                mpq_set(next_lo, products[j]);
+            if (mpq_cmp(products[j], next_hi) > 0)
+                mpq_set(next_hi, products[j]);
+        }
+        mpq_add(lo, next_lo, p->c[i]);
+        mpq_add(hi, next_hi, p->c[i]);
+    }
+    int resolved = 0;
+    if (mpq_sgn(lo) > 0) {
+        *sign = 1;
+        resolved = 1;
+    } else if (mpq_sgn(hi) < 0) {
+        *sign = -1;
+        resolved = 1;
+    }
+    mpq_clears(
+        lo, hi, products[0], products[1], products[2], products[3],
+        next_lo, next_hi, NULL);
+    return resolved;
+}
+
 static int variations_at_point(
         qpoly *chain, size_t n, const mpq_t x) {
     int previous = 0, variations = 0;
@@ -688,6 +734,119 @@ int spong_sturm_plan_sign_at(
     *sign = (int32_t)qpoly_sign_at(&plan->input, x);
     mpq_clear(x);
     return 0;
+}
+
+int spong_sturm_plan_sign_polynomial_at_root(
+        const spong_sturm_plan *plan,
+        const char *const *coefficients,
+        size_t coefficient_count,
+        const char *lower_numerator,
+        const char *lower_denominator,
+        const char *upper_numerator,
+        const char *upper_denominator,
+        uint32_t exact_root,
+        const spong_algebraic_sign_policy *policy,
+        spong_algebraic_sign_result *result) {
+    if (result == NULL)
+        return -1;
+    memset(result, 0, sizeof(*result));
+    result->status = SPONG_EXACT_INVALID_ARGUMENT;
+    if (plan == NULL || coefficients == NULL || coefficient_count == 0
+            || policy == NULL)
+        return -1;
+
+    exact_context context;
+    memset(&context, 0, sizeof(context));
+    qpoly query = {0};
+    mpq_t lo, hi, mid;
+    mpq_inits(lo, hi, mid, NULL);
+    if (parse_integer_poly(
+            coefficients, coefficient_count, &context, &query) != 0) {
+        result->status = context.failed
+            ? context.failed : SPONG_EXACT_PARSE_FAILURE;
+        goto failure;
+    }
+    if (parse_rational(lower_numerator, lower_denominator, lo) != 0
+            || parse_rational(upper_numerator, upper_denominator, hi) != 0
+            || mpq_cmp(lo, hi) > 0)
+        goto failure;
+
+    uint64_t lo_bits = rational_bits(lo);
+    uint64_t hi_bits = rational_bits(hi);
+    result->max_endpoint_bits = lo_bits > hi_bits ? lo_bits : hi_bits;
+    if (policy->max_endpoint_bits
+            && result->max_endpoint_bits > policy->max_endpoint_bits) {
+        result->status = SPONG_EXACT_WORK_LIMIT;
+        goto failure;
+    }
+
+    if (exact_root || mpq_cmp(lo, hi) == 0) {
+        if (mpq_cmp(lo, hi) != 0
+                || qpoly_sign_at(&plan->squarefree, lo) != 0)
+            goto failure;
+        result->sign = (int32_t)qpoly_sign_at(&query, lo);
+        result->resolved = 1;
+        result->status = SPONG_EXACT_OK;
+        qpoly_clear(&query);
+        mpq_clears(lo, hi, mid, NULL);
+        return 0;
+    }
+
+    int v_lo = variations_at_point(plan->chain, plan->chain_length, lo);
+    int v_hi = variations_at_point(plan->chain, plan->chain_length, hi);
+    int sign_lo = qpoly_sign_at(&plan->squarefree, lo);
+    if (v_lo-v_hi != 1 || sign_lo == 0
+            || qpoly_sign_at(&plan->squarefree, hi) == 0)
+        goto failure;
+
+    for (;;) {
+        int resolved = qpoly_interval_sign(&query, lo, hi, &result->sign);
+        if (resolved < 0)
+            goto allocation_failure;
+        if (resolved != 0) {
+            result->resolved = 1;
+            break;
+        }
+        if (policy->max_bisections
+                && result->bisections >= policy->max_bisections)
+            break;
+        ++result->bisections;
+        mpq_add(mid, lo, hi);
+        mpq_div_2exp(mid, mid, 1);
+        int sign_mid = qpoly_sign_at(&plan->squarefree, mid);
+        if (sign_mid == 0) {
+            result->sign = (int32_t)qpoly_sign_at(&query, mid);
+            result->resolved = 1;
+            break;
+        }
+        if (sign_mid == sign_lo) {
+            mpq_set(lo, mid);
+            sign_lo = sign_mid;
+        } else {
+            mpq_set(hi, mid);
+        }
+        lo_bits = rational_bits(lo);
+        hi_bits = rational_bits(hi);
+        uint64_t bits = lo_bits > hi_bits ? lo_bits : hi_bits;
+        if (bits > result->max_endpoint_bits)
+            result->max_endpoint_bits = bits;
+        if (policy->max_endpoint_bits
+                && bits > policy->max_endpoint_bits) {
+            result->status = SPONG_EXACT_WORK_LIMIT;
+            goto failure;
+        }
+    }
+    result->status = SPONG_EXACT_OK;
+    qpoly_clear(&query);
+    mpq_clears(lo, hi, mid, NULL);
+    return 0;
+
+allocation_failure:
+    result->status = SPONG_EXACT_ALLOCATION_FAILURE;
+failure:
+    qpoly_clear(&query);
+    mpq_clears(lo, hi, mid, NULL);
+    return -1;
 }
 
 typedef struct {

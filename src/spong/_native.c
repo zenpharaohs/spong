@@ -1728,6 +1728,102 @@ cleanup:
     return NULL;
 }
 
+static PyObject *NativeSturmPlan_sign_polynomial_at_root(
+        NativeSturmPlan *self, PyObject *args, PyObject *kwds) {
+    PyObject *coefficients, *lower, *upper;
+    int exact = 0;
+    unsigned long long max_bisections = 160, max_endpoint_bits = 0;
+    static char *kwlist[] = {
+        "coefficients", "lower", "upper", "exact",
+        "max_bisections", "max_endpoint_bits", NULL
+    };
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "OOO|pKK", kwlist, &coefficients, &lower, &upper,
+            &exact, &max_bisections, &max_endpoint_bits))
+        return NULL;
+    PyObject *seq = PySequence_Fast(
+        coefficients, "coefficients must be a nonempty integer sequence");
+    if (seq == NULL)
+        return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    if (n < 1) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "coefficient sequence is empty");
+        return NULL;
+    }
+    const char **text = (const char **)PyMem_Calloc(
+        (size_t)n, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc(
+        (size_t)n, sizeof(PyObject *));
+    PyObject *objects[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+    if (text == NULL || owned == NULL) {
+        PyMem_Free(text);
+        PyMem_Free(owned);
+        Py_DECREF(seq);
+        return PyErr_NoMemory();
+    }
+    PyObject **items = PySequence_Fast_ITEMS(seq);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        owned[i] = PyObject_Str(items[i]);
+        if (owned[i] == NULL)
+            goto cleanup;
+        text[i] = PyUnicode_AsUTF8(owned[i]);
+        if (text[i] == NULL)
+            goto cleanup;
+    }
+    const char *lo_num, *lo_den, *hi_num, *hi_den;
+    if (rational_text(
+            lower, &objects[0], &objects[1], &objects[2], &objects[3],
+            &lo_num, &lo_den) != 0
+            || rational_text(
+                upper, &objects[4], &objects[5], &objects[6], &objects[7],
+                &hi_num, &hi_den) != 0)
+        goto cleanup;
+    spong_algebraic_sign_policy policy = {
+        (uint64_t)max_bisections, (uint64_t)max_endpoint_bits
+    };
+    spong_algebraic_sign_result result;
+    int evaluated = spong_sturm_plan_sign_polynomial_at_root(
+        self->plan, text, (size_t)n, lo_num, lo_den, hi_num, hi_den,
+        (uint32_t)exact, &policy, &result);
+    if (evaluated != 0 && result.status == SPONG_EXACT_INVALID_ARGUMENT) {
+        PyErr_SetString(PyExc_ValueError, "invalid isolating interval");
+        goto cleanup;
+    }
+    PyObject *sign = Py_None;
+    Py_INCREF(sign);
+    if (result.resolved) {
+        Py_DECREF(sign);
+        sign = PyLong_FromLong((long)result.sign);
+        if (sign == NULL)
+            goto cleanup;
+    }
+    for (size_t i = 0; i < 8; ++i)
+        Py_XDECREF(objects[i]);
+    for (Py_ssize_t i = 0; i < n; ++i)
+        Py_XDECREF(owned[i]);
+    PyMem_Free(text);
+    PyMem_Free(owned);
+    Py_DECREF(seq);
+    return Py_BuildValue(
+        "{s:i,s:N,s:I,s:K,s:K}",
+        "status", (int)result.status,
+        "sign", sign,
+        "resolved", (unsigned int)result.resolved,
+        "bisections", (unsigned long long)result.bisections,
+        "max_endpoint_bits", (unsigned long long)result.max_endpoint_bits);
+
+cleanup:
+    for (size_t i = 0; i < 8; ++i)
+        Py_XDECREF(objects[i]);
+    for (Py_ssize_t i = 0; i < n; ++i)
+        Py_XDECREF(owned[i]);
+    PyMem_Free(text);
+    PyMem_Free(owned);
+    Py_DECREF(seq);
+    return NULL;
+}
+
 static PyObject *NativeSturmPlan_refine(
         NativeSturmPlan *self, PyObject *args) {
     PyObject *lower, *upper, *relative_width;
@@ -1962,6 +2058,10 @@ static PyMethodDef NativeSturmPlan_methods[] = {
      "Count distinct roots exactly on (lower, upper]."},
     {"sign_at", (PyCFunction)NativeSturmPlan_sign_at, METH_VARARGS,
      "Evaluate the exact sign of the original polynomial."},
+    {"sign_polynomial_at_root",
+     (PyCFunction)NativeSturmPlan_sign_polynomial_at_root,
+     METH_VARARGS | METH_KEYWORDS,
+     "Certify an integer polynomial's sign at an isolated algebraic root."},
     {"refine", (PyCFunction)NativeSturmPlan_refine, METH_VARARGS,
      "Refine a certified one-root interval with bounded exact work."},
     {"isolate", (PyCFunction)NativeSturmPlan_isolate, METH_VARARGS,

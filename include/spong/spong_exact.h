@@ -90,6 +90,37 @@ SPONG_API int spong_sturm_plan_sign_at(
     int32_t *sign);
 
 typedef struct {
+    uint64_t max_bisections;   /* zero means unlimited */
+    uint64_t max_endpoint_bits;
+} spong_algebraic_sign_policy;
+
+typedef struct {
+    int32_t status;    /* spong_exact_status */
+    int32_t sign;      /* -1, 0, or +1 when resolved is nonzero */
+    uint32_t resolved;
+    uint64_t bisections;
+    uint64_t max_endpoint_bits;
+} spong_algebraic_sign_result;
+
+/*
+ * Sign of an ascending-order integer polynomial at the unique real root in
+ * an isolating interval for plan.  Interval Horner arithmetic and root
+ * bisection stay exact; unresolved is a valid result when the query may share
+ * the algebraic root.  exact_root declares equal rational endpoints.
+ */
+SPONG_API int spong_sturm_plan_sign_polynomial_at_root(
+    const spong_sturm_plan *plan,
+    const char *const *coefficients,
+    size_t coefficient_count,
+    const char *lower_numerator,
+    const char *lower_denominator,
+    const char *upper_numerator,
+    const char *upper_denominator,
+    uint32_t exact_root,
+    const spong_algebraic_sign_policy *policy,
+    spong_algebraic_sign_result *result);
+
+typedef struct {
     uint64_t max_subdivision_nodes;  /* zero means unlimited */
     uint64_t max_puncture_halvings;
     uint64_t max_endpoint_bits;
