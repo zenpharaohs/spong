@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from math import hypot
+from math import comb, hypot
 
 import numpy as np
 
@@ -136,6 +136,14 @@ def _self_events(Y, root, tol):
     yield from visit(root)
 
 
+def _strictly_monotone_subarc(Y, first_segment, second_segment):
+    """Whether one coordinate exactly orders the intervening polyline."""
+    lo, hi = sorted((first_segment, second_segment))
+    steps = np.diff(np.asarray(Y[lo:hi+2], dtype=float), axis=0)
+    return any(np.all(steps[:, axis] > 0.0)
+               or np.all(steps[:, axis] < 0.0) for axis in (0, 1))
+
+
 def _backbone_crossings(m, Y):
     w = np.asarray([a-m.s_a_star(float(b)) for a, b in Y])
     crossings = []
@@ -252,71 +260,401 @@ def sublevel_component_minima(m, enumeration, point):
     arithmetic.  Returning every minimum on the resulting b-interval is a
     safe topological filter; an ambiguity returns all minima.
     """
-    a, b = map(float, point)
-    A, B = float(m.A(b)), float(m.B(b))
-    level = float(m.L(a, b))
-    scale = abs(float(m.C))+2.0*abs(a*B)+a*a*abs(A)
-    error = 1024.0*np.finfo(float).eps*(1.0+scale)
-    c_upper = np.nextafter(level+error, np.inf)
-    if not np.isfinite(c_upper):
-        return list(enumeration.minima)
-    c = Fraction.from_float(float(c_upper))
-    level_poly = P.sub(
-        P.scale(m.alpha, m.C-c), P.mul(m.beta, m.beta))
+    inventory = _sublevel_component_inventory(m, enumeration, point)
+    return (list(inventory["minima"])
+            if inventory["certified"] else list(enumeration.minima))
+
+
+def _strict_level_at_float_point(m, point, above):
+    """Exact level just above/below the loss at a binary64 point."""
+    a, b = (Fraction.from_float(float(x)) for x in point)
+    A = P.eval_at(m.alpha, b)
+    B = P.eval_at(m.beta, b)
+    level = m.C-2*a*B+a*a*A
+    # The scale excludes the additive loss constant: level-set geometry and
+    # every admission decision must be invariant under L -> L+constant.
+    scale = abs(A)*(1+a*a)+2*abs(a*B)+abs(B)
+    slack = scale/2**48
+    return level+slack if above else level-slack
+
+
+def _finite_float_or_none(value):
     try:
+        result = float(value)
+    except OverflowError:
+        return None
+    return result if np.isfinite(result) else None
+
+
+def _sublevel_component_inventory(m, enumeration, point):
+    """Exact inventory of the strict sublevel component containing ``point``.
+
+    The measured binary64 point is treated as an exact dyadic point.  We use
+    an exact relative upper level, rather than a floating evaluation of L, so
+    membership in ``{L<c}`` is strict by construction.  Because A>0, the
+    component projects to one component of
+
+        A(b) (C-c) - B(b)^2 < 0.
+
+    A bounded projection gives a bounded tube.  A projection unbounded at
+    exactly one end names a unique finite-plane end.  Critical isolating
+    intervals must lie wholly inside or outside the component; an overlap
+    makes the certificate decline rather than guess.
+    """
+    try:
+        bq = Fraction.from_float(float(point[1]))
+        c = _strict_level_at_float_point(m, point, above=True)
+        level_poly = P.sub(
+            P.scale(m.alpha, m.C-c), P.mul(m.beta, m.beta))
         roots = [
             sturm.refine(level_poly, iv, Fraction(1, 2**80))
             for iv in sturm.isolate_roots(level_poly)]
     except (ArithmeticError, OverflowError, ValueError):
-        return list(enumeration.minima)
-    bq = Fraction.from_float(b)
+        return {"certified": False, "reason": "exact_level_failure",
+                "minima": (), "saddles": ()}
     value = P.eval_at(level_poly, bq)
     if value >= 0:
-        # The point should lie strictly inside the enlarged sublevel.  If
-        # global evaluation was too poorly conditioned to establish that,
-        # declining the filter is safer than excluding a true destination.
-        return list(enumeration.minima)
+        return {"certified": False, "reason": "point_not_strictly_inside",
+                "minima": (), "saddles": ()}
     for iv in roots:
         if iv.lo <= bq <= iv.hi:
-            return list(enumeration.minima)
-    left = max((iv.hi for iv in roots if iv.hi < bq), default=None)
-    right = min((iv.lo for iv in roots if iv.lo > bq), default=None)
-    feasible = [
-        q for q in enumeration.minima
-        if (left is None or Fraction.from_float(float(q.b)) > left)
-        and (right is None or Fraction.from_float(float(q.b)) < right)]
-    return feasible or list(enumeration.minima)
+            return {"certified": False, "reason": "level_root_overlap",
+                    "minima": (), "saddles": ()}
+    left_iv = max((iv for iv in roots if iv.hi < bq),
+                  key=lambda iv: iv.hi, default=None)
+    right_iv = min((iv for iv in roots if iv.lo > bq),
+                   key=lambda iv: iv.lo, default=None)
+
+    inside = []
+    for q in enumeration.points:
+        qiv = q.interval
+        left_inside = left_iv is None or qiv.lo > left_iv.hi
+        right_inside = right_iv is None or qiv.hi < right_iv.lo
+        if left_inside and right_inside:
+            inside.append(q)
+            continue
+        definitely_left = left_iv is not None and qiv.hi < left_iv.lo
+        definitely_right = right_iv is not None and qiv.lo > right_iv.hi
+        if definitely_left or definitely_right:
+            continue
+        return {"certified": False,
+                "reason": "critical_level_boundary_overlap",
+                "minima": (), "saddles": ()}
+
+    unbounded_sides = []
+    if left_iv is None:
+        unbounded_sides.append("b_minus_infinity")
+    if right_iv is None:
+        unbounded_sides.append("b_plus_infinity")
+    return {
+        "certified": True,
+        "reason": None,
+        "level_upper": _finite_float_or_none(c),
+        "bounded": not unbounded_sides,
+        "unbounded_sides": tuple(unbounded_sides),
+        "left_boundary": None if left_iv is None else (
+            float(left_iv.lo), float(left_iv.hi)),
+        "right_boundary": None if right_iv is None else (
+            float(right_iv.lo), float(right_iv.hi)),
+        "minima": tuple(q for q in inside if q.kind == "min"),
+        "saddles": tuple(q for q in inside if q.kind == "saddle"),
+    }
 
 
-def _same_certified_minimum_tail(branch1, branch2, point, basin_radii,
-                                 allowed_radius):
-    if branch1.term != "capture" or branch2.term != "capture":
-        return False
-    t1, t2 = np.asarray(branch1.Y[-1]), np.asarray(branch2.Y[-1])
-    if _norm2(t1-t2) > allowed_radius:
-        return False
-    radius = basin_radii.get((float(t1[0]), float(t1[1])), 0.0)
-    return radius > 0.0 and _norm2(np.asarray(point)-t1) < radius
+def _target_matches(point, target, tolerance):
+    return target is not None and _norm2(
+        np.asarray(point, dtype=float)-np.asarray(target, dtype=float)
+    ) <= tolerance
 
 
-def _same_certified_infinity_tail(branch1, branch2, point):
-    """Whether an apparent contact lies in a shared certified end at infinity."""
-    a1, a2 = branch1.certs.get("asymptote"), branch2.certs.get("asymptote")
-    if not a1 or not a2 or branch1.term != "box_exit" \
-            or branch2.term != "box_exit":
+def _capture_certificate(m, enumeration, branch, allowed_radius,
+                         basin_radii):
+    """Find a pre-connector point in a one-minimum bounded sublevel tube."""
+    target = branch.diag.get("target")
+    if branch.term != "capture" or target is None or len(branch.Y) < 2:
+        return {"certified": False, "reason": "missing_capture_target"}
+    # Y[-1] is the exact critical endpoint appended after event detection.
+    # It is useful for drawing but cannot prove that continuation entered the
+    # basin.  Search only measured points preceding that connector.
+    # Descent makes the last measured point the strongest candidate: its
+    # sublevel component is the smallest one seen before the drawing-only
+    # connector.  A short logarithmic fallback tolerates dense-output/event
+    # placement noise without turning exact Sturm isolation into a scan over
+    # hundreds of nearly identical dyadic levels.
+    offsets = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+    indices = []
+    for offset in offsets:
+        index = len(branch.Y)-1-offset
+        if index >= 0 and index not in indices:
+            indices.append(index)
+    for index in indices:
+        inventory = _sublevel_component_inventory(
+            m, enumeration, branch.Y[index])
+        if not inventory["certified"]:
+            continue
+        if (not inventory["bounded"] or inventory["saddles"]
+                or len(inventory["minima"]) != 1):
+            continue
+        minimum = inventory["minima"][0]
+        if not _target_matches(
+                (minimum.a, minimum.b), target, allowed_radius):
+            continue
+        return {
+            "certified": True,
+            "reason": None,
+            "method": "exact_level_tube",
+            "entry_index": index,
+            "minimum": (float(minimum.a), float(minimum.b)),
+            "level_upper": inventory["level_upper"],
+            "b_interval": (inventory["left_boundary"],
+                           inventory["right_boundary"]),
+        }
+
+    # A global minimum can share every positive sublevel component with an
+    # end at infinity, so no bounded tube exists even though local capture is
+    # completely regular.  The independently constructed strong-convexity
+    # ball is forward invariant under descent and contains no other critical
+    # point.  As above, the appended exact endpoint is never evidence.
+    matching = [q for q in enumeration.minima if _target_matches(
+        (q.a, q.b), target, allowed_radius)]
+    if len(matching) == 1:
+        minimum = matching[0]
+        radius = basin_radii.get((float(minimum.a), float(minimum.b)), 0.0)
+        for index in indices:
+            if radius > 0.0 and _norm2(
+                    np.asarray(branch.Y[index], dtype=float)
+                    - np.asarray((minimum.a, minimum.b))) < radius:
+                return {
+                    "certified": True,
+                    "reason": None,
+                    "method": "strictly_convex_ball",
+                    "entry_index": index,
+                    "minimum": (float(minimum.a), float(minimum.b)),
+                    "radius": float(radius),
+                }
+    return {"certified": False,
+            "reason": "no_level_tube_or_convex_capture_ball"}
+
+
+def _strictly_positive_on_ray(polynomial, start, direction):
+    """Exact positivity on [start,+inf) or (-inf,start]."""
+    if not polynomial or P.eval_at(polynomial, start) <= 0:
         return False
-    if not (np.isfinite(a1["residual"]) and a1["residual"] < 0.2
-            and np.isfinite(a2["residual"]) and a2["residual"] < 0.2):
-        return False
-    u1 = np.asarray(branch1.Y[-1], dtype=float)
-    u2 = np.asarray(branch2.Y[-1], dtype=float)
-    u1 /= _norm2(u1)
-    u2 /= _norm2(u2)
-    # The compactified end includes the sign of the ray, not merely |b/a|.
-    if float(u1@u2) < 0.95:
-        return False
-    entry = max(float(a1["radii"][0]), float(a2["radii"][0]))
-    return _norm2(point) >= entry
+    # Translate the ray to x>=0.  Nonnegative exact coefficients (with a
+    # positive constant) prove positivity immediately and avoid constructing
+    # an expensive global Sturm chain for the high-degree funnel polynomials.
+    shifted = [
+        sum(polynomial[i]*comb(i, j)*start**(i-j)
+            for i in range(j, len(polynomial)))
+        * (1 if direction > 0 or j % 2 == 0 else -1)
+        for j in range(len(polynomial))]
+    # This is deliberately the complete production policy for the funnel.
+    # Constructing a fresh high-degree global Sturm plan here can dominate an
+    # otherwise finished portrait.  Coefficient positivity is exact and
+    # cheap; when it does not apply, the total engine declines this optional
+    # funnel and returns unresolved rather than entering unbounded exact work.
+    return all(coefficient >= 0 for coefficient in shifted)
+
+
+def _unstable_far_field_funnel(m, branch):
+    """Exact shrinking invariant corridor around the backbone on a b-ray.
+
+    Put r=a/a*(b)-1, h=sign(b)b, and s=hr.  The corridor |s|<=k
+    shrinks like 1/|b|, which is necessary because the leading terms of N
+    cancel.  After clearing the positive denominator A^3 h^3,
+
+      sign(A^3 h^3 sdot) = sign(S(s,b)),
+
+    where S is the polynomial assembled below and D=A B'-B A'.  Four exact
+    polynomial sign tests make b monotone outward and the two boundaries
+    point inward on the complete ray.
+    """
+    endpoint = branch.Y[-1]
+    try:
+        aq, bq = (Fraction.from_float(float(x)) for x in endpoint)
+        A, B = m.alpha, m.beta
+        Ap, Bp = P.deriv(A), P.deriv(B)
+        Aval, Bval = P.eval_at(A, bq), P.eval_at(B, bq)
+        if Aval <= 0 or Bval == 0:
+            return None
+        ratio = aq*Aval/Bval-1
+        direction = 1 if float(endpoint[1]) > float(
+            branch.diag.get("saddle_b", endpoint[1])) else -1
+        hq = Fraction(direction)*bq
+        if hq <= 0:
+            return None
+        scaled_ratio = hq*ratio
+        BAp = P.mul(B, Ap)
+        D = P.sub(P.mul(A, Bp), BAp)
+        A2 = P.mul(A, A)
+        A4 = P.mul(A2, A2)
+        h = (Fraction(0), Fraction(direction))
+        hN = P.mul(h, m.N)
+        outward = P.scale(P.mul(B, m.N), Fraction(-direction))
+
+        def scaled_radial(s):
+            h_plus_s = P.add(h, (s,))
+            shifted = P.add(hN, P.scale(BAp, s))
+            first = P.scale(
+                P.mul(P.mul(P.mul(h_plus_s, A), B), shifted),
+                -direction*s)
+            h3 = P.mul(P.mul(h, h), h)
+            second = P.scale(P.mul(h3, A4), -2*s)
+            third = P.mul(
+                P.mul(P.mul(h, P.mul(h_plus_s, h_plus_s)), D), shifted)
+            return P.add(P.add(first, second), third)
+
+        accepted_width = None
+        for width in (Fraction(1, 2**power)
+                      for power in range(48, -1, -1)):
+            if abs(scaled_ratio) >= width or width >= hq:
+                continue
+            robust = P.sub(
+                P.mul(hN, hN),
+                P.scale(P.mul(BAp, BAp), width*width))
+            inward_upper = P.scale(
+                scaled_radial(width), Fraction(-1))
+            inward_lower = scaled_radial(-width)
+            tests = (robust, outward, inward_upper, inward_lower)
+            # Endpoint signs are necessary and cheap.  Defer global Sturm
+            # counts until a corridor width can at least work locally.
+            if not all(P.eval_at(p, bq) > 0 for p in tests):
+                continue
+            if all(_strictly_positive_on_ray(p, bq, direction)
+                   for p in tests):
+                accepted_width = width
+                break
+        if accepted_width is None:
+            return None
+        width = accepted_width
+    except (ArithmeticError, OverflowError, ValueError):
+        return None
+    return {
+        "certified": True,
+        "reason": None,
+        "method": "exact_backbone_funnel",
+        "entry_index": len(branch.Y)-1,
+        "end": ("b_plus_infinity" if direction > 0
+                else "b_minus_infinity"),
+        "scaled_relative_half_width": float(width),
+        "endpoint_relative_half_width": float(width/hq),
+    }
+
+
+def _unstable_escape_certificate(m, enumeration, branch, box,
+                                 boundary_tolerance):
+    """Certify entry into a critical-free sublevel tube with one open end."""
+    if branch.kind != "unstable" or branch.term != "box_exit":
+        return {"certified": False, "reason": "not_unstable_box_exit"}
+    if not _box_exit_crossing(branch.Y, box, boundary_tolerance):
+        return {"certified": False, "reason": "no_box_boundary_crossing"}
+    offsets = (0, 1, 2, 4, 8, 16, 32, 64, 128)
+    indices = []
+    for offset in offsets:
+        index = len(branch.Y)-1-offset
+        if index >= 0 and index not in indices:
+            indices.append(index)
+    for index in indices:
+        inventory = _sublevel_component_inventory(
+            m, enumeration, branch.Y[index])
+        if not inventory["certified"]:
+            continue
+        if inventory["minima"] or inventory["saddles"]:
+            continue
+        if len(inventory["unbounded_sides"]) != 1:
+            continue
+        return {
+            "certified": True,
+            "reason": None,
+            "method": "exact_sublevel_tube",
+            "entry_index": index,
+            "end": inventory["unbounded_sides"][0],
+            "level_upper": inventory["level_upper"],
+            "b_interval": (inventory["left_boundary"],
+                           inventory["right_boundary"]),
+        }
+    funnel = _unstable_far_field_funnel(m, branch)
+    if funnel is not None:
+        return funnel
+    return {"certified": False,
+            "reason": "no_sublevel_tube_or_far_field_funnel"}
+
+
+def _critical_root_polynomial(m, point):
+    if point.source == "N":
+        return m.N
+    if point.source == "B":
+        return m.beta
+    return m.critical_reduced
+
+
+def _polynomial_interval(polynomial, interval):
+    """Exact Horner interval enclosure over a rational interval."""
+    lo = hi = Fraction(0)
+    for coefficient in reversed(polynomial):
+        products = (lo*interval.lo, lo*interval.hi,
+                    hi*interval.lo, hi*interval.hi)
+        lo, hi = min(products)+coefficient, max(products)+coefficient
+    return lo, hi
+
+
+def _sign_at_critical_point(m, point, polynomial):
+    """Certified sign of ``polynomial`` at an isolated critical b-value."""
+    interval = point.interval
+    root_polynomial = _critical_root_polynomial(m, point)
+    for _ in range(80):
+        if interval.exact:
+            value = P.eval_at(polynomial, interval.lo)
+            return (value > 0)-(value < 0)
+        lo, hi = _polynomial_interval(polynomial, interval)
+        if lo > 0:
+            return 1
+        if hi < 0:
+            return -1
+        width = interval.hi-interval.lo
+        interval = sturm.refine(
+            root_polynomial, interval,
+            rel=width/(4*(1+abs(interval.mid))))
+    return None
+
+
+def _stable_escape_certificate(m, enumeration, branch, box,
+                               boundary_tolerance):
+    """Certify ascent beyond every finite critical level and out of the box."""
+    if branch.kind != "stable" or branch.term != "box_exit":
+        return {"certified": False, "reason": "not_stable_box_exit"}
+    if not _box_exit_crossing(branch.Y, box, boundary_tolerance):
+        return {"certified": False, "reason": "no_box_boundary_crossing"}
+    offsets = (0, 1, 2, 4, 8, 16, 32, 64, 128)
+    best = None
+    for offset in offsets:
+        index = len(branch.Y)-1-offset
+        if index < 0:
+            continue
+        try:
+            lower = _strict_level_at_float_point(
+                m, branch.Y[index], above=False)
+            level_polynomial = P.sub(
+                P.scale(m.alpha, m.C-lower), P.mul(m.beta, m.beta))
+            signs = [_sign_at_critical_point(
+                m, point, level_polynomial) for point in enumeration.points]
+        except (ArithmeticError, OverflowError, ValueError):
+            continue
+        # u(q) < lower exactly when A(q)(C-lower)-B(q)^2 < 0.
+        if all(sign == -1 for sign in signs):
+            best = {
+                "certified": True,
+                "reason": None,
+                "entry_index": index,
+                "level_lower": _finite_float_or_none(lower),
+                "exit_side": _exit_side(branch.Y[-1], box),
+            }
+        elif best is not None:
+            break
+    if best is not None:
+        return best
+    return {"certified": False,
+            "reason": "no_exact_superlevel_escape_point"}
 
 
 def _exit_side(point, box):
@@ -325,16 +663,47 @@ def _exit_side(point, box):
     return int(np.argmin(distances))
 
 
-def _level_suffix(m, branch, threshold, below):
-    """First index of the final strict sub/superlevel suffix, or None."""
-    values = np.asarray([float(m.L(float(a), float(b)))
-                         for a, b in branch.Y])
-    slack = 512*np.finfo(float).eps*(1.0+abs(threshold))
-    inside = values < threshold-slack if below else values > threshold+slack
-    if not inside[-1]:
-        return None
-    outside = np.flatnonzero(~inside)
-    return int(outside[-1]+1) if len(outside) else 0
+def _on_box_boundary(point, box, tolerance):
+    a, b = map(float, point)
+    inside = (box[0]-tolerance <= a <= box[1]+tolerance
+              and box[2]-tolerance <= b <= box[3]+tolerance)
+    return inside and min(abs(a-box[0]), abs(a-box[1]),
+                          abs(b-box[2]), abs(b-box[3])) <= tolerance
+
+
+def _inside_box(point, box, tolerance):
+    a, b = map(float, point)
+    return (box[0]-tolerance <= a <= box[1]+tolerance
+            and box[2]-tolerance <= b <= box[3]+tolerance)
+
+
+def _box_exit_crossing(curve, box, tolerance):
+    """Whether the last computed segment genuinely crosses the trace box."""
+    if len(curve) == 0:
+        return False
+    if _on_box_boundary(curve[-1], box, tolerance):
+        return len(curve) >= 2 and _inside_box(
+            curve[-2], box, tolerance)
+    if len(curve) < 2:
+        return False
+    p, q = np.asarray(curve[-2], dtype=float), np.asarray(curve[-1], dtype=float)
+    if not _inside_box(p, box, tolerance):
+        return False
+    delta = q-p
+    for axis, side, other_lo, other_hi in (
+            (0, box[0], box[2], box[3]),
+            (0, box[1], box[2], box[3]),
+            (1, box[2], box[0], box[1]),
+            (1, box[3], box[0], box[1])):
+        if delta[axis] == 0.0:
+            continue
+        t = (side-p[axis])/delta[axis]
+        if not -tolerance <= t <= 1.0+tolerance:
+            continue
+        other = p[1-axis]+t*delta[1-axis]
+        if other_lo-tolerance <= other <= other_hi+tolerance:
+            return True
+    return False
 
 
 def audit(m, enumeration, branches, box) -> dict:
@@ -343,6 +712,18 @@ def audit(m, enumeration, branches, box) -> dict:
     predicate_tol = 128*np.finfo(float).eps*scale
     segment_count = sum(max(0, len(br.Y)-1) for br in branches)
     segment_budget = 1000000
+    expected_per_kind = 2*len(enumeration.saddles)
+    observed_stable = sum(br.kind == "stable" for br in branches)
+    observed_unstable = sum(br.kind == "unstable" for br in branches)
+    branch_inventory = {
+        "expected_stable": expected_per_kind,
+        "observed_stable": observed_stable,
+        "expected_unstable": expected_per_kind,
+        "observed_unstable": observed_unstable,
+        "certified": (observed_stable == expected_per_kind
+                      and observed_unstable == expected_per_kind
+                      and len(branches) == 2*expected_per_kind),
+    }
     aborted = [i for i, br in enumerate(branches)
                if br.term not in ("capture", "box_exit")]
     if aborted:
@@ -357,8 +738,12 @@ def audit(m, enumeration, branches, box) -> dict:
                 None if br.certs.get("asymptote") is None
                 else br.certs["asymptote"]["residual"]),
             "superlevel_start": None, "exit_side": None,
-            "certified": False,
+            "certified": False, "reason": "branch_set_incomplete",
         } for i, br in enumerate(branches) if br.kind == "stable"]
+        unstable_ends = [{
+            "branch": i, "kind": "incomplete", "certified": False,
+            "reason": "branch_set_incomplete",
+        } for i, br in enumerate(branches) if br.kind == "unstable"]
         return {
             "status": "fp64_unresolved",
             "audit_complete": False,
@@ -366,6 +751,7 @@ def audit(m, enumeration, branches, box) -> dict:
             "aborted_branches": aborted,
             "segment_count": segment_count,
             "segment_budget": segment_budget,
+            "branch_inventory": branch_inventory,
             "raw_event_count": 0,
             "raw_event_budget": 5000,
             "event_sample_limit": 256,
@@ -378,6 +764,7 @@ def audit(m, enumeration, branches, box) -> dict:
             "ambiguous_contacts": [],
             "backbone_crossings": [],
             "unstable_candidates": [],
+            "unstable_ends": unstable_ends,
             "stable_tails": stable_tails,
         }
     budget_exceeded = segment_count > segment_budget
@@ -386,22 +773,65 @@ def audit(m, enumeration, branches, box) -> dict:
     critical = np.asarray([(p.a, p.b) for p in enumeration.points])
     allowed_radius = max(1024*np.finfo(float).eps*scale, 1e-11)
     basin_radii = _minimum_basin_radii(m, enumeration)
-    saddle_levels = [float(m.L(p.a, p.b)) for p in enumeration.saddles]
-    low_saddle = min(saddle_levels, default=np.inf)
-    high_saddle = max(saddle_levels, default=-np.inf)
+
+    unstable_end_by_branch = {}
+    stable_tail_by_branch = {}
+    for i, branch in enumerate(branches):
+        if branch.kind == "unstable":
+            if branch.term == "capture":
+                certificate = _capture_certificate(
+                    m, enumeration, branch, allowed_radius, basin_radii)
+                kind = "finite_capture"
+            elif branch.term == "box_exit":
+                certificate = _unstable_escape_certificate(
+                    m, enumeration, branch, box, 16*predicate_tol)
+                kind = "infinity_escape"
+            else:
+                certificate = {"certified": False,
+                               "reason": "incomplete_unstable_branch"}
+                kind = "incomplete"
+            unstable_end_by_branch[i] = {
+                "branch": i, "kind": kind, **certificate}
+        elif branch.kind == "stable":
+            certificate = _stable_escape_certificate(
+                m, enumeration, branch, box, 16*predicate_tol)
+            asymptote = branch.certs.get("asymptote")
+            stable_tail_by_branch[i] = {
+                "branch": i,
+                "box_exit": branch.term == "box_exit",
+                "asymptote_residual": (
+                    None if asymptote is None else asymptote["residual"]),
+                "superlevel_start": certificate.get("entry_index"),
+                **certificate,
+            }
+
+    unstable_ends = list(unstable_end_by_branch.values())
+    stable_tails = list(stable_tail_by_branch.values())
     terminal_suffixes = []
-    for br in branches:
-        if br.kind == "unstable" and br.term == "capture":
-            start = _level_suffix(m, br, low_saddle, below=True)
+    for i, br in enumerate(branches):
+        endpoint = unstable_end_by_branch.get(i, stable_tail_by_branch.get(i))
+        if (br.kind == "unstable" and endpoint is not None
+                and endpoint["kind"] == "finite_capture"
+                and endpoint["certified"]):
             terminal_suffixes.append({
-                "kind": "minimum_sublevel", "start": start,
-                "terminal": tuple(map(float, br.Y[-1])),
+                "kind": "minimum_sublevel",
+                "start": endpoint["entry_index"],
+                "terminal": endpoint["minimum"],
             })
-        elif br.kind == "stable" and br.term == "box_exit":
-            start = _level_suffix(m, br, high_saddle, below=False)
+        elif (br.kind == "unstable" and endpoint is not None
+              and endpoint["kind"] == "infinity_escape"
+              and endpoint["certified"]):
             terminal_suffixes.append({
-                "kind": "infinity_superlevel", "start": start,
-                "side": _exit_side(br.Y[-1], box),
+                "kind": "unstable_infinity",
+                "start": endpoint["entry_index"],
+                "end": endpoint["end"],
+            })
+        elif (br.kind == "stable" and endpoint is not None
+              and endpoint["certified"]):
+            terminal_suffixes.append({
+                "kind": "stable_infinity",
+                "start": endpoint["entry_index"],
+                "side": endpoint["exit_side"],
             })
         else:
             terminal_suffixes.append({"kind": None, "start": None})
@@ -428,6 +858,15 @@ def audit(m, enumeration, branches, box) -> dict:
     for i, br in enumerate(branches if not budget_exceeded else ()):
         for si, sj, kind, point in _self_events(
                 np.asarray(br.Y), trees[i], predicate_tol):
+            if (kind == "ambiguous" and _strictly_monotone_subarc(
+                    br.Y, si, sj)):
+                # Exact monotonicity of either polyline coordinate orders the
+                # entire intervening parameter interval, so two nonadjacent
+                # chords cannot meet.  This discharges dense-output chords
+                # below the global predicate floor without an arbitrary
+                # adjacency stencil.  Retain every transverse `cross` and
+                # every ambiguity whose intervening subarc can turn back.
+                continue
             if max(si, sj) < int(br.diag.get("critical_steps", 0)):
                 # The materialized invariant graph has its own injectivity
                 # and fixed-point certificate; logarithmic samples can be
@@ -449,18 +888,6 @@ def audit(m, enumeration, branches, box) -> dict:
     for i in range(0 if budget_exceeded or event_budget_exceeded
                    else len(branches)):
         for j in range(i+1, len(branches)):
-            # Unstable curves ending at the same certified minimum are basin
-            # interiors, not separatrices.  Their mutual polyline ordering is
-            # topologically irrelevant, so do not generate a potentially
-            # quadratic contact stream only to discard every event later.
-            pair_same_captured_basin = (
-                branches[i].kind == branches[j].kind == "unstable"
-                and branches[i].term == branches[j].term == "capture"
-                and _norm2(
-                    branches[i].Y[-1]-branches[j].Y[-1])
-                <= allowed_radius)
-            if pair_same_captured_basin:
-                continue
             events = _pair_events(
                 np.asarray(branches[i].Y), trees[i],
                 np.asarray(branches[j].Y), trees[j], predicate_tol)
@@ -504,18 +931,12 @@ def audit(m, enumeration, branches, box) -> dict:
                 # rerouted inside that basin.  Crossings with a STABLE
                 # separatrix remain forbidden everywhere: those are the
                 # topology-changing events this audit is designed to catch.
-                same_superlevel_end = (
-                    ti["kind"] == tj["kind"] == "infinity_superlevel"
-                    and ti["start"] is not None and tj["start"] is not None
-                    and si >= ti["start"] and sj >= tj["start"]
-                    and ti["side"] == tj["side"])
-                if (same_sublevel_end
-                        or same_superlevel_end
-                        or _same_certified_minimum_tail(
-                        branches[i], branches[j], point, basin_radii,
-                        allowed_radius)
-                        or _same_certified_infinity_tail(
-                            branches[i], branches[j], point)):
+                # Only same-basin unstable tails after entry into an exactly
+                # named one-minimum tube are exempt; their incidence is fixed
+                # and they may be rerouted within the tube.  Every other
+                # measured finite segment remains subject to the contact
+                # audit, including branches escaping through one box side.
+                if same_sublevel_end:
                     continue
                 raw_event_count += 1
                 if raw_event_count > raw_event_budget:
@@ -548,38 +969,29 @@ def audit(m, enumeration, branches, box) -> dict:
         candidates.append({"branch": i, "sampled_loss_floor": sampled_floor,
                            "eligible_minimum_b": eligible})
 
-    stable_tails = []
-    for i, br in enumerate(branches):
-        if br.kind != "stable":
-            continue
-        asym = br.certs.get("asymptote")
-        level_tail = terminal_suffixes[i]
-        superlevel_certified = (
-            level_tail["kind"] == "infinity_superlevel"
-            and level_tail["start"] is not None)
-        stable_tails.append({
-            "branch": i, "box_exit": br.term == "box_exit",
-            "asymptote_residual": None if asym is None else asym["residual"],
-            "superlevel_start": level_tail["start"],
-            "exit_side": level_tail.get("side"),
-            "certified": (br.term == "box_exit"
-                          and (superlevel_certified
-                               or (asym is not None
-                                   and np.isfinite(asym["residual"])
-                                   and asym["residual"] < 0.2))),
-        })
     resolved = (not budget_exceeded and not event_budget_exceeded
+                and branch_inventory["certified"]
                 and forbidden_count == 0 and ambiguous_count == 0
+                and all(x["certified"] for x in unstable_ends)
                 and all(x["certified"] for x in stable_tails)
                 and all(br.term in ("capture", "box_exit") for br in branches))
+    unresolved_end = any(not x["certified"] for x in unstable_ends)
+    unresolved_stable_tail = any(
+        not x["certified"] for x in stable_tails)
     return {
         "status": "certified" if resolved else "fp64_unresolved",
         "audit_complete": not budget_exceeded and not event_budget_exceeded,
         "resolution_reason": (
             "certification_segment_budget" if budget_exceeded else
-            "certification_event_budget" if event_budget_exceeded else None),
+            "certification_event_budget" if event_budget_exceeded else
+            "branch_inventory_incomplete"
+            if not branch_inventory["certified"] else
+            "topology_contact" if forbidden_count or ambiguous_count else
+            "unstable_endpoint_unresolved" if unresolved_end else
+            "stable_escape_unresolved" if unresolved_stable_tail else None),
         "segment_count": segment_count,
         "segment_budget": segment_budget,
+        "branch_inventory": branch_inventory,
         "raw_event_count": raw_event_count,
         "raw_event_budget": raw_event_budget,
         "event_sample_limit": event_sample_limit,
@@ -594,5 +1006,6 @@ def audit(m, enumeration, branches, box) -> dict:
         "ambiguous_contacts": ambiguous,
         "backbone_crossings": backbone,
         "unstable_candidates": candidates,
+        "unstable_ends": unstable_ends,
         "stable_tails": stable_tails,
     }

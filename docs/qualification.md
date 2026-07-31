@@ -140,6 +140,7 @@ margins, but it must not weaken these soundness floors.
 Admission does not promise that every portrait is numerically easy.  The
 geometry engine must still certify its own result:
 
+- both stable and both unstable branches of every saddle are present;
 - all stage solves pass their backward-error tests;
 - all local charts and dense-output handoffs certify;
 - all invariant branches terminate in a certified endpoint or end regime;
@@ -148,6 +149,23 @@ geometry engine must still certify its own result:
 - all work and event budgets remain within the declared qualification policy.
 
 Failure of any test yields `fp64_unresolved`, not a guessed portrait.
+
+Finite capture and escape are certified by exact level-tube inventories.  At
+a measured pre-connector dyadic point, the audit evaluates the loss exactly,
+forms `A(C-c)-B^2` at an exact strict upper level, and isolates its real roots
+with Sturm arithmetic.  Capture requires a bounded component containing
+exactly the named minimum and no saddle; when a global-minimum component is
+open to infinity, the existing forward-invariant strong-convexity ball is the
+local alternative.  Unstable escape requires either a critical-free component
+with exactly one unbounded b-end or an exact shrinking backbone funnel.  The
+funnel uses `r=a/a*(b)-1`, proves `|b r|<=k` invariant, and proves outward
+longitudinal drift on the complete b-ray using four exact polynomial sign
+tests after translating the ray to the nonnegative axis.  Nonnegative exact
+coefficients are the finite-work admission rule; otherwise the funnel declines.
+Stable escape requires an actual trace-box crossing and an exact lower
+level at which every finite critical value is proved lower by rational interval
+evaluation.  Asymptote residuals remain metrology and never substitute for
+these finite endpoint or contact certificates.
 
 The exact Morse/discriminant margins certify only the critical-point
 inventory and its local indices.  They do **not** certify structural stability

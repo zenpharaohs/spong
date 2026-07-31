@@ -150,6 +150,7 @@ def test_d2_far_lower_minimum_connection_expands_compute_box():
     assert p.box[0] < np.min(br.Y[:, 0])
 
 
+@pytest.mark.slow
 def test_linear_vs_d17_horizontal_branch_reaches_global_minimum():
     """Seed 1158725111: a high-degree fit to linear data made a finite
     branch almost horizontal, so |Δb|-only spacing exhausted max_steps."""
@@ -166,7 +167,7 @@ def test_linear_vs_d17_horizontal_branch_reaches_global_minimum():
         0.8227526313695055, 0.15929379398579482,
     ]
     m = model.build(f, g, model.moments_uniform01(35))
-    p = portrait.compute(m, trace_stable_branches=False)
+    p = portrait.compute(m)
     saddle_b = 0.16855072623386724
     target_b = -0.1527183018008041
     branches = [
@@ -199,7 +200,7 @@ def test_arrival_switches_from_singular_graph_to_geometric_flow():
         -0.7877423377195685,
     ]
     m = model.build(f, g, model.moments_uniform01(11))
-    p = portrait.compute(m, trace_stable_branches=False)
+    p = portrait.compute(m)
     rescued = [
         br for br in p.branches
         if (br.diag.get("floor_fallback_normalized_gl6", 0) > 0
@@ -219,10 +220,11 @@ def test_refinement_can_replace_a_coarse_wrong_basin_label():
     f = [-0.7142857148120779, 1.0, 1.0, 1.0, 1.0, 1.0]
     g = [1.0, 0.0, -4.0, 0.0, -4.0]
     m = model.build(f, g, model.moments_uniform01(11))
-    p = portrait.compute(m, trace_stable_branches=False)
+    p = portrait.compute(m)
     moderate = [
         br for br in p.branches
-        if abs(br.diag.get("saddle_b", np.inf)) < 1.0
+        if (br.kind == "unstable"
+            and abs(br.diag.get("saddle_b", np.inf)) < 1.0)
     ]
     assert len(moderate) == 4
     assert all(br.term == "capture" for br in moderate)
@@ -251,10 +253,22 @@ def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
     Scaling every capture ball by that connection length made a radius-two
     ball around the *near* minimum and falsely captured both branches there.
     Critical-point separation must bound all-minima capture neighbourhoods.
+    The remote minimum itself is below FP64 local spectral resolution, so the
+    tightened endpoint audit must report the otherwise clean portrait as
+    numerically unresolved rather than trusting its capture label.
     """
     m = _targeted_qualification_model(3759027027, 11)
     p = portrait.certified_compute(m, max_geometry_level=0)
-    assert p.ledger["topology"]["status"] == "certified"
+    topology = p.ledger["topology"]
+    assert topology["status"] == "fp64_unresolved"
+    assert topology["resolution_reason"] == "unstable_endpoint_unresolved"
+    unresolved = [x for x in topology["unstable_ends"]
+                  if not x["certified"]]
+    assert len(unresolved) == 1
+    assert unresolved[0]["kind"] == "finite_capture"
+    assert all(x["certified"] and x["method"] == "exact_backbone_funnel"
+               for x in topology["unstable_ends"]
+               if x["kind"] == "infinity_escape")
     assert set(p.ledger["timing"]) == {
         "enumeration_sec", "stub_materialization_sec",
         "geometry_sec", "total_sec"}
@@ -271,11 +285,24 @@ def test_stiff_stub_extends_before_global_handoff():
 
     The quadratic Poincare graph loses contraction on the larger interval,
     but the exact centered graph remains certified and carries the branch
-    far enough for the global dispatcher to finish.
+    far enough for the global dispatcher to finish.  A separate prescribed
+    minimum at b=-2048 is below FP64 local spectral resolution, so full
+    topology certification must still decline.  With the complete skeleton
+    present, the contact audit may also reject intersecting pseudo-orbits
+    before endpoint resolution becomes the primary ledger reason.
     """
     m = _targeted_qualification_model(3389434578, 11)
     p = portrait.certified_compute(m, max_geometry_level=0)
-    assert p.ledger["topology"]["status"] == "certified"
+    topology = p.ledger["topology"]
+    assert topology["status"] == "fp64_unresolved"
+    assert topology["resolution_reason"] in (
+        "unstable_endpoint_unresolved", "topology_contact")
+    if topology["resolution_reason"] == "topology_contact":
+        assert topology["forbidden_count"] > 0
+    assert sum(not x["certified"] for x in topology["unstable_ends"]) == 1
+    assert all(x["certified"] and x["method"] == "exact_backbone_funnel"
+               for x in topology["unstable_ends"]
+               if x["kind"] == "infinity_escape")
     saddle = max(p.enumeration.saddles, key=lambda q: q.b)
     unstable = [stub for stub in saddle.stubs
                 if stub.manifold == "unstable"]

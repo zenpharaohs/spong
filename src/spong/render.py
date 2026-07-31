@@ -429,7 +429,8 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
     hemisphere, viewed from above).
 
     Nothing is off-canvas, by theorem: separatrices run to the rim
-    diagonals b = ±√d_eff·a; unbounded unstable branches to the b-poles.
+    diagonals b = ±√d_eff·a; unbounded unstable branches to the two
+    compactified backbone ends at infinity.
 
     GEOMETRY CAVEAT (not a defect — a theorem): no bounded single-chart
     picture of the whole plane can be conformal (Liouville / Riemann
@@ -480,7 +481,7 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
         pts = [to_px(x, y) for x, y in br.Y if np.isfinite(x)]
         svg.polyline(pts, color, 2.0)
 
-    # rim equilibria: diagonals at slope ±√d_eff and the b-poles
+    # Rim equilibria: diagonals and the two compactified backbone ends.
     d_eff = effective_degree(m)
     s = np.sqrt(d_eff)
     for (da, db) in [(1, s), (1, -s), (-1, s), (-1, -s)]:

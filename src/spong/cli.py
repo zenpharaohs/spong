@@ -224,9 +224,7 @@ def _pause_loop(p: portrait.Portrait, out_dir: Path, stem: str,
             if not _view_inside_box(view, p.box):
                 print("  recomputing portrait for new compute box...")
                 t0 = time.perf_counter()
-                p = portrait.compute(
-                    p.model, view=view,
-                    trace_stable_branches=not args.no_stable)
+                p = portrait.compute(p.model, view=view)
                 print(f"  new compute box: {tuple(float(x) for x in p.box)} "
                       f"({time.perf_counter() - t0:.2f}s)")
             render_view = _fit_view_to_box(view, p.box)
@@ -267,9 +265,7 @@ def random_phase_portrait(args: argparse.Namespace) -> int:
                  f"{' f=g' if args.same else ''}")
         t0 = time.perf_counter()
         m = model.build(f, g, moments)
-        p = portrait.compute(
-            m, view=args.view,
-            trace_stable_branches=not args.no_stable)
+        p = portrait.compute(m, view=args.view)
         elapsed = time.perf_counter() - t0
 
         stem = f"{args.prefix}_{idx:04d}_seed_{case_seed}"
@@ -322,8 +318,6 @@ def random_phase_portrait(args: argparse.Namespace) -> int:
             print(f"  plane: {plane_path}")
         if disk_path:
             print(f"  disk:  {disk_path}")
-        if args.no_stable:
-            print("  stable separatrices skipped (--no-stable)")
         for zi, z in enumerate(zooms):
             print(f"  zoom{zi}: {z['svg']} "
                   f"sep={z['separation']:.3e} view={z['view']}")
@@ -359,9 +353,7 @@ def zoo_phase_portrait(args: argparse.Namespace) -> int:
 
     t0 = time.perf_counter()
     m = model.build(z.f, z.g, moments)
-    p = portrait.certified_compute(
-        m, view=view,
-        trace_stable_branches=not args.no_stable)
+    p = portrait.certified_compute(m, view=view)
     elapsed = time.perf_counter() - t0
 
     stem = f"{args.prefix}_{z.name}"
@@ -402,8 +394,6 @@ def zoo_phase_portrait(args: argparse.Namespace) -> int:
         print(f"  plane: {plane_path}")
     if disk_path:
         print(f"  disk:  {disk_path}")
-    if args.no_stable:
-        print("  stable separatrices skipped (--no-stable)")
     print(f"  json:  {one_path}")
     if args.auto_open:
         opened = _open_outputs([plane_path, disk_path], viewer=args.viewer)
@@ -471,8 +461,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="plane SVG height")
     p.add_argument("--disk-size", type=int, default=900,
                    help="disk SVG width and height")
-    p.add_argument("--no-stable", action="store_true",
-                   help="skip stable separatrices for quick visual scans")
     p.add_argument("--zoom-close", type=int, default=0,
                    help="write this many close-approach zoom plane SVGs")
     p.add_argument("--zoom-samples", type=int, default=1800,

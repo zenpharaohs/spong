@@ -58,7 +58,6 @@ class ResolutionPolicy:
     max_gamma_target_product_log2: float | None = None
     require_distinct_binary64_coordinates: bool = True
     max_geometry_level: int = 2
-    trace_stable_branches: bool = True
 
 
 @dataclass(frozen=True)
@@ -297,7 +296,6 @@ def resolve(m: Model, *, view=None,
         computed = portrait.certified_compute(
             m, view=view,
             max_geometry_level=policy.max_geometry_level,
-            trace_stable_branches=policy.trace_stable_branches,
             _enumeration=enumeration)
     except (ArithmeticError, FloatingPointError, OverflowError) as exc:
         return Resolution(

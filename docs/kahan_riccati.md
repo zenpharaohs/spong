@@ -33,7 +33,8 @@ its step map is a Möbius transformation, regular at infinity.
    cross-check (two mechanisms agreeing at former folds = a certificate).
 2. render: contour tracer — closed level curves cross vertical tangency
    twice per circuit; projective direction removes those events.
-3. atlas: the degenerate backbone poles (our weakest certificates) are
+3. atlas: the degenerate compactified backbone ends (our weakest
+   certificates) are
    candidates for a GIP-style lift: define past the singularity
    analytically, compute with a scheme preserving the defining property.
 4. cross-repo: the matrix Riccati equation is load-bearing in the

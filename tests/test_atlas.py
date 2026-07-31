@@ -1,5 +1,5 @@
 """Phase-4 gates (SPONG_FOUNDING Part IV): √d asymptote convergence, index
-balance across the zoo, backbone-pole model matches the C_inf analysis."""
+balance across the zoo, backbone-end model matches the C_inf analysis."""
 
 from fractions import Fraction as F
 
@@ -10,7 +10,7 @@ from spong import atlas, charts, model, sturm
 from tests.test_enumeration import TRICKY_F
 
 
-# ---------------- gate: backbone-pole model (C_inf) ------------------- #
+# ---------------- gate: backbone-end model (C_inf) ------------------- #
 
 @pytest.mark.parametrize("fix", ["d2", "tricky"])
 def test_C_inf_matches_numeric_limit(fix, request):

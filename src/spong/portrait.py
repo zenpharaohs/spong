@@ -84,9 +84,7 @@ def _capture_radius(e: sturm.Enumeration, ds: float) -> float:
     return float(min(4.0*ds, separation/8.0))
 
 
-def compute(m: Model, view=None,
-            trace_stable_branches: bool = True,
-            geometry_level: int = 0,
+def compute(m: Model, view=None, geometry_level: int = 0,
             _enumeration=None, _display_view=None,
             _genericity=None) -> Portrait:
     """Compute the certified portrait inside the §8b box contract."""
@@ -100,25 +98,23 @@ def compute(m: Model, view=None,
     branches = []
     # Stable separatrices are the basin walls, so the portraitist computes
     # them before asking unstable branches to discover their destinations.
-    if trace_stable_branches:
-        span_scale = max(display_view[3] - display_view[2],
-                         display_view[1] - display_view[0])
-        for s in e.saddles:
-            for sign in (+1, -1):
-                br = charts.trace_stable(
-                    m, s.b, sign, box=box, ds=span_scale / 30000.0,
-                    critical_local=s.local,
-                    critical_stub=_stable_stub(s, sign, m))
-                br.diag["saddle_b"] = s.b
-                br.diag["stable_sign"] = sign
-                if br.term == "box_exit" and len(br.Y) > 50:
-                    br.certs["asymptote"] = atlas.asymptote_certificate(
-                        m, br.Y)
-                branches.append(br)
+    span_scale = max(display_view[3] - display_view[2],
+                     display_view[1] - display_view[0])
+    for s in e.saddles:
+        for sign in (+1, -1):
+            br = charts.trace_stable(
+                m, s.b, sign, box=box, ds=span_scale / 30000.0,
+                critical_local=s.local,
+                critical_stub=_stable_stub(s, sign, m))
+            br.diag["saddle_b"] = s.b
+            br.diag["stable_sign"] = sign
+            if br.term == "box_exit" and len(br.Y) > 50:
+                br.certs["asymptote"] = atlas.asymptote_certificate(
+                    m, br.Y)
+            branches.append(br)
 
     discovery_ds = max(display_view[3]-display_view[2],
                        display_view[1]-display_view[0]) / 30000.0
-    discovery_cap_r = _capture_radius(e, discovery_ds)
     for s in e.saddles:
         # ---- unstable branches: discover capture, never prescribe it --- #
         for direction in (+1, -1):
@@ -215,7 +211,6 @@ def compute(m: Model, view=None,
 
 
 def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
-                      trace_stable_branches: bool = True,
                       _enumeration=None) -> Portrait:
     """Step up the portraitist until topology certifies or explicitly refuse."""
     # Geometry escalation must not redo the exact zero-dimensional Morse
@@ -235,8 +230,7 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
     for level in range(max_geometry_level+1):
         geometry_started = time.perf_counter()
         result = compute(
-            m, view=view, trace_stable_branches=trace_stable_branches,
-            geometry_level=level, _enumeration=enumeration,
+            m, view=view, geometry_level=level, _enumeration=enumeration,
             _display_view=display_view, _genericity=genericity)
         top = result.ledger["topology"]
         attempts.append({
@@ -244,12 +238,15 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
             "reason": top["resolution_reason"],
             "forbidden": top["forbidden_count"],
             "ambiguous": top["ambiguous_count"],
+            "uncertified_ends": sum(
+                not x["certified"] for x in top["unstable_ends"]),
             "uncertified_tails": sum(
                 not x["certified"] for x in top["stable_tails"]),
             "elapsed_sec": time.perf_counter()-geometry_started,
         })
         if (top["status"] == "certified"
-                or top["resolution_reason"] == "branch_abort"):
+                or top["resolution_reason"] in (
+                    "branch_abort", "branch_inventory_incomplete")):
             break
     result.ledger["topology"]["attempts"] = attempts
     result.ledger["timing"] = {

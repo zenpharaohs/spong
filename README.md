@@ -34,7 +34,7 @@ continuation engine with the shallow-water handoff (self-certifying zone
 rejection at false sounding spikes), seam residuals, and angle-energy
 certificates — the tricky d=11 branch traces at E ≤ 1e-12 and its
 separatrices at ≤ 1e-11 with the √d asymptote confirmed.  `spong.atlas`
-(Phase 4): rim structure (√d_eff diagonals, EXACT C_inf backbone-pole
+(Phase 4): rim structure (√d_eff diagonals, EXACT C_inf backbone-end
 constant), the asymptote certificate, EXACT Poincaré–Hopf index balance
 (rational-rectangle winding via Sturm-certified axis crossings — additive
 over box subdivisions), genericity/degree-drop handling, and the §8b box
@@ -81,8 +81,10 @@ a larger compute box so invariant manifolds that leave and re-enter the view
 are still available to the clipper.  Add
 `--zoom-close 2` to also write tight metrological zooms around close
 approaches of distinct unstable branches that share a captured minimum.
-Use `--no-stable` only for quick scans; it deliberately omits the red stable
-separatrices.
+Every portrait traces both stable and unstable branches: the stable
+separatrices are required to certify the basin topology.  Individual Morse
+objects remain available in the numerical return values for callers that want
+to inspect or render them separately.
 Installed environments also get the `spong-random-portrait` console command.
 
 For teaching and numerical comparison, installed environments also provide:

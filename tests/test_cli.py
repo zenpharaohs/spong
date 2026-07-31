@@ -15,7 +15,6 @@ def test_random_phase_portrait_cli_smoke(tmp_path):
         "--prefix", "smoke",
         "--levels", "6",
         "--grid", "101",
-        "--no-stable",
         "--zoom-close", "1",
         "--zoom-grid", "51",
     ])
@@ -43,7 +42,6 @@ def test_zoo_quadratic_stiff_cli(tmp_path):
         "--prefix", "zoo",
         "--levels", "6",
         "--grid", "101",
-        "--no-stable",
     ])
     assert rc == 0
     svg = tmp_path / "zoo_quadratic-stiff_plane.svg"
@@ -95,7 +93,6 @@ def test_random_phase_portrait_cli_open_smoke(tmp_path, monkeypatch):
         "--prefix", "open",
         "--levels", "4",
         "--grid", "51",
-        "--no-stable",
         "--open",
         "--viewer", "inkscape",
     ])
@@ -163,7 +160,6 @@ def test_pause_view_command_writes_view(tmp_path, monkeypatch):
         "--prefix", "paused",
         "--levels", "4",
         "--grid", "51",
-        "--no-stable",
         "--pause",
     ])
     assert rc == 0
@@ -175,8 +171,7 @@ def test_pause_view_command_writes_view(tmp_path, monkeypatch):
 def test_pause_view_recomputes_when_view_exceeds_compute_box(tmp_path,
                                                             monkeypatch):
     m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
-    p = portrait.compute(m, view=(0.95, 1.05, 0.95, 1.05),
-                         trace_stable_branches=False)
+    p = portrait.compute(m, view=(0.95, 1.05, 0.95, 1.05))
     p = portrait.Portrait(
         p.model, p.enumeration, p.branches,
         (0.9, 1.1, 0.9, 1.1), p.view, p.ledger)
@@ -185,7 +180,6 @@ def test_pause_view_recomputes_when_view_exceeds_compute_box(tmp_path,
     args = cli.build_parser().parse_args([
         "--levels", "4",
         "--grid", "51",
-        "--no-stable",
         "--pause",
     ])
     args.view = cli._view(args.view)
@@ -208,7 +202,7 @@ def test_pause_view_recomputes_when_view_exceeds_compute_box(tmp_path,
 def test_pause_view_clamps_when_recompute_cannot_cover_view(tmp_path,
                                                             monkeypatch):
     m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
-    p = portrait.compute(m, trace_stable_branches=False)
+    p = portrait.compute(m)
     p = portrait.Portrait(
         p.model, p.enumeration, p.branches,
         (-2.0, 2.0, -3.0, 3.0), p.view, p.ledger)
@@ -217,7 +211,6 @@ def test_pause_view_clamps_when_recompute_cannot_cover_view(tmp_path,
     args = cli.build_parser().parse_args([
         "--levels", "4",
         "--grid", "51",
-        "--no-stable",
         "--pause",
     ])
     args.view = cli._view(args.view)

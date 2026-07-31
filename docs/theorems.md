@@ -54,6 +54,11 @@ Theorem 5 records what survives.
 backbone a = B/A, at roots of B·N (u′ = B·N/A²;
 N = α′β − 2β′α).  The identities
 
+Here (A(b)>0) on the real line under the model hypothesis, so (B/A) has
+no real pole.  The two b-axis points on the compactification rim are ends of
+this continuous backbone at infinity, not singularities of the finite-plane
+backbone.
+
     H₁₂ = −2A·a*′,   H₂₂ = 2A·a*′² + u″,   det H = 2A·u″
 
 hold at EVERY backbone point — no critical-point substitution required
@@ -88,7 +93,8 @@ b = ±√d_eff·a; the equatorial radial component is ≤ 0; separatrices approa
 the diagonal equilibria asymptotic to those lines.
 
 **Status: PROVED at leading order** (direct computation of the leading form;
-the degenerate backbone poles' local model ḃ ~ −C_inf/b² is established in
+the degenerate compactified backbone ends' local model
+ḃ ~ −C_inf/b² is established in
 mse_morse_info's compactification analysis).  The quasi-homogeneous blow-up
 at the degenerate poles carries asymptotic-series-grade certificates only —
 recorded as the atlas's weakest link in SPONG_FOUNDING §8.
@@ -252,25 +258,59 @@ The tube is exact prior information, but it does not in general decide the
 branch fate.  The intended total engine contract has two positive
 certificates and otherwise returns unresolved.
 
-**6.1  Capture certificate.**  Let \(\ell_{\rm hi}\) be a validated strict
-upper bound for the loss at a point on the branch, and let \(I\) be the
-component of \(\{u<\ell_{\rm hi}\}\) containing its b-coordinate.  Capture
-at a minimum \(m\) is certified when:
+**6.1  Capture certificate.**  Let \(\ell_{\rm hi}\) be an exact strict
+upper bound for the loss at a measured dyadic point on the branch, and let
+\(I\) be the component of \(\{u<\ell_{\rm hi}\}\) containing its b-coordinate.
+Capture at a minimum \(m\) is certified when:
 
 1. \(I\) contains \(m\), no other minimum, and no saddle;
 2. the corresponding sublevel tube is bounded, or validated inward
    far-field funnels exclude every unbounded end.
 
-Future loss is below \(\ell_{\rm hi}\), so the true orbit cannot leave that
-tube; Theorem 5.4 then forces convergence to \(m\).  Nearness to \(m\) is
-useful for scheduling but is not itself a certificate.
+The production certificate evaluates the polynomial loss exactly at the
+binary64 point, adds an exact positive relative slack, and isolates every root
+of \(A(C-\ell_{\rm hi})-B^2\) by Sturm arithmetic.  It uses a continuation
+point preceding the drawing-only connector to the critical point.  Future
+loss along the exact integral curve through that point is below
+\(\ell_{\rm hi}\), so it cannot leave the tube; Theorem 5.4 then forces
+convergence to \(m\).  Nearness to \(m\) is useful for scheduling but is not
+itself a certificate.  The continuation residual remains the separately
+reported evidence that the materialized branch represents the intended
+separatrix; no global shadowing theorem is silently added here.
 
-**6.2  Escape certificate.**  Escape is certified only after the branch
-enters a validated forward-invariant outward far-field funnel with a named
-compactified terminal.  The required funnel lemma must provide an explicit
-threshold \(b^\dagger\), transverse contraction, the sign of the longitudinal
-drift, and preservation of the selected end.  Asymptotic sign alone is not a
-finite-arithmetic certificate.
+If the minimum shares every positive sublevel component with an end at
+infinity, the local alternative is entry into a forward-invariant ball on
+which the centered Hessian majorant proves strict convexity and which is
+disjoint from every other critical point.  This is logically different from
+mere capture-radius proximity.
+
+**6.2  Escape certificate.**  Two finite-plane escape certificates are used.
+For an unstable branch, the same exact sublevel construction must produce a
+critical-free component whose b-projection is unbounded at exactly one end.
+Descent cannot leave that component, and a bounded analytic-gradient orbit
+would converge to a finite critical point, of which the component has none.
+When leading-term cancellation makes every such component contain a minimum,
+SPONG instead uses the exact shrinking corridor
+\(|b(a/a^*(b)-1)|\leq k\).  After clearing positive denominators, outward
+longitudinal drift and inward pointing at both corridor boundaries reduce to
+four polynomial sign tests on a half-line, certified by exact translated
+coefficient positivity.  If that sufficient test does not apply, the finite
+work policy declines the funnel rather than constructing a new global Sturm
+chain of potentially prohibitive height.
+For a stable branch traced by ascent, the computed branch must genuinely cross
+the trace-box boundary at a point admitting an exact strict lower loss level
+above every finite critical value.  The latter comparisons are certified by
+interval signs on the exact critical isolating intervals.  A bounded
+continuation would again have to converge to a finite critical point at an
+impossible level.
+
+These statements certify the finite-plane ends required by the separatrix
+audit.  A stronger claim identifying a particular equilibrium of a chosen
+compactification still requires a validated outward far-field funnel with an
+explicit threshold \(b^\dagger\), transverse contraction, longitudinal drift,
+and preservation of that compactified end.  Asymptotic sign or slope alone is
+not such a finite-arithmetic certificate and is retained only as a residual
+diagnostic.
 
 For reference, when \(\deg B=d_{\rm eff}\),
 
@@ -307,15 +347,17 @@ concern the full flow of a \(C^1\) vector field on a closed manifold; they do
 not directly certify the designated finite-plane separatrix, and SPONG's
 compactification also has degenerate equilibria at infinity.
 
-**Status.**  6.1 follows from Theorem 5 once its level enclosure, component
-inventory, and boundedness hypotheses are validated.  The current code uses
-an exact-upper-level sublevel component as a safe candidate filter and has
-local arrival checks; packaging the complete 6.1 implication as one ledger
-certificate remains work.  Section 6.2 is conditional on an explicit
-far-field funnel certificate, which remains a proof and implementation
-obligation.  Section 6.3 is the intended total contract.  Section 6.4 is a
-conditional classical local model, not a claim that every observed landing
-flip is already a certified simple wall.
+**Status.**  The exact level-tube inventory, shrinking backbone-end funnel,
+and the finite-plane forms of 6.1 and 6.2 are implemented in the topology
+ledger as
+`unstable_ends` and `stable_tails`.  A capture label, box-exit label, or small
+asymptote residual alone can no longer close the topology certificate, nor can
+a portrait that omits either stable branch or either unstable branch of any
+saddle.  Compactification-specific funnel identification remains a separate
+proof and implementation obligation.
+Section 6.3 is the total contract.  Section 6.4 is a conditional classical
+local model, not a claim that every observed landing flip is already a
+certified simple wall.
 
 ---
 

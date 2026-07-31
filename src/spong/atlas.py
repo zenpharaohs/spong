@@ -4,7 +4,8 @@ SPONG_FOUNDING Part II, sections 8 and 8b.  Under the genericity
 conditions (effective degree d_eff = deg g as realized; leading moment
 positive), the leading form of −∇L places the equatorial equilibria at
 the axes and the four diagonals b = ±√d_eff·a; the diagonals are the
-asymptote directions of every separatrix.  The degenerate backbone poles
+asymptote directions of every separatrix.  The degenerate backbone ends at
+infinity
 carry the local model ḃ ≈ −C_inf/b², with C_inf an EXACT rational
 coefficient ratio (the leading term of N cancels — the Wronskian
 cancellation — so deg(B·N) = deg(A²) − 2 and the limit exists).
@@ -59,20 +60,21 @@ def rim_directions(m: Model) -> dict:
 
     Tangential field ∝ a·b^(2d−1)·(d·a² − b²): zeros at the axes and at
     the four diagonals b = ±√d_eff·a.  The diagonals are hyperbolic-type
-    (separatrix asymptotes); the b-poles are degenerate (backbone exit,
+    (separatrix asymptotes); the b-axis ends at infinity are degenerate
+    (backbone exit,
     local model ḃ ≈ −C_inf/b²); the a-axis pair resolves at next order.
     """
     d_eff = effective_degree(m)
     s = float(np.sqrt(d_eff))
     return {
         "diagonal_slopes": (s, -s),        # b/a of the separatrix asymptotes
-        "b_poles_degenerate": True,
+        "backbone_ends_degenerate": True,
         "C_inf": C_inf(m),
     }
 
 
 def C_inf(m: Model) -> Fraction:
-    """EXACT: the backbone-pole constant, ḃ ≈ −C_inf/b² as |b| → ∞.
+    """EXACT: backbone-end constant, ḃ ≈ −C_inf/b² as |b| → ∞.
 
     u' = B·N/A²; the leading coefficient of N cancels identically
     (Wronskian cancellation), so deg(B·N) ≤ deg(A²) − 2 and
@@ -209,7 +211,8 @@ def winding_number_exact_box(m: Model, a_lo: Fraction, a_hi: Fraction,
             pos = r.lo if r.exact else r.mid
             if not (lo < pos < hi):
                 continue
-            # Near the b-poles the zeros of g_a and g_b cluster at scales
+            # Near the compactified b-axis ends the zeros of g_a and g_b
+            # cluster at scales
             # like 1e-15 and below (the degenerate rim structure casting
             # its shadow at finite radius): every probe window must be
             # CERTIFIED by a Sturm count, and sign refinement must be

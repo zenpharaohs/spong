@@ -242,7 +242,8 @@ eigenvalue at large dynamic range.
 
 The branch is *escaping*: it runs to the b-boundary in BOTH commits, so no
 finite box is ever the right answer for it.  It exits along the **degenerate
-b-pole**, not a diagonal — `asymptote_certificate` extrapolates slope 16116
+compactified backbone end**, not a diagonal — `asymptote_certificate`
+extrapolates slope 16116
 against target sqrt(d_eff) = 3.3166 (residual 1.06e+03), which is the
 certificate correctly declining to apply.  `rim_directions` already documents
 this direction: `bdot ~ -C_inf/b^2`, integrable in closed form as
@@ -274,7 +275,8 @@ accuracy problem, and cannot be fixed by more steps.
 **Rule.**  The outward box limit is the radius at which `|grad L|` falls to
 within a chosen digit budget of `g_floor` — a *metrological* bound, computable a
 priori from `C_inf` and the coefficient scales, not a heuristic multiple of the
-view.  Beyond it: attach the closed-form b-pole tail, certify with `C_inf`, and
+view.  Beyond it: attach the closed-form backbone-end tail, certify with
+`C_inf`, and
 integrate nothing.  Two consequences for the code:
 
 1. `_trace_box`'s 1.35x inflation should be replaced by (or intersected with)

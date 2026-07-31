@@ -303,7 +303,8 @@ the leading form of −∇L gives the equatorial tangential field
 - four **diagonal points b = ±√d·a** — hyperbolic-type; these are the
   asymptotic directions of all separatrices (verified: measured slope of the
   d = 11 separatrix converges to −√11 like 1/r over five decades of radius);
-- two **backbone poles** (±b-axis) — degenerate, local model
+- two **compactified backbone ends** (the ±b-axis points at infinity) —
+  degenerate, local model
   ḃ ~ −C_inf/b², b(t) ~ t^{1/3}; the unbounded unstable branches end here;
   these require quasi-homogeneous blow-up and carry asymptotic-series-grade
   (weaker) certificates;
@@ -438,7 +439,7 @@ Every portrait ships with, per object:
 | object | certificates (semantics label per §Certificate semantics) |
 |---|---|
 | critical points | Sturm root count [EXACT]; min/saddle alternation via interval sign of u″ on the isolating intervals [EXACT]; N square-free (Bezoutian) [EXACT]; ψ > 0 (Sturm) [EXACT]; Newton residual vs noise floor [RESIDUAL] |
-| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (E = 0 ⟺ discrete integral curve) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; observed capture/exit or saddle-connection data, including asymptote agreement at the rim [RESIDUAL] |
+| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (E = 0 ⟺ discrete integral curve) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; level-tube inventory or shrinking backbone-funnel signs [EXACT at the measured dyadic point/ray]; local strong-convexity capture ball [RESIDUAL]; observed saddle-connection and asymptote agreement [RESIDUAL] |
 | each level curve | closure gap [RESIDUAL]; L-drift (zero secular by construction; measured residual reported) [RESIDUAL] |
 | the portrait | Poincaré–Hopf index balance on the disk [EXACT under §8 genericity, else VALIDATED with the declared reduction]; Morse certificate [EXACT]; moment-space algebraic-discriminant distance (distance to loss of the certified critical-point inventory, **not** to a global topology change) [EXACT]; separatrix contact/intersection audit and observed attaching map [RESIDUAL] |
 | rendering | max vertex turn ≤ 0.2°; chord sag below pixel at 1000× zoom [RESIDUAL] |
@@ -513,7 +514,7 @@ Phases (each gated by its acceptance tests):
 3. `spong.charts` — gates: tricky branch at E ≤ 10⁻¹²; both separatrices ≤
    10⁻¹¹; seam agreement; fold handoff on the d = 17 zoo without warnings.
 4. `spong.atlas` — gates: √d asymptote convergence; index balance across the
-   random zoo; backbone-pole model matches C_inf analysis.
+   random zoo; backbone-end model matches C_inf analysis.
 5. `spong.portrait` + `spong.render` — gates: full ledger emitted; MATLAB
    parity on the tricky portrait; 1000× zoom inspection windows clean.
 6. `demos/` — SGD/Adam/L-BFGS vs the graph paper; moment-space morphing with
