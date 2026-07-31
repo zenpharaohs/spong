@@ -154,9 +154,11 @@ MINIMAL_QUARTET = ZooCase(
         "0.639595 (low saddle S'), 1.847290 (m2).  At Lambda = 1 (as stored) "
         "the +b branch of the high saddle skips m1 and S', landing at m2 -- "
         "the minimal nonadjacent attachment.  Under the Lambda-rheostat "
-        "(f/sqrt(L), sqrt(L)g) the landing flips at the saddle-connection "
-        "wall Lambda* ~= 7.651823524762; wall coordinates at this precision "
-        "are launch-protocol-sensitive (Theorem 8.4)."
+        "(f/sqrt(L), sqrt(L)g) the landing flips at a wall "
+        "Lambda* ~= 7.651823524762; the wall's saddle-connection type "
+        "(S -> S' rather than rim) is empirical -- hug-scaling evidence, "
+        "Theorem 8.5 -- and wall coordinates at this precision are "
+        "launch-protocol-sensitive (Theorem 8.4)."
     ),
 )
 

@@ -362,29 +362,42 @@ continuation certificate above.
 How small can a Morse instance sitting on a saddle-connection wall be?
 "Small" = number of finite critical points.
 
-**8.1  Floor (PROVED).**  A connection needs two saddles at strictly
-different levels; alternation (Theorem 2) puts a minimum between them, so
-three critical points is the floor.  A Morse 3-critical portrait has exactly
-two types: S m S with both saddles simple B-roots — both at level C, so no
-connection is possible — or S m S with both saddles N-roots and B real-root
-free.  Only the second type is a candidate.  At d_eff = 2 it exists only on
-the deg-N-drop stratum 2α₄β₁ = α₃β₂ (a quartic N has an even number of
-simple real roots); at d_eff ≥ 4 it occupies open parameter sets.
+**8.1  Floor (PROVED; classification corrected after review).**  A
+connection needs two saddles at strictly different levels; alternation
+(Theorem 2) puts a minimum between them, so three critical points is the
+floor.  A Morse 3-critical portrait has THREE types, not two: (i) both
+saddles simple B-roots — both at level C, no connection possible; (ii) both
+saddles N-roots, B real-root free; (iii) MIXED — one simple B-root saddle
+(level C) and one N-saddle, exemplified by the exact uniform01 instance
+f = (−3/16, 3/16, 27/32, 1/2), g = (7/16, 9/32, 13/16, −15/16) (ψ-positive,
+Morse, S_N m S_B at b = −0.1340, 0.7035, 1.5679).  Types (ii) AND (iii) are
+connection candidates.  Parity: at full degree, deg(B·N) = 4d_eff − 2 is
+even, so an odd critical count forces a degree-drop stratum — EVERY
+3-critical portrait lies on one (the earlier claim of open 3-critical sets
+at d_eff ≥ 4 was false; caught in review — Codex).
 
-**8.2  Overflight action bound (PROVED).**  Along any descent orbit,
-|dL/db| = |∇L|²/|ḃ| ≥ |∇L| ≥ 2√(Λ A (L−u)) wherever the motion has a
-b-component.  Hence a branch of level c₁ that passes the longitude of a
-saddle at level c₂ < c₁ (keeping L > c₂, as the vertical block requires)
-must dissipate at least the action integral, giving the necessary condition
+**8.2  Overflight action bound (PROVED; scaling corrected after review).**
+Along any descent orbit, |dL/db| = |∇L|²/|ḃ| ≥ |∇L| ≥ 2√(A(L−u)) wherever
+the motion has a b-component (all quantities of the instance itself).
+Hence a branch of level c₁ that passes the longitude of a saddle at level
+c₂ < c₁ (keeping L > c₂, as the vertical block requires) must dissipate at
+least the action integral, giving the necessary condition
 
-    c₁ − c₂  ≥  2√Λ ∫ √( A(b) · (c₂ − u(b)) ) db
+    c₁ − c₂  ≥  2 ∫ √( A(b) · (c₂ − u(b)) ) db
 
-over the well span {u < c₂} between the saddles.  Corollaries: a
-per-instance quantitative adjacency threshold (the capture half of the
-slaved-regime claim, with no funnel machinery — overflight is impossible
-once √Λ exceeds gap/(2·integral)); and an exact pre-filter for wall hunts.
-The bound is necessary, not sufficient: instances exist satisfying it at
-enormous Λ that still capture (slaving is a separate, dynamical
+over the well span {u < c₂} between the saddles.  Under the Λ-rheostat, in
+baseline quantities A₀, u₀, c₀ this reads
+
+    (c₁,₀ − c₂,₀)/Λ  ≥  2 ∫ √( A₀(b) · (c₂,₀ − u₀(b)) ) db,
+
+so the overflight-forbidding threshold is LINEAR in Λ (an earlier √Λ form
+mixed baseline and rheostat quantities; caught in review — Codex).
+Corollaries: a per-instance quantitative adjacency threshold — the capture
+half of the slaved-regime claim with no funnel machinery — and a pre-filter
+for wall hunts.  Certification grade: the integrand is algebraic but the
+integral is a VALIDATED interval-quadrature object, not an exact Sturm
+computation.  The bound is necessary, not sufficient: instances satisfying
+it comfortably still capture (slaving is a separate, dynamical
 obstruction).
 
 **8.3  Three-critical rigidity (partially proved; conjecture).**  Two cases
@@ -397,15 +410,22 @@ are PROVED, both degree-free:
   distinct orbits through one point.  So both inner branches capture.
 - *Equal-level saddles.*  A branch of level c can neither terminate on nor
   pass an equal-level saddle (vertical block + strict decrease).
-EMPIRICAL: 88/88 scale-sane instances of the d_eff = 2 stratum, both
-branches, Λ swept over [1e-3, 1e2]: the inner branch captures every time;
-the passing fate never occurs.  **Conjecture: every 3-critical ψ-nice Morse
-instance is finite-plane Morse–Smale.**  The evidence is d_eff = 2 only;
-the d_eff ≥ 4 open-stratum 3-critical instances are the falsification
-target and are untested.
+EMPIRICAL: 88/88 scale-sane instances of the d_eff = 2 type-(ii) stratum,
+both branches, Λ swept over [1e-3, 1e2]: the inner branch captures every
+time; the passing fate never occurs.  The type-(iii) mixed stratum is
+essentially untested: the single 8.1 exemplar, dialed over
+Λ ∈ [1e-2, 1e2], also captures throughout, but one instance is not a
+sweep.  **Conjecture: every 3-critical ψ-nice Morse instance is
+finite-plane Morse–Smale.**  The proved cases do not cover type (iii)
+asymmetric instances; a systematic mixed-stratum hunt is the falsification
+target, and the conjectured minimality of four in 8.4 is conditional on
+exactly this.
 
-**8.4  Four-critical wall witness (COMPUTER-ASSISTED).**  Subject to 8.3,
-the minimum is four, and it is realized: zoo `minimal-quartet`
+**8.4  Four-critical landing-flip witness (COMPUTER-ASSISTED).**  Subject
+to 8.3, the minimum is four, and a landing-flip wall is realized there —
+"wall" meaning a parameter at which the branch terminates at no minimum;
+whether its type is the finite connection S → S′ or a rim termination is
+settled only at the 8.5 evidence grade: zoo `minimal-quartet`
 (d_eff = 2, uniform01, B positive definite — no B-saddles; quartic N with
 four simple real roots, S m S m).  Criticals b = −0.6247727737 (S, high,
 Q = 1.914), 0.3185624009 (m₁), 0.6395949203 (S′, low, Q = 14.285),
@@ -439,12 +459,14 @@ wall is the wild-caught representative of that type (9 criticals); the
 designed 5-critical version lives on the same deg-N-drop stratum and is an
 open construction target.
 
-**Summary.**  3 = the combinatorial floor, conjecturally never on a wall;
-4 = the minimal wall (witnessed, type empirical); 5 = the minimal wall with
-exactly forced type.  Runtime consequence: 3-critical portraits may assert
-Morse–Smale after the standard capture tests with the conjecture flagged as
-the authority; a certified violation would be a discovery, and the capture
-audit is exactly what would surface it.
+**Summary.**  3 = the combinatorial floor, conjecturally never on a wall
+(open in particular for the mixed type); 4 = the minimal landing-flip wall
+(witnessed; saddle-connection type EMPIRICAL); 5 = the minimal wall whose
+type is exactly forced.  Runtime consequence: the conjecture authorizes
+nothing — 3-critical portraits certify Morse–Smale exactly as any portrait
+does, by every branch passing a capture or escape test; the conjecture is a
+research flag, and a certified 3-critical wall would refute it (a
+discovery, surfaced by the same audit).
 
 ---
 
