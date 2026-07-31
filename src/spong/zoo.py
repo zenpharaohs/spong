@@ -145,7 +145,7 @@ MINIMAL_QUARTET = ZooCase(
        -1.9874116808556541,
        1.212138011885117),
     moment_dist="uniform01",
-    default_view=(-0.5, 6.5, -1.1, 2.3),
+    default_view=(-1.0, 42.0, -1.1, 2.3),
     expected_connections=((-0.6247727737374041, 1.8472900358594468),),
     description=(
         "Conjecturally minimal wall-capable portrait (theorems.md Theorem 8): "

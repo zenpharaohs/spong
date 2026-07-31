@@ -26,6 +26,9 @@ backward limit other than a saddle — which is exactly what must be excluded.
 (ii) Each stable manifold (both branches plus the saddle) is a properly
 embedded line from infinity to infinity and separates the plane; unstable
 branches of other saddles cannot cross it, by uniqueness of solutions.
+(This infinity-to-infinity form holds only off connection walls: at a
+saddle connection — Theorem 4 — one stable branch terminates in a finite
+saddle instead.)
 (iii) Transverse contraction ẇw ≈ −2Aw² slaves each unstable branch to
 w* = a*′P/(2A), while ḃ = −P moves b monotonically across the interval
 between the saddle and the adjacent minimum, where u′ is single-signed.
@@ -152,17 +155,19 @@ the same evidence grade as the Former-Theorem-1 refutation.  Upgrade path to
 PROVED: validated (interval) enclosures of those two finite orbits; both are
 non-stiff at their Λ and land far from basin boundaries.
 
-**Independent confirmation (degree 3, different mechanism).**  The SPSA +
-signed level-section shooting search (demos/search_saddle_connection.py and
-companions) produced an exact rational affine coefficient segment with
+**Numerical shooting candidate (degree 3, different mechanism).**  The SPSA
++ signed level-section shooting search (demos/search_saddle_connection.py
+and companions) produced an exact rational affine coefficient segment with
 shooting residuals +8.687e-4 at parameter 473/512 and −8.088e-4 at 947/1024,
 secant-refined to mismatch 1.4e-7 at 10299890/11143041
-(out/saddle_connection_degree3_*.json): an N→N pair, source level 0.13824 →
-target level 0.12822, in a 2-saddle/2-minima portrait.  Outstanding
-obligation for that bracket (which the Λ-path gets for free from its frozen
-critical skeleton): certify that the tracked pair's identity — both branches,
-the section, the Morse data — persists across the whole segment, so the
-signed residual is a continuous function of the parameter.
+(out/saddle_connection_degree3_*.json): by exact enumeration a **B→N pair**
+(source a level-C B-saddle, target an N-saddle below) in a 2-saddle/
+2-minima portrait.  This is a candidate, not a confirmation, until (a) the
+endpoint residual signs are validated, (b) the tracked pair's identity —
+both branches, the section, the Morse data — is certified to persist across
+the whole segment so the signed residual is a continuous function of the
+parameter (the Λ-path gets this for free from its frozen critical
+skeleton), and (c) a reproducible artifact is committed.
 
 **Consequences.**
 - The rigidity claim that the ψ-nice Morse family has only algebraic
@@ -182,8 +187,9 @@ signed residual is a continuous function of the parameter.
   behavior.  Near a simple wall the residence time near the blocking saddle
   grows logarithmically in inverse shooting distance; at the wall no finite
   capture test should guess a destination.
-- The Λ-rheostat is a zoo instrument in its own right: an isospectral-in-b
-  stiffness dial for regression cases.
+- The Λ-rheostat is a zoo instrument in its own right: an iso-critical-in-b
+  stiffness dial for regression cases (critical b-values frozen; Hessian
+  spectra vary with Λ).
 
 ---
 
@@ -357,17 +363,24 @@ continuation certificate above.
 
 ---
 
-## Theorem 8 (Minimal wall portraits)
+## Theorem 8 (Minimal wall portraits — a research program)
 
 How small can a Morse instance sitting on a saddle-connection wall be?
-"Small" = number of finite critical points.
+"Small" = number of finite critical points.  Status of the program:
+the floor and the action bound are proved; everything about which small
+portraits actually sit on walls is partial, and stated as such.
+Throughout, Q := C − u = B²/A (so saddles are Q-minima, minima are
+Q-maxima, level comparisons reverse in Q, and the higher-level saddle has
+the SMALLER saddle-Q).
 
 **8.1  Floor (PROVED; classification corrected after review).**  A
 connection needs two saddles at strictly different levels; alternation
 (Theorem 2) puts a minimum between them, so three critical points is the
-floor.  A Morse 3-critical portrait has THREE types, not two: (i) both
-saddles simple B-roots — both at level C, no connection possible; (ii) both
-saddles N-roots, B real-root free; (iii) MIXED — one simple B-root saddle
+floor.  A 3-critical connection CANDIDATE is necessarily S m S (the m S m
+portrait has one saddle and cannot carry a connection), and has three
+source-type patterns: (i) both saddles simple B-roots — both at level C,
+no connection possible; (ii) both saddles N-roots, B real-root free;
+(iii) MIXED — one simple B-root saddle
 (level C) and one N-saddle, exemplified by the exact uniform01 instance
 f = (−3/16, 3/16, 27/32, 1/2), g = (7/16, 9/32, 13/16, −15/16) (ψ-positive,
 Morse, S_N m S_B at b = −0.1340, 0.7035, 1.5679).  Types (ii) AND (iii) are
@@ -377,11 +390,15 @@ even, so an odd critical count forces a degree-drop stratum — EVERY
 at d_eff ≥ 4 was false; caught in review — Codex).
 
 **8.2  Overflight action bound (PROVED; scaling corrected after review).**
-Along any descent orbit, |dL/db| = |∇L|²/|ḃ| ≥ |∇L| ≥ 2√(A(L−u)) wherever
-the motion has a b-component (all quantities of the instance itself).
-Hence a branch of level c₁ that passes the longitude of a saddle at level
-c₂ < c₁ (keeping L > c₂, as the vertical block requires) must dissipate at
-least the action integral, giving the necessary condition
+Along any descent orbit, dL = −|∇L|²dt and |db| = |ḃ|dt ≤ |∇L|dt, so the
+level drop against TOTAL b-VARIATION satisfies |dL| ≥ |∇L|·|db| ≥
+2√(A(L−u))·|db| (all quantities of the instance itself; b(t) need not be
+monotone, so the bound is integrated along the orbit's b-variation, and a
+passing orbit's b-path covers the well span at least once — first
+passage).  Hence a branch of level c₁ that passes the longitude of a
+saddle at level c₂ < c₁ (keeping L > c₂, as the vertical block requires)
+must dissipate at least the action integral, giving the necessary
+condition
 
     c₁ − c₂  ≥  2 ∫ √( A(b) · (c₂ − u(b)) ) db
 
@@ -422,51 +439,75 @@ target, and the conjectured minimality of four in 8.4 is conditional on
 exactly this.
 
 **8.4  Four-critical landing-flip witness (COMPUTER-ASSISTED).**  Subject
-to 8.3, the minimum is four, and a landing-flip wall is realized there —
-"wall" meaning a parameter at which the branch terminates at no minimum;
-whether its type is the finite connection S → S′ or a rim termination is
-settled only at the 8.5 evidence grade: zoo `minimal-quartet`
+to 8.3, the minimum is four, and a landing-fate transition is realized
+there.  Precision about what is shown: the experiment proves the landing
+flips m₂ → m₁ along the dial.  It does NOT prove the transition is a
+single direct wall: a robust rim-escape chamber could in principle occupy
+an interval between the two capture chambers (two walls, either of which
+could be rim-type).  The evidence against that: the final bracket's two
+endpoints, 6e-15 apart, both capture (at m₂ and m₁ respectively), and no
+queried midpoint of the bisection ever escaped — bounding any intervening
+chamber to be narrow or dodging the sample points, not excluding it.
+Instance: zoo `minimal-quartet`
 (d_eff = 2, uniform01, B positive definite — no B-saddles; quartic N with
 four simple real roots, S m S m).  Criticals b = −0.6247727737 (S, high,
 Q = 1.914), 0.3185624009 (m₁), 0.6395949203 (S′, low, Q = 14.285),
 1.8472900359 (m₂); Q_∞ = 8.053.  Under the Λ-rheostat the +b branch of S
 lands at m₂ for Λ below and m₁ for Λ above the wall
 
-    Λ* ≈ 7.651823524762  (fp64-width bracket).
+    Λ* ≈ 7.65182352476  (fp64-width bracket; 12th digit protocol-dependent).
 
-Wall coordinates at this precision are launch-protocol-sensitive
-(re-polishing the saddle coordinates moved an earlier instance's bracket by
-~2e-13 relative): a wall should be cited together with its protocol, or
-certified by a signed shooting residual instead.  At Λ = 1 the stored
+Transition coordinates at this precision are launch-protocol-sensitive
+(re-polishing the saddle coordinates moved an earlier bracket by ~2e-13
+relative, and the committed artifact's own bracket differs from the
+session bracket in the 12th decimal): a transition should be cited
+together with its protocol, or certified by a signed shooting residual
+instead.  The committed artifact demos/minimal_quartet_wall.py reproduces
+the skeleton, the fates, the bracket, and the hug table from the zoo case
+alone.  At Λ = 1 the stored
 instance lands at m₂ outright — skipping m₁ and S′ — so the quartet is also
 the minimal nonadjacent-attachment example (4 criticals against
-`nonnearest-attachment`'s 9).
+`nonnearest-attachment`'s 8).
 
 **8.5  Tube parity; the wall type at four criticals (PROVED / EMPIRICAL).**
-At d_eff = 2 with B root-free, the outermost critical point on each side is
-approached monotonically from a tail at height Q_∞, so Q_∞ exceeds the
-outer saddles' Q values; since the high saddle's Q is below everything in
-its target tube, **the high saddle's target tube is unbounded in every
-4-critical arrangement**.  Consequently the exact confinement argument
-cannot exclude a rim termination at the wall: at Λ* the ω-limit is S′ or
-the rim, and only the observed hug-scaling — closest approach to S′
-falling monotonically (1.3e-1, 5.1e-2, 2.2e-2, 9.5e-3 at bracket offsets
+At d_eff = 2 with B root-free, the tail-adjacent critical points are
+approached monotonically from tails at height Q_∞.  When the tail-adjacent
+critical is a saddle (a Q-minimum), monotone approach forces
+Q_∞ > Q(S_tail); and the high-level saddle has the smaller saddle-Q, so
+Q(S_high) ≤ Q(S_tail) < Q_∞.  In both 4-critical arrangements (S m S m has
+a tail-adjacent saddle on the left, m S m S on the right), the high
+saddle's target tube {Q > Q(S_high)} therefore contains a tail:
+**unbounded in every 4-critical arrangement**.  (Note the inequality runs
+through the tail-adjacent saddle only: Q_∞ can lie below an interior
+saddle's Q, as in the quartet where Q_∞ = 8.053 < Q(S′) = 14.285.)
+Consequently the exact confinement argument cannot exclude a rim
+termination at the transition: the ω-limit there is S′ or the rim, and
+only the observed hug-scaling — closest approach to S′ falling
+monotonically (1.3e-1, 5.1e-2, 2.2e-2, 9.5e-3 at bracket offsets
 1e-4 … 1e-13) — identifies the connection S → S′ (EMPIRICAL grade).  The
-smallest configuration whose wall type is FORCED exactly is five criticals,
-S_B m S_N m S_B: the B-root verticals bound the bubble and Theorem 4's
-confinement argument applies verbatim.  Theorem 4's `nonnearest-attachment`
-wall is the wild-caught representative of that type (9 criticals); the
-designed 5-critical version lives on the same deg-N-drop stratum and is an
-open construction target.
+smallest PROPOSED configuration with an exact type-forcing template is
+five criticals, S_B m S_N m S_B: two B-root verticals bound the bubble and
+Theorem 4's confinement argument would apply verbatim.  That construction
+is itself open (it needs the deg-N-drop stratum with the right interior
+structure), and five is a proof-template minimum, not a proved one: other
+confinement schemes or validated shooting could yet force a 3- or
+4-critical connection.  Theorem 4's `nonnearest-attachment` wall is the
+wild-caught representative of the two-B-barrier type (8 criticals).
 
-**Summary.**  3 = the combinatorial floor, conjecturally never on a wall
-(open in particular for the mixed type); 4 = the minimal landing-flip wall
-(witnessed; saddle-connection type EMPIRICAL); 5 = the minimal wall whose
-type is exactly forced.  Runtime consequence: the conjecture authorizes
-nothing — 3-critical portraits certify Morse–Smale exactly as any portrait
-does, by every branch passing a capture or escape test; the conjecture is a
-research flag, and a certified 3-critical wall would refute it (a
-discovery, surfaced by the same audit).
+**Summary (research-program state).**  3 = the combinatorial floor;
+whether 3-critical walls exist is open (8.3 conjecture, mixed type barely
+tested).  4 = smallest witnessed landing-fate transition; its
+saddle-connection type is EMPIRICAL and an intervening escape chamber is
+not excluded.  5 = smallest proposed template for an exactly-forced wall
+type; the construction is open.  No universal minimality claim is made at
+any of the three levels.  Committed artifact: demos/minimal_quartet_wall.py
+reproduces the quartet skeleton, the landing flip, the bisection bracket,
+and the hug-scaling table; the 8.3 stratum sweep's protocol is NOT yet a
+committed artifact and its 88/88 figure should be treated as session-grade
+until it is.  Runtime consequence: the conjecture authorizes nothing —
+3-critical portraits certify Morse–Smale exactly as any portrait does, by
+every branch passing a capture or escape test; a certified 3-critical wall
+would refute the conjecture (a discovery, surfaced by the same audit).
 
 ---
 
