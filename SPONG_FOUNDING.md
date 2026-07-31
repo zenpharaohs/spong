@@ -62,9 +62,11 @@ mean-field limit of SGD: we deliberately hand the reader the noiseless flow so
 that "it's just SGD noise" is foreclosed as an explanation.  The one-neuron
 net sees the data distribution only through its moments μ₀…μ₂d, so a batch is
 a point in moment space and the portrait is one fiber of a family over moment
-space; the family's bifurcation walls are algebraic (Part II §4) and can be
-certified, not merely observed.  None of this structure is visible to, or
-exploitable by, a generic streamline plotter.
+space.  The walls where the critical-point inventory ceases to be Morse are
+algebraic and can be certified (Part II §4).  The full separatrix
+configuration has additional global handle-slide walls, defined by a shooting
+condition and invisible to the algebraic discriminant.  None of this structure
+is visible to, or exploitable by, a generic streamline plotter.
 
 Descent methods themselves are **not part of spong**.  They appear only in
 `demos/`, as consumers, overlaid on certified portraits.
@@ -243,31 +245,24 @@ Chart selection at a saddle uses the exact eigenvector components (|v₁ −
 a*′v₂| vs |v₂|): the two eigenvectors are orthogonal, so at least one chart is
 well-posed for each manifold at every saddle, including tilted ones.
 
-**Theorem 1 (Adjacency; no saddle-saddle connections in the finite plane).**
-*In the ψ-nice Morse case, every unstable branch of every saddle connects to
-the minimum adjacent on the backbone, on the side selected by the b-component
-of the unstable eigenvector; every stable branch goes to infinity.*
-Proof sketch: (i) A > 0 ⇒ no maxima ⇒ a backward-ascending separatrix has no
-finite critical point to land on; (ii) each stable manifold is a properly
-embedded line from infinity to infinity through its saddle and separates the
-plane; unstable branches cannot cross it (uniqueness of solutions); (iii)
-transverse contraction ẇw ≈ −2Aw² slaves each unstable branch to
-w* = a*′P/(2A) while ḃ = −P moves b monotonically through the interval where
-u′ is single-signed.
-*Status: proof obligation.*  The statement is asserted by the authors with
-the sketch above and is consistent with all computed evidence; a complete
-written proof (notably: stable branches never re-crossing the backbone
-segment between consecutive saddles, and the slaving estimate at moderate κ)
-belongs in `docs/theorems.md` before the claim is cited as EXACT.  Until
-then it is enforced unconditionally as a runtime invariant (below), which is
-sound either way: if the theorem holds, a violation is a numerical defect; if
-a genuine counterexample ever appears, the invariant check is precisely what
-will catch and report it.  Consequences:
-the separatrix skeleton is *rigid* across the ψ-nice Morse family — the only
-bifurcations under moment variation are algebraic (discriminant of N;
-ψ-positivity boundary), so batch-driven topology changes are certifiable in
-closed form; and any computed trace violating adjacency is, *by theorem*, a
-numerical defect — a free invariant check, not a discovery.
+**Former Theorem 1 (adjacency and algebraic rigidity — refuted).**
+Backbone order does not determine planar attachment: a stable separatrix may
+cross the backbone away from a critical point, and an unstable branch may
+therefore terminate at a nonadjacent minimum.  More strongly, ψ-nice Morse
+families admit codimension-one saddle--saddle handle slides.  Along the
+constructed Λ-path, ψ-positivity, the exact Sturm counts, the discriminant
+zero set (and scale-free root-collision margin), and every critical
+b-coordinate remain fixed while the
+Markus--Neumann--Peixoto separatrix invariant changes.  The intervening wall
+is the zero of a global level-section shooting map, not an algebraic
+critical-point discriminant.
+
+What remains rigid inside an algebraic Morse chamber is the critical-point
+inventory: root count, order, and local Morse indices.  The attaching maps are
+not rigid.  Runtime continuation therefore captures against every feasible
+minimum, records the observed attachment, scans all invariant manifolds for
+forbidden contacts, and returns `fp64_unresolved` when the global topology
+cannot be certified.  See `docs/theorems.md`, Theorems 4 and 5.
 
 ### 7. Jet charts at critical points
 
@@ -434,9 +429,9 @@ Every portrait ships with, per object:
 | object | certificates (semantics label per §Certificate semantics) |
 |---|---|
 | critical points | Sturm root count [EXACT]; min/saddle alternation via interval sign of u″ on the isolating intervals [EXACT]; N square-free (Bezoutian) [EXACT]; ψ > 0 (Sturm) [EXACT]; Newton residual vs noise floor [RESIDUAL] |
-| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (E = 0 ⟺ discrete integral curve) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; adjacency invariant (Theorem 1) [RESIDUAL, theorem-backed]; capture/exit data incl. asymptote agreement at the rim [RESIDUAL] |
+| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (E = 0 ⟺ discrete integral curve) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; observed capture/exit or saddle-connection data, including asymptote agreement at the rim [RESIDUAL] |
 | each level curve | closure gap [RESIDUAL]; L-drift (zero secular by construction; measured residual reported) [RESIDUAL] |
-| the portrait | Poincaré–Hopf index balance on the disk [EXACT under §8 genericity, else VALIDATED with the declared reduction]; Morse certificate [EXACT]; moment-space discriminant distance (how close this fiber is to a topology change) [EXACT] |
+| the portrait | Poincaré–Hopf index balance on the disk [EXACT under §8 genericity, else VALIDATED with the declared reduction]; Morse certificate [EXACT]; moment-space algebraic-discriminant distance (distance to loss of the certified critical-point inventory, **not** to a global topology change) [EXACT]; separatrix contact/intersection audit and observed attaching map [RESIDUAL] |
 | rendering | max vertex turn ≤ 0.2°; chord sag below pixel at 1000× zoom [RESIDUAL] |
 
 **Two certificates per branch, because one cannot span it.**  `angle_energy` is
@@ -459,8 +454,9 @@ residuals a skeptic can recompute without trusting the code that drew it.
 
     spong.model      f, g, μ → exact coefficients; A, B, C, a*, u, N and
                      derivatives; the (b, w) chart; closed-form level curves;
-                     Hessian identities; moment-space utilities (discriminant
-                     of N, ψ-positivity boundary)
+                     Hessian identities; moment-space utilities (algebraic
+                     Morse discriminant of N, ψ-positivity boundary; neither
+                     claims global structural stability)
     spong.sturm      chains, counts, isolation, Halley, Bezoutian,
                      positivity, reciprocal far zone   [§4]
     spong.gauss      IMM, IRK4-GL, scalar Newton stages, richardson3,
@@ -477,7 +473,8 @@ residuals a skeptic can recompute without trusting the code that drew it.
                      views, view-box cropping
     demos/           NOT part of the library: SGD / Adam / L-BFGS overlays on
                      certified portraits; batch-morphing across moment space
-                     with certified discriminant walls; the d = 11 "tricky"
+                     with exact algebraic Morse walls and numerically
+                     bracketed global handle-slide walls; the d = 11 "tricky"
                      showcase; gallery/merch renders
 
 Dependencies: NumPy only in the core.  Plotting via matplotlib in

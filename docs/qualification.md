@@ -149,6 +149,14 @@ geometry engine must still certify its own result:
 
 Failure of any test yields `fp64_unresolved`, not a guessed portrait.
 
+The exact Morse/discriminant margins certify only the critical-point
+inventory and its local indices.  They do **not** certify structural stability
+of the global portrait.  A handle slide can change the separatrix attaching
+map while \(A>0\), every critical point remains fixed and nondegenerate, and
+all Sturm/discriminant measurements remain unchanged.  Consequently no
+calibration may use distance from the algebraic Morse discriminant as a
+substitute for the intersection scan and topology audit.
+
 ## Calibration experiment
 
 Thresholds are fixed only after an exploratory pilot, then frozen before the
