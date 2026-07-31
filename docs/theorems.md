@@ -345,6 +345,110 @@ bookkeeping, not local ambiguity.
 
 ---
 
+## Theorem 7 (Base chamber, slide moves, portrait-by-continuation)
+
+**The connection graph as a mutation system.**  Vertices: critical points
+plus rim terminals; each saddle emits exactly two arcs (unstable branches),
+one per side (7.2).  The backbone, with its edges adjoined, is a Hamiltonian
+path through the finite vertices with alternating types (Theorem 2).  The
+content of this entry: that augmented path is not scaffolding — it is the
+realized flow graph of a canonical chamber, and every instance's graph is a
+finite word of elementary moves applied to it.
+
+**7.1  Slaved base chamber.**  There is a computable Λ₀ = Λ₀(f, g, μ) such
+that for Λ ≥ Λ₀ (rheostat of Theorem 4) every unstable branch of every
+saddle terminates at its backbone-adjacent minimum on its departure side,
+except branches whose side-tube is empty, which escape to the rim
+(Theorem 6 iii-empty).  Equivalently: at Λ ≥ Λ₀ the flow graph IS the
+backbone path plus its rim edges.  *Status: proof obligation, funnel grade.*
+The crux identities for the proof are:
+
+    slow manifold      w*(b) = a*′u′ / (2ΛA·(1 + a*′²))
+    drift on it        P|_{w=w*} = u′ / (1 + a*′²)  + O(1/Λ)
+
+so inside a funnel |w| ≤ (1+ε)|w*| the sign of P equals the sign of u′ and
+b descends monotonically to the adjacent minimum.  Lemma list for a
+self-contained proof: (L1) transverse contraction ẇw < 0 outside the
+funnel, with the (1+a*′²) correction, on the compact tube; (L2) funnel
+entry: the unstable eigenvector tilts to backbone-tangent as Λ → ∞, so the
+jet chart launches inside the funnel for Λ large; (L3) no re-exit: the
+funnel is forward-invariant down to the minimum's jet chart.  All constants
+are per-instance computable suprema over the tube (VALIDATED), so Λ₀ ships
+as a certificate, not an asymptotic.
+
+**7.2  Side separation.**  The two branches of a saddle at level c enter
+distinct tubes: u(b_s) = c separates {u < c} locally, and W^s(s) separates
+the two local components of {L < c}.  Out-degree is exactly two, one arc
+per side, at every Morse instance.  *Status: PROVED (elementary, Theorem 2
++ Theorem 5 objects).*
+
+**7.3  Slide move.**  Along a real-analytic one-parameter family of ψ-nice
+Morse instances crossing a single simple wall — one connection s → s″ at
+the crossing, every other branch robustly resolved — the graph changes by
+exactly one move: terminal(affected arc of s) switches to the current
+terminal of s″'s far branch; all other edges are locally constant.
+Deletions never occur bare: a backbone edge s–m disappears only by sliding
+past a blocking saddle, paired with the insertion of the adopted chord.
+*Status: proof obligation (λ-lemma refinement of Theorem 6's binary
+unfolding; the two-sidedness is Theorem 6, the "adopted terminal" claim is
+the shadowing of s″'s far branch).*
+
+**7.4  Finite word; continuation validity.**  On the dial segment
+Λ ∈ [1, Λ₀]: each (branch, candidate blocking saddle) pair has a shooting
+residual real-analytic in Λ (polynomial field, analytic parameter
+dependence).  If no residual vanishes identically, walls on the segment are
+isolated, hence finitely many, and
+
+    graph(instance) = (backbone path) · (word of slide moves crossed).
+
+An identically vanishing residual is a persistent-connection family —
+non-generic, detectable, and removed by jittering the dial direction (a
+small fixed (f, g) perturbation within the Morse cell composed with the
+rheostat).  Different generic paths give different words with the same
+endpoint graph; the word is path data, the chamber is the invariant.
+*Status: proof obligation (analyticity is classical; the genericity clause
+is the codimension count).*
+
+**The computable invariant.**  The graph alone is not a function of the
+algebraic data (Theorem 4).  The pair
+
+    (base graph [algebraic, 7.1], word [finitely many certified wall
+    events along a chosen path, 7.3–7.4])
+
+IS computable, and its endpoint is path-independent.  Every chamber's graph
+is bipartite under the type coloring; the non-bipartite configurations are
+exactly the walls (arc endpoint on a saddle).  Morse–Smale certification =
+chamber membership = the continuation terminating off-wall.
+
+**Runtime: portrait-by-continuation mode.**  (1) Certify Λ₀ and assert the
+base graph — no tracing; this is the stiff regime where the Hadamard graph
+transform contracts at rate 1/κ, i.e. the base chamber is certified by the
+instrument's strongest chart.  (2) Descend Λ on a mesh, re-running only the
+exact capture/escape tests of Theorem 6 per branch.  (3) On a landing flip,
+bisect the wall (the Theorem 4 detector), record the event — branch,
+blocking saddle, Λ-bracket, two-sided signed residuals (the transition
+datum in Reineck's sense) — and apply the slide to the diagram.  (4) At
+Λ = 1, verify: direct capture tests must reproduce the word's predicted
+graph; mismatch means a missed wall — refine the mesh.  A flip-and-return
+pair hidden between mesh points cannot corrupt the endpoint graph (the
+verification pass is independent); it only shortens the recorded word.
+(5) Byproducts: every event is a zoo-grade wall instance; the word is a new
+ledger object naming the chamber; `fp64_unresolved` is reserved for
+instances indistinguishable from a wall at Λ = 1 itself.  Wall bisections
+run at moderate Λ where the deep-water Gauss charts are comfortable: the
+continuation uses each existing chart exactly where it is strongest.
+
+**Computed example (nonnearest-attachment).**  At Λ = 256 the realized
+graph is exactly the backbone path plus the left rim edge:
+(−1.518 → rim, −1.184), (−0.477 → −1.184, −0.0158),
+(0.640 → −0.0158, 0.9668), (1.416 → 0.9668, 7.419).  At Λ = 1 the graph
+differs by ONE edge: the right arc of S(−0.477) ends at 0.9668 instead of
+−0.0158 — the single slide past S′(0.640), adopting S′'s far-branch
+terminal, crossed at Λ* = 2.177709563954844 (Theorem 4).  The instance's
+"question of which edges are deleted" has the answer: one word, one letter.
+
+---
+
 ## A-posteriori topology certificate
 
 The portraitist audits every polyline self-contact and every pairwise contact
