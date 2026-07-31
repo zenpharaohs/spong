@@ -569,10 +569,11 @@ def enumerate_critical_points(m: Model) -> Enumeration:
         elaborated.append(replace(p, b=local.b, a=local.a, local=local))
     pts = elaborated
 
-    # Alternation invariant (Theorem 2, corrected): the 1D Morse
-    # alternation is a statement about u — the SIGNS of u'' alternate
-    # along b.  L-types follow u at N-roots; B-roots are always 2D
-    # saddles, so consecutive L-saddles can legitimately occur.  EXACT.
+    # Alternation invariant (Theorem 2): the signs of u'' alternate along
+    # the complete ordered critical set of the one-dimensional Morse
+    # function u.  Planar L-types have the same signs.  B-roots are always
+    # saddles, so their finite critical neighbors, when present, are minima.
+    # EXACT.
     signs = [p.u2_sign for p in pts if p.kind != "degenerate"]
     alternates = all(signs[i] * signs[i + 1] < 0
                      for i in range(len(signs) - 1))

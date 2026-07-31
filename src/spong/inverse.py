@@ -425,7 +425,10 @@ def stiffness_ladder(radii, gpoly, mu, deg_f: int | None = None, **kw):
 # machine, which is what correlates with the seam.
 
 def branch_span(m: model.Model):
-    """(saddle, nearest target minimum) for the first traceable branch, or None."""
+    """Nearest-minimum stress probe for the first traceable branch, or None.
+
+    The chosen minimum sizes a handoff test; it is not a predicted terminal.
+    """
     e = sturm.enumerate_critical_points(m)
     if not e.saddles or not e.minima:
         return None

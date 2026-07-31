@@ -40,14 +40,15 @@ preassigns a destination.
 **Superseded by Theorem 4:** not only can the landing minimum be nonadjacent —
 the weaker belief that every unstable branch terminates in *some* minimum is
 also false family-wide.  Saddle–saddle connections exist in the ψ-nice Morse
-family, on codimension-one walls (Theorem 4); Theorem 5 records what survives.
+family; simple connections are generically codimension-one walls (Theorem 4).
+Theorem 5 records what survives.
 
 ---
 
 ## Theorem 2 (Backbone reduction — proved)
 
-**Statement (corrected 2026-07-02, simplified same day).**  All critical
-points of L lie on the backbone a = B/A, at roots of B·N (u′ = B·N/A²;
+**Statement (corrected 2026-07-31).**  All critical points of L lie on the
+backbone a = B/A, at roots of B·N (u′ = B·N/A²;
 N = α′β − 2β′α).  The identities
 
     H₁₂ = −2A·a*′,   H₂₂ = 2A·a*′² + u″,   det H = 2A·u″
@@ -58,20 +59,20 @@ Hence classification is uniformly one-dimensional: u″ > 0 ⇔ minimum,
 u″ < 0 ⇔ saddle.  At a simple B-root, N(b₀) = −2B′A, so
 u″ = B′N/A² = −2B′²/A < 0 automatically: **every simple B-root is a
 saddle**, with det H = 2A·u″ = −4B′² — the SAME identity, not an
-exception to it.  The SIGNS of u″ alternate along b (1D Morse on u);
-consecutive L-saddles occur wherever a B-root falls.  In reduced form
+exception to it.  Because \(u\) is a one-dimensional Morse function, the
+signs of \(u''\), and hence the planar types, alternate along the complete
+ordered critical set.  In particular a simple B-root is a saddle whose
+neighboring finite critical points, when present, are minima.  In reduced form
 \(B^2/A=P/D\), write \(u'=H/D^2\) with \(H=PD'-P'D\).  Then \(L\) is
 Morse iff \(H\) and \(H'\) have no common **real** root.  Squarefree,
 coprime \(B,N\) give a cheaper sufficient factorization, but are not
 necessary: a common complex factor does not make a real critical point
 degenerate.
 
-**Status: PROVED.**  History: the original min/saddle-alternation
-phrasing was FALSE (caught by the Poincaré–Hopf index certificate); the
-first correction wrongly claimed det H = 2A·u″ fails at B-roots (caught
-in external review — Codex — by direct algebra: the identity is
-universal).  Strip-localized exact winding confirms index −1 at every
-B-root.
+**Status: PROVED.**  The universal Hessian identity gives index −1 at
+every simple B-root, while ordinary one-dimensional alternation applies to
+the full reduced numerator of \(u'\).  Earlier text confused alternation of
+the complete critical set with classification of the N-root subset alone.
 
 ---
 
@@ -98,20 +99,22 @@ has a heteroclinic saddle–saddle connection.  For a planar gradient flow with
 hyperbolic finite critical points and the compactified ends separately
 controlled, a saddle–saddle connection is the remaining finite-plane
 Morse–Smale obstruction (the connection is automatically non-transverse).
-The family realizes this gap: connections occur on codimension-one walls in
-instance space (Kupka–Smale: generic instances have none, which is why random
-sampling never exhibits one).
+The family realizes this gap.  A simple connection is generically a
+codimension-one shooting wall; the construction below proves existence but
+does not, by itself, prove simplicity or uniqueness of the wall it crosses.
 
 **The Λ-rheostat.**  (f, g, μ) → (f/√Λ, √Λ·g, μ) realizes (A, B) → (ΛA, B)
 inside the full SPONG instance family (β_j picks up √Λ from g and 1/√Λ from
 f; C → C/Λ is invisible to ∇L).  Since N → ΛN, every critical b-value is
 Λ-independent; Morse-ness, ψ-niceness, Sturm counts, squarefreeness, and the
-discriminant zero/nonzero status are frozen while κ ∝ Λ² sweeps from the wild
-regime to the slaved regime.  A scale-free root-collision margin is likewise
-unchanged.  (The raw discriminant value is not: for \(n=\deg N\),
+discriminant zero/nonzero status are frozen while \(\kappa\) grows
+asymptotically like Λ² from the wild regime to the slaved regime.  A
+scale-free root-collision margin is likewise unchanged.  (The raw
+discriminant value is not: for \(n=\deg N\),
 \(\operatorname{disc}(\Lambda N)=\Lambda^{2n-2}\operatorname{disc}(N)\).)
-Thus the path moves the global separatrix data without moving the
-zero-dimensional Morse skeleton.
+Thus the path moves the global separatrix data while preserving the ordered
+critical b-inventory and its local indices.  The critical a-coordinates and
+critical values do scale with Λ.
 
 **Construction (on zoo `nonnearest-attachment`, uniform01 moments).**  Track
 the +b unstable branch of the B-root saddle S at b = −0.4770682827686173
@@ -134,7 +137,7 @@ for Λ ∈ {4, 8, 16, 64, 256}.  The connection is forced at the flip:
    leaving only S′.  At Λ* the branch IS a heteroclinic S → S′
    (B-saddle, level C_Λ → N-saddle, level below C_Λ).
 
-**Measured wall.**  Λ* = 2.177709563954844; Radau (rtol 1e-12) and DOP853
+**Measured wall.**  Λ* ≈ 2.177709563954844; Radau (rtol 1e-12) and DOP853
 (rtol 1e-13) agree on the far/near classification down to |ΔΛ/Λ*| = 1e-12,
 and disagree only in the last two ulps, consistent with integrator truncation
 error dominating there.  The two fp64 neighbours of Λ* pass within ~1e-12 of
@@ -163,8 +166,9 @@ signed residual is a continuous function of the parameter.
 
 **Consequences.**
 - The rigidity claim that the ψ-nice Morse family has only algebraic
-  bifurcations is FALSE: along the Λ-path every algebraic certificate is
-  constant, yet the Markus–Neumann–Peixoto invariant changes at Λ*.
+  bifurcations is FALSE: along the Λ-path the listed algebraic Morse data and
+  the scale-free collision margin are constant, yet the separatrix attaching
+  map changes at Λ*.
   Connection walls are global shooting walls; algebraic Morse-discriminant
   distance does NOT certify structural stability of the current vector
   field, and the demos/README "walls are algebraic" remark applies only to
@@ -173,279 +177,183 @@ signed residual is a continuous function of the parameter.
   does not by itself prove that a fixed-\((f,g)\), moment-only path crosses a
   handle-slide wall.  That narrower batch-moment claim requires its own
   transverse shooting bracket.
-- The runtime posture above (capture against every minimum, record observed
-  connections, escalate to fp64_unresolved) is the correct behavior; capture
-  times diverge logarithmically at a wall, so `fp64_unresolved` is the honest
-  verdict exactly there.
+- The runtime posture above (capture against every feasible minimum, record
+  observed connections, escalate to `fp64_unresolved`) is the correct
+  behavior.  Near a simple wall the residence time near the blocking saddle
+  grows logarithmically in inverse shooting distance; at the wall no finite
+  capture test should guess a destination.
 - The Λ-rheostat is a zoo instrument in its own right: an isospectral-in-b
   stiffness dial for regression cases.
 
 ---
 
-## Theorem 5 (Level-C structure and downward confinement — proved)
+## Theorem 5 (Sublevel tubes and bounded branch fates — proved)
 
-Elementary consequences of L = C − 2aB + a²A with A > 0; proofs inline.
+Elementary consequences of
 
-**5.1  {L = C} = {a = 0} ∪ {a = 2B/A}.**  L − C = a(aA − 2B).  In particular
-the a-axis is a level curve, every B-root saddle sits on it at level exactly
-C, and — since a connection strictly decreases L — **no B-saddle can connect
-to a B-saddle.**
+    L(a,b) = u(b) + A(b)(a-a*(b))²,       A(b) > 0.
 
-**5.2  Vertical block.**  L(a, b₀) = u(b₀) + A(b₀)w² ≥ u(b₀) for every a: an
-orbit whose current level is below u(b₀) can never cross the vertical line
-b = b₀.  Applied at B-roots (u = C): the open regions between consecutive
-B-roots are bounded, forward-invariant "bubbles"; nothing below level C
-crosses a pinch.  Applied at any saddle: a branch cannot pass over a saddle
-at or above its current level.
+**5.1  Level C.**  Since \(L-C=a(aA-2B)\),
 
-**5.3  Downward confinement.**  An unstable branch of a saddle at level c
-stays in its connected component of {L < c} (level strictly decreases; 5.2
-bounds the component's b-extent when u exceeds c outside a compact interval,
-and A > 0 then bounds a), so its ω-limit is a critical point of THAT
-component: **a minimum, or a strictly lower saddle in the same component.**
+    {L=C} = {a=0} ∪ {a=2B/A}.
 
-**5.4  Safe components.**  If the component contains no lower saddle — in
-particular the single-interior-saddle bubble, and any N-saddle whose
-component of {L < c} contains only minima — the branch terminates at a
-minimum of that component.  This is the correct salvage of Former Theorem 1.
+Every simple B-root saddle has level C.  Strict loss decrease therefore
+rules out a connection from one B-saddle to another B-saddle.
 
-**Status: PROVED** (the statements are three-line algebra/topology over
-Theorem 2's identities; 5.3's compactness hypothesis — u > c outside a
-compact b-interval — is u > c ⟺ B² − (C−c)·A < 0).  For a B-root source,
-\(c=C\) is rational over dyadic inputs and the condition is an ordinary exact
-Sturm check.  For an N-root source, \(c=u(b_s)\) is generally an algebraic
-number, not a rational one; an exact implementation must evaluate polynomial
-signs in the isolated real-algebraic extension generated by \(b_s\).
+**5.2  Vertical barrier.**  For every \(b_0\),
 
-**Runtime use.**  5.2–5.4 justify capture-target pruning: the capture set for
-a branch from level c is the critical points of its {L < c} component.  This
-is immediately exact with the current rational Sturm machinery for B-root
-sources.  Claiming the same exact pre-trace pruning for a general N-root
-source is conditional on adding the algebraic-number sign evaluation just
-described.  A certified capture outside the resulting set is a numerical
-defect; a component with no admissible minimum-only conclusion flags a
-potential connection instance for escalation.
+    L(a,b_0) ≥ u(b_0).
 
----
+An orbit at level below \(u(b_0)\) cannot cross the vertical line \(b=b_0\).
+In particular, level-C branches cannot cross another B-root vertical after
+leaving their source.
 
-## Theorem 6 (Branch-fate trichotomy; walls, unfoldings, shadowing)
+**5.3  Tube confinement.**  The components of \(\{L<c\}\) correspond exactly
+to the interval components of \(\{u<c\}\); over such an interval the fiber is
 
-**Setup.**  {L < c} fibers over {u < c} ⊂ ℝ with vertical intervals of
-half-width √((c−u)/A), so its connected components ("tubes") correspond to
-the interval components of {u < c}.  An unstable branch of a saddle at level
-c enters, and remains forever in, the tube on its departure side.  All entry
-data of a tube is coefficient-level: its b-extent, its critical inventory
-(roots of B·N inside), whether it is unbounded (compare c with
-u_∞ = C − β_d²/α_{2d} when deg B = d_eff; u_∞ = C on a degree drop), and the
-tail sign of u′, which for b → +∞ is the sign of the leading coefficient of
-B·N.  For N-root sources these comparisons live in the real-algebraic layer
-of Theorem 5's status note; for B-root sources (c = C) they are rational.
+    |a-a*(b)| < sqrt((c-u(b))/A(b)).
 
-**Statement.**  Each unstable branch has exactly one of three fates, decided
-by its tube:
+An unstable branch from a level-c saddle enters one of its two departure
+tubes and remains there for all forward time.
 
-(i) *Bounded tube.*  The branch terminates at a critical point of the tube —
-a minimum, or a strictly lower saddle (Theorem 5.3).
+**5.4  Bounded fate.**  If that branch is bounded, the Łojasiewicz theorem
+for polynomial gradient flows gives a single critical-point omega limit.
+It is either a minimum or a saddle of strictly lower loss in the same tube.
+If the tube contains exactly one minimum and no lower saddle, the bounded
+branch terminates at that minimum.
 
-(ii) *Unbounded tube, inward tail* (u′ > 0 eventually on the unbounded end;
-u climbs to u_∞ from below).  The branch still terminates at a finite
-critical point of the tube (which necessarily contains a minimum: u leaves
-level c, dips, and returns toward u_∞ ≤ c from below).  Far out the tube
-pinches onto the backbone like b^(−d_eff) while the transverse rate 2A grows
-like b^(2·d_eff), so beyond a computable b† every orbit in the tube is
-slaved to the scalar dynamics ḃ = −u′ < 0 and is pushed back inward;
-boundedness follows, then Łojasiewicz.
+**Status: PROVED.**  The theorem deliberately makes no finite-termination
+claim for an unbounded tube.  For a B-root source \(c=C\), tube endpoints and
+critical inventory are accessible to the current rational Sturm machinery.
+For a general N-root source, the level \(c=u(b_s)\) is algebraic; exact
+pre-trace tube classification requires sign evaluation in the
+real-algebraic extension
+generated by the isolated root \(b_s\).
 
-(iii) *Unbounded tube, outward tail* (u′ < 0 eventually; u decreases to u_∞
-from above).  Two sub-cases:
-  - *Empty side*: if the tube contains no critical points, escape to the
-    backbone pole is FORCED — the ω-limit would need a critical point in the
-    tube's closure at level < c; there is none, and an equal-level boundary
-    saddle is unreachable because L strictly decreases from c.
-  - *Occupied side*: if the tube contains critical points, its outermost
-    critical point on the unbounded end is necessarily a saddle S″ (the last
-    interior extremum of u before a decreasing tail is a maximum).  BOTH
-    capture and escape occur in the family — large-Λ slaving captures at the
-    adjacent minimum; nothing blocks an overflight that passes the b_{S″}
-    vertical at level above u(S″), misses W^s(S″), and rides the empty
-    sub-tube out.  The capture/escape wall is a saddle connection to S″.
-    The fate is decided by no algebraic function of the entry data
-    (Theorem 4's frozen-skeleton argument applies verbatim) — only
-    a-posteriori, by the termination tests below.
-
-**Corollary (degree drop).**  If deg B < d_eff then u_∞ = C, every N-saddle
-tube is bounded, every B-saddle outer tube has an inward tail, and every
-unstable branch of every saddle terminates at a finite critical point: no
-unbounded unstable branches exist at all.  Conversely "extreme saddle" does
-NOT imply escape: an extreme saddle with an inward tail (case ii) is
-captured.  Backbone position was never the controlling invariant; the tube
-and its tail sign are.
-
-**Status.**  (i) PROVED (Theorem 5.3).  (ii) and (iii-empty) PROVED modulo
-the **far-field funnel lemma** — existence of a computable b† beyond which
-the tube is a certified contraction funnel onto the slow graph with
-sign(ḃ) = −sign(u′): the same two-zone machinery as the Hadamard slow graph
-plus the §8 leading form; explicit constants are a proof obligation.
-(iii-occupied) the dichotomy is proved modulo the same lemma; an interior
-saddle with an escaping branch has not yet been exhibited — expected via the
-Λ-rheostat overflight protocol (run Λ down from the slaved regime on a
-case-(iii) geometry and watch the landing flip from adjacent minimum to
-funnel exit).
-
-**Exact termination tests (the engine contract).**  Proximity to a minimum
-is a scheduling heuristic, never a certificate.  The certificates are:
-- *Capture test*: with ℓ a validated enclosure of L at the current point, if
-  the current point's component of {u < ℓ} contains no saddle, it contains
-  exactly one minimum and capture there is forced (Łojasiewicz leaves no
-  alternative).  One rigorous evaluation plus root data — no basin geometry,
-  and no trust in the trace history.
-- *Escape test*: certified entry into the far-field funnel (b beyond b†,
-  outward tail sign verified) — the unstable-side analogue of the stable
-  exits' superlevel-end certificate.
-- *Neither fires*: the diagnostic is the level gap ℓ − u(S″) to the
-  outermost (or nearest blocking) saddle of the tube; gap → 0 is the
-  connection signature, and `fp64_unresolved` is the honest verdict.
-Portrait computation is therefore harder than assumed — branch fates are not
-algebraically pre-assignable — but remains tractable: off the walls both
-tests fire in finite time with cost growing like log(1/gap), and the wall
-set itself is measure zero.
-
-**Walls, structural stability, and shadowing.**  A wall instance is Morse
-but not finite-plane Morse–Smale, hence not structurally stable.  By the
-Lipschitz-shadowing/structural-stability equivalences
-(Pilyugin–Tikhomirov type), quantitative shadowing fails there: near a wall,
-a pseudo-orbit with small per-step residual may be shadowed by NO true orbit
-— in particular a traced polyline can drift across W^s(S″), which no true
-orbit does.  Consequence for the ledger: single-trace residual certificates
-(angle-energy, reversal gap) certify pseudo-orbit quality but lose their
-orbit-existence force exactly near walls.  Admissible evidence there is
-two-sided: shooting brackets with opposite signed residuals, and the
-threshold tests above, which certify the true orbit's fate from an enclosure
-rather than from the trace.  This is why the capture test is stated as a
-sublevel-component test and not as "the trace got close".
-
-**Local unfolding at a simple wall (enumeration of adjacent skeletons).**
-At an instance with exactly one saddle connection S → S″, every other branch
-robustly resolved: the connection breaks to one side of W^s(S″) or the
-other, after which the S-branch shadows one of S″'s two unstable branches to
-that branch's (locally constant) destination.  The adjacent Morse–Smale
-classes are therefore exactly TWO, computable from the wall data alone:
-terminal(S-branch) ∈ {terminal(S″ branch⁺), terminal(S″ branch⁻)}.  The wall
-configuration is itself a legitimate Markus–Neumann–Peixoto class
-(separatrix configurations encompass connections), so the certified
-deliverable near a wall is the ordered triple (left class, wall class, right
-class) plus the bracket.  No combinatorial explosion occurs at simple walls.
-The explosion lives elsewhere: codimension-k strata (k simultaneous
-connections, or cascades S → S′ → S″) have up to 2^k adjacent classes, and
-the chamber count of the shooting stratification over a single Morse cell
-can grow with the number of saddles.  But a generic one-parameter path meets
-only simple walls, every chamber transition is a certified-detectable wall
-crossing, and enumeration is on-demand per wall — the burden is global
-bookkeeping, not local ambiguity.
+**5.5  Degree-drop corollary.**  If \(\deg B<d_{\rm eff}\), then
+\(u(b)\to C\) at both ends.  A B-root branch has loss below \(C\) immediately
+after departure; an N-root saddle has source level below \(C\).  At any later
+point choose a strict upper level \(\ell<C\).  The relevant component of
+\(\{u<\ell\}\) is bounded, so every unstable branch is bounded and has a
+finite critical-point limit.  Thus degree-drop models have no unbounded
+unstable branches; this conclusion needs no far-field funnel lemma.
 
 ---
 
-## Theorem 7 (Base chamber, slide moves, portrait-by-continuation)
+## Theorem 6 (Certified branch decisions)
 
-**The connection graph as a mutation system.**  Vertices: critical points
-plus rim terminals; each saddle emits exactly two arcs (unstable branches),
-one per side (7.2).  The backbone, with its edges adjoined, is a Hamiltonian
-path through the finite vertices with alternating types (Theorem 2).  The
-content of this entry: that augmented path is not scaffolding — it is the
-realized flow graph of a canonical chamber, and every instance's graph is a
-finite word of elementary moves applied to it.
+The tube is exact prior information, but it does not in general decide the
+branch fate.  The intended total engine contract has two positive
+certificates and otherwise returns unresolved.
 
-**7.1  Slaved base chamber.**  There is a computable Λ₀ = Λ₀(f, g, μ) such
-that for Λ ≥ Λ₀ (rheostat of Theorem 4) every unstable branch of every
-saddle terminates at its backbone-adjacent minimum on its departure side,
-except branches whose side-tube is empty, which escape to the rim
-(Theorem 6 iii-empty).  Equivalently: at Λ ≥ Λ₀ the flow graph IS the
-backbone path plus its rim edges.  *Status: proof obligation, funnel grade.*
-The crux identities for the proof are:
+**6.1  Capture certificate.**  Let \(\ell_{\rm hi}\) be a validated strict
+upper bound for the loss at a point on the branch, and let \(I\) be the
+component of \(\{u<\ell_{\rm hi}\}\) containing its b-coordinate.  Capture
+at a minimum \(m\) is certified when:
 
-    slow manifold      w*(b) = a*′u′ / (2ΛA·(1 + a*′²))
-    drift on it        P|_{w=w*} = u′ / (1 + a*′²)  + O(1/Λ)
+1. \(I\) contains \(m\), no other minimum, and no saddle;
+2. the corresponding sublevel tube is bounded, or validated inward
+   far-field funnels exclude every unbounded end.
 
-so inside a funnel |w| ≤ (1+ε)|w*| the sign of P equals the sign of u′ and
-b descends monotonically to the adjacent minimum.  Lemma list for a
-self-contained proof: (L1) transverse contraction ẇw < 0 outside the
-funnel, with the (1+a*′²) correction, on the compact tube; (L2) funnel
-entry: the unstable eigenvector tilts to backbone-tangent as Λ → ∞, so the
-jet chart launches inside the funnel for Λ large; (L3) no re-exit: the
-funnel is forward-invariant down to the minimum's jet chart.  All constants
-are per-instance computable suprema over the tube (VALIDATED), so Λ₀ ships
-as a certificate, not an asymptotic.
+Future loss is below \(\ell_{\rm hi}\), so the true orbit cannot leave that
+tube; Theorem 5.4 then forces convergence to \(m\).  Nearness to \(m\) is
+useful for scheduling but is not itself a certificate.
 
-**7.2  Side separation.**  The two branches of a saddle at level c enter
-distinct tubes: u(b_s) = c separates {u < c} locally, and W^s(s) separates
-the two local components of {L < c}.  Out-degree is exactly two, one arc
-per side, at every Morse instance.  *Status: PROVED (elementary, Theorem 2
-+ Theorem 5 objects).*
+**6.2  Escape certificate.**  Escape is certified only after the branch
+enters a validated forward-invariant outward far-field funnel with a named
+compactified terminal.  The required funnel lemma must provide an explicit
+threshold \(b^\dagger\), transverse contraction, the sign of the longitudinal
+drift, and preservation of the selected end.  Asymptotic sign alone is not a
+finite-arithmetic certificate.
 
-**7.3  Slide move.**  Along a real-analytic one-parameter family of ψ-nice
-Morse instances crossing a single simple wall — one connection s → s″ at
-the crossing, every other branch robustly resolved — the graph changes by
-exactly one move: terminal(affected arc of s) switches to the current
-terminal of s″'s far branch; all other edges are locally constant.
-Deletions never occur bare: a backbone edge s–m disappears only by sliding
-past a blocking saddle, paired with the insertion of the adopted chord.
-*Status: proof obligation (λ-lemma refinement of Theorem 6's binary
-unfolding; the two-sidedness is Theorem 6, the "adopted terminal" claim is
-the shadowing of s″'s far branch).*
+For reference, when \(\deg B=d_{\rm eff}\),
 
-**7.4  Finite word; continuation validity.**  On the dial segment
-Λ ∈ [1, Λ₀]: each (branch, candidate blocking saddle) pair has a shooting
-residual real-analytic in Λ (polynomial field, analytic parameter
-dependence).  If no residual vanishes identically, walls on the segment are
-isolated, hence finitely many, and
+    u_∞ = C - β_d²/α_{2d},
 
-    graph(instance) = (backbone path) · (word of slide moves crossed).
+and on a degree drop \(u_\infty=C\).  These values and the eventual sign of
+\(u'\) nominate inward and outward ends; they do not replace the funnel
+proof.
 
-An identically vanishing residual is a persistent-connection family —
-non-generic, detectable, and removed by jittering the dial direction (a
-small fixed (f, g) perturbation within the Morse cell composed with the
-rheostat).  Different generic paths give different words with the same
-endpoint graph; the word is path data, the chamber is the invariant.
-*Status: proof obligation (analyticity is classical; the genericity clause
-is the codimension count).*
+**6.3  Unresolved case.**  If neither certificate fires, the engine continues
+within its budget and then returns `fp64_unresolved`.  Possible causes include
+insufficient arithmetic, an uncertified far field, or approach to the stable
+manifold of a lower saddle.  Theorem 4 shows that the last possibility is
+real: tube inventory and the algebraic Morse skeleton do not determine the
+attaching map.
 
-**The computable invariant.**  The graph alone is not a function of the
-algebraic data (Theorem 4).  The pair
+**6.4  Simple handle slide (conditional local model).**  Suppose a
+one-parameter family crosses transversely a wall with exactly one connection
+\(S\to S'\), and every other branch and compactified end is robustly
+resolved.  Standard invariant-manifold dependence then gives two local
+chambers.  On the two sides, the affected branch from S follows the two sides
+of \(W^s(S')\) and subsequently has the respective fates of the two unstable
+branches of \(S'\).  This is the local handle-slide model.  The hypotheses
+— especially transversality and uniqueness of the connection — must be
+validated for any claimed wall certificate.
 
-    (base graph [algebraic, 7.1], word [finitely many certified wall
-    events along a chosen path, 7.3–7.4])
+**Numerical consequence.**  A small residual proves that a polyline is a
+good pseudo-orbit; it does not prove on which side of a stable separatrix the
+true branch lies.  Endpoint fate therefore comes only from 6.1 or 6.2;
+otherwise it remains unresolved.  A two-sided signed shooting bracket is
+separate evidence for a wall between parameter instances.  No global
+shadowing theorem is invoked.  The usual Lipschitz-shadowing equivalences
+concern the full flow of a \(C^1\) vector field on a closed manifold; they do
+not directly certify the designated finite-plane separatrix, and SPONG's
+compactification also has degenerate equilibria at infinity.
 
-IS computable, and its endpoint is path-independent.  Every chamber's graph
-is bipartite under the type coloring; the non-bipartite configurations are
-exactly the walls (arc endpoint on a saddle).  Morse–Smale certification =
-chamber membership = the continuation terminating off-wall.
+**Status.**  6.1 follows from Theorem 5 once its level enclosure, component
+inventory, and boundedness hypotheses are validated.  The current code uses
+an exact-upper-level sublevel component as a safe candidate filter and has
+local arrival checks; packaging the complete 6.1 implication as one ledger
+certificate remains work.  Section 6.2 is conditional on an explicit
+far-field funnel certificate, which remains a proof and implementation
+obligation.  Section 6.3 is the intended total contract.  Section 6.4 is a
+conditional classical local model, not a claim that every observed landing
+flip is already a certified simple wall.
 
-**Runtime: portrait-by-continuation mode.**  (1) Certify Λ₀ and assert the
-base graph — no tracing; this is the stiff regime where the Hadamard graph
-transform contracts at rate 1/κ, i.e. the base chamber is certified by the
-instrument's strongest chart.  (2) Descend Λ on a mesh, re-running only the
-exact capture/escape tests of Theorem 6 per branch.  (3) On a landing flip,
-bisect the wall (the Theorem 4 detector), record the event — branch,
-blocking saddle, Λ-bracket, two-sided signed residuals (the transition
-datum in Reineck's sense) — and apply the slide to the diagram.  (4) At
-Λ = 1, verify: direct capture tests must reproduce the word's predicted
-graph; mismatch means a missed wall — refine the mesh.  A flip-and-return
-pair hidden between mesh points cannot corrupt the endpoint graph (the
-verification pass is independent); it only shortens the recorded word.
-(5) Byproducts: every event is a zoo-grade wall instance; the word is a new
-ledger object naming the chamber; `fp64_unresolved` is reserved for
-instances indistinguishable from a wall at Λ = 1 itself.  Wall bisections
-run at moderate Λ where the deep-water Gauss charts are comfortable: the
-continuation uses each existing chart exactly where it is strongest.
+---
 
-**Computed example (nonnearest-attachment).**  At Λ = 256 the realized
-graph is exactly the backbone path plus the left rim edge:
-(−1.518 → rim, −1.184), (−0.477 → −1.184, −0.0158),
-(0.640 → −0.0158, 0.9668), (1.416 → 0.9668, 7.419).  At Λ = 1 the graph
-differs by ONE edge: the right arc of S(−0.477) ends at 0.9668 instead of
-−0.0158 — the single slide past S′(0.640), adopting S′'s far-branch
-terminal, crossed at Λ* = 2.177709563954844 (Theorem 4).  The instance's
-"question of which edges are deleted" has the answer: one word, one letter.
+## Continuation program (not a theorem)
+
+The Λ-rheostat is useful for experiments because it freezes all critical
+b-values while changing the global separatrices.  A future continuation
+mode may start in a validated strongly slaved regime and record signed
+handle-slide crossings while returning to Λ=1.  Three obligations precede
+such a mode:
+
+1. certify a finite slaving threshold Λ₀ and its base attaching map;
+2. cover each tracked branch/section by charts on which its shooting
+   residual is continuous (analytic where the section crossing is
+   transverse);
+3. use interval subdivision or another exclusion argument to rule out
+   flip-and-return wall pairs between mesh points.  Endpoint agreement alone
+   certifies the endpoint graph, not the complete wall word.
+
+The slow-graph balance must be written in transformed quantities.  If
+
+    A_Λ=ΛA₀,       a*_Λ=a*₀/Λ,       u_Λ=u₀/Λ,
+
+then to leading order
+
+    w*_Λ = a*_Λ′ u_Λ′ /
+            (2 A_Λ (1+a*_Λ′²))
+          = a*₀′ u₀′ /
+            (2 Λ³ A₀ (1+a*₀′²/Λ²)),
+
+and
+
+    P_Λ|w* = u_Λ′/(1+a*_Λ′²) + higher-order terms.
+
+These formulas motivate a base chamber but do not certify one.
+
+**Computed evidence.**  In `nonnearest-attachment`, the graph at Λ=1 and
+the graph at Λ=256 differ in the right branch of the saddle near
+b=−0.477.  Conditional on the endpoint landing evidence, Theorem 4's
+computer-assisted argument forces at least one saddle connection between
+the two landing regimes.  The measured crossing near
+Λ≈2.177709563954844 is strong evidence for a single simple slide.  A claim
+that it is the only slide on the entire dial segment requires the exhaustive
+continuation certificate above.
 
 ---
 

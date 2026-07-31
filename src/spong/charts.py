@@ -986,7 +986,7 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     """Walk the trajectory through chart pieces.
 
     flow: +1 descent (unstable branches), -1 ascent (separatrices).
-    targets: list of (a, b) capture points (adjacent minima) or [].
+    targets: list of candidate (a, b) minimum capture points or [].
     Returns (points, term_reason, n_switches, (b, w) final state).
 
     Dispatcher contract, third handoff: on DESCENT, if the sounding rises
@@ -1444,7 +1444,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                    critical_local=None, critical_stub=None,
                    capture_targets=None, arrival_local=None,
                    candidate_minima=None, candidate_enumeration=None) -> Branch:
-    """Unstable branch: saddle → adjacent minimum (or box exit).
+    """Candidate-directed unstable continuation to capture, exit, or failure.
 
     Zone loop per the dispatcher contract: whenever the sounding says
     shallow water and the trajectory is slaved, the Hadamard fixed point

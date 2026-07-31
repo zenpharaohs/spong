@@ -133,7 +133,7 @@ def main(argv=None):
         "Certified SPONG",
         reference_name,
         "Exact Morse skeleton, conditioned manifold stubs, implicit Gauss "
-        "continuation, and a-posteriori topology audit.",
+        "continuation, and a-posteriori separatrix audit.",
         reference_zoom))
 
     records = []

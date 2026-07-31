@@ -132,16 +132,17 @@ Consequences (all load-bearing):
 - **Classification is one-dimensional**: u″(b*) > 0 ⇒ minimum, < 0 ⇒ saddle;
   no other types exist (A > 0 ⇒ no maxima).  At a simple B-root,
   N = −2B′A there, so u″ = −2B′²/A < 0 automatically: **every B-root is a
-  saddle** (det H = 2A·u″ = −4B′², the same universal identity).  L is
-  Reduce \(B^2/A=P/D\) and write \(u'=H/D^2\), where
+  saddle** (det H = 2A·u″ = −4B′², the same universal identity).  Reduce
+  \(B^2/A=P/D\) and write \(u'=H/D^2\), where
   \(H=PD'-P'D\).  Then \(L\) is Morse iff \(H\) and \(H'\) have no
   common **real** root.  Squarefree, coprime \(B,N\) are the fast generic
   factorized case, not a necessary condition: common complex factors can
   cancel without affecting the real phase portrait.
-- **Alternation**: the SIGNS of u″ alternate along b (1D Morse on u);
-  L-types follow u″ everywhere, and since B-roots force u″ < 0,
-  consecutive L-saddles occur legitimately.  Branch targeting therefore
-  aims at the nearest MINIMUM per side, not the nearest critical point.
+- **Alternation**: the signs of u″ alternate along the complete ordered
+  critical set (ordinary one-dimensional Morse alternation), and L-types
+  follow u″ everywhere.  Since every simple B-root is a saddle, its finite
+  critical neighbors, when present, are minima.  Earlier text incorrectly
+  mixed the N-root subset with the complete critical set.
 - **Eigenvectors**: exactly backbone-normal/-tangent only in the stiff limit
   u″/2A → 0; the first-order tilt is a*′u″/(2A(1+a*′²)).  Launch directions
   therefore always come from the exact eigenvector, never the limit formula.
@@ -249,11 +250,12 @@ well-posed for each manifold at every saddle, including tilted ones.
 Backbone order does not determine planar attachment: a stable separatrix may
 cross the backbone away from a critical point, and an unstable branch may
 therefore terminate at a nonadjacent minimum.  More strongly, ψ-nice Morse
-families admit codimension-one saddle--saddle handle slides.  Along the
+families admit saddle--saddle handle slides; a simple slide is generically
+codimension one.  Along the
 constructed Λ-path, ψ-positivity, the exact Sturm counts, the discriminant
 zero set (and scale-free root-collision margin), and every critical
-b-coordinate remain fixed while the
-Markus--Neumann--Peixoto separatrix invariant changes.  The intervening wall
+b-coordinate remain fixed while the separatrix attaching map changes.  The
+intervening wall
 is the zero of a global level-section shooting map, not an algebraic
 critical-point discriminant.
 
@@ -261,8 +263,8 @@ What remains rigid inside an algebraic Morse chamber is the critical-point
 inventory: root count, order, and local Morse indices.  The attaching maps are
 not rigid.  Runtime continuation therefore captures against every feasible
 minimum, records the observed attachment, scans all invariant manifolds for
-forbidden contacts, and returns `fp64_unresolved` when the global topology
-cannot be certified.  See `docs/theorems.md`, Theorems 4 and 5.
+forbidden contacts, and returns `fp64_unresolved` when the separatrix skeleton
+cannot be certified.  See `docs/theorems.md`, Theorems 4–6.
 
 ### 7. Jet charts at critical points
 
@@ -307,14 +309,20 @@ the leading form of −∇L gives the equatorial tangential field
   (weaker) certificates;
 - two a-axis points, degenerate at leading order, resolved at next order.
 
-**Markus–Neumann–Peixoto**: for a planar flow with finitely many
-separatrices, the separatrix configuration on the disk is a complete
-topological invariant.  spong's claim "the global phase portrait of the
-plane" means exactly: *the certified separatrix configuration on the
-compactified disk*, with every separatrix running jet-chart to jet-chart
-(finite or equatorial).  Global cross-check: **Poincaré–Hopf index balance**
-on the disk — if the certified finite equilibria and equatorial equilibria
-don't balance, something was missed and the instrument says so.
+**Completed separatrix configuration.**  The commonly quoted
+Markus–Neumann theorem requires the corrected formulation: separatrices plus
+the canonical-region data (equivalently, suitable representative orbits),
+under its stated surface-flow hypotheses; see
+[Espín Buendía–Jiménez López (2018)](https://doi.org/10.1016/j.jde.2018.07.021).
+The present certified deliverable
+is the compactified separatrix skeleton with its endpoint and contact audit.
+Calling that skeleton a complete topological classification additionally
+requires the corrected theorem's canonical-region/representative-orbit data,
+or a proof that SPONG's gradient setting makes those data redundant.  That is
+an explicit obligation, not an assumed reduction to a bare connection graph.
+Global cross-check: **Poincaré–Hopf index balance** on the disk — if the
+certified finite equilibria and equatorial equilibria do not balance,
+something was missed and the instrument says so.
 
 ### 8b. The box contract
 
@@ -330,12 +338,13 @@ conflated, so the API contract is explicit:
 - **legal maximum compute box** — set by the rim analysis: outside it the
   far-field/asymptote chart owns the dynamics and box-style tracing is
   neither needed nor permitted.  User view boxes are clipped to it.
-- **branch policy** — bounded unstable branches are computed in full
-  (saddle → adjacent minimum, wherever those lie); unbounded unstable and
-  all stable branches are computed to compute-box exit, their exit point and
-  tangent certified against the far-field asymptote (§8), then clipped to
-  the view box for display.  Curves are clipped, never truncated mid-chart:
-  every drawn arc is a window onto a fully certified object.
+- **branch policy** — unstable branches are continued until a certified
+  finite capture, a certified far-field exit, or the resolution budget is
+  exhausted.  A branch may terminate at a nonadjacent minimum or, on a wall,
+  at a lower saddle.  Stable branches are continued to a certified
+  superlevel end.  Curves are clipped to the view box only after their
+  computed terminal status is recorded; unresolved branches remain
+  explicitly unresolved.
 
 ### 9. Level curves
 

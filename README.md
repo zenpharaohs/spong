@@ -40,8 +40,8 @@ constant), the asymptote certificate, EXACT Poincaré–Hopf index balance
 over box subdivisions), genericity/degree-drop handling, and the §8b box
 contract.  `spong.portrait` + `spong.render` (Phase 5): full assembly with
 the certificate ledger (every branch ships its angle-energy, seam, turn,
-adjacency, and asymptote residuals; the enumeration ships its EXACT
-certificates; the portrait ships its index balance), and pure-stdlib SVG
+termination/attachment, and asymptote residuals; the enumeration ships its
+EXACT certificates; the portrait ships its index balance), and pure-stdlib SVG
 rendering — spong's own closed-form contour layer (no fcontour, no
 marching squares), house palette, plane and Poincaré-disk views.  First
 portraits: [docs/gallery/](docs/gallery/).

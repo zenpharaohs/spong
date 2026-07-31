@@ -144,7 +144,7 @@ geometry engine must still certify its own result:
 - all local charts and dense-output handoffs certify;
 - all invariant branches terminate in a certified endpoint or end regime;
 - the intersection scan finds no forbidden crossing or unresolved contact;
-- the index balance and topology audit are complete; and
+- the index balance and separatrix endpoint/contact audit are complete; and
 - all work and event budgets remain within the declared qualification policy.
 
 Failure of any test yields `fp64_unresolved`, not a guessed portrait.
@@ -155,7 +155,7 @@ of the global portrait.  A handle slide can change the separatrix attaching
 map while \(A>0\), every critical point remains fixed and nondegenerate, and
 all Sturm/discriminant measurements remain unchanged.  Consequently no
 calibration may use distance from the algebraic Morse discriminant as a
-substitute for the intersection scan and topology audit.
+substitute for the intersection scan and separatrix audit.
 
 ## Calibration experiment
 
