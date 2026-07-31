@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from itertools import combinations
 
 import numpy as np
 
@@ -52,8 +53,10 @@ from ._poly import Poly
 # exact linear algebra over Q                                           #
 # --------------------------------------------------------------------- #
 
-def null_space(rows: list[list[Fraction]], ncols: int) -> list[list[Fraction]]:
-    """Exact basis for the null space of the matrix with the given rows."""
+def _null_space_with_free(
+        rows: list[list[Fraction]],
+        ncols: int) -> tuple[list[list[Fraction]], list[int]]:
+    """Exact null-space basis and its RREF free columns."""
     mat = [list(r) for r in rows]
     pivots: list[int] = []
     r = 0
@@ -81,7 +84,98 @@ def null_space(rows: list[list[Fraction]], ncols: int) -> list[list[Fraction]]:
         for i, pc in enumerate(pivots):
             v[pc] = -mat[i][fc]
         basis.append(v)
-    return basis
+    return basis, free
+
+
+def null_space(rows: list[list[Fraction]], ncols: int) -> list[list[Fraction]]:
+    """Exact basis for the null space of the matrix with the given rows."""
+    return _null_space_with_free(rows, ncols)[0]
+
+
+def _exact_square_solve(matrix, rhs):
+    """Small exact solve with row pivoting; no normal equations."""
+    n = len(rhs)
+    a = [list(row) + [value] for row, value in zip(matrix, rhs)]
+    for col in range(n):
+        pivot = next((i for i in range(col, n) if a[i][col]), None)
+        if pivot is None:
+            return None
+        a[col], a[pivot] = a[pivot], a[col]
+        inv = Fraction(1) / a[col][col]
+        a[col] = [x*inv for x in a[col]]
+        for i in range(n):
+            if i == col or not a[i][col]:
+                continue
+            factor = a[i][col]
+            a[i] = [x-factor*y for x, y in zip(a[i], a[col])]
+    return [a[i][-1] for i in range(n)]
+
+
+def _scaled_float_solve(matrix, rhs):
+    """Row-scaled partial-pivot solve used only to choose exact columns."""
+    a = [[float(x) for x in row] for row in matrix]
+    b = [float(x) for x in rhs]
+    n = len(b)
+    scale = [max(map(abs, row), default=0.0) for row in a]
+    if any(not (s > 0.0 and np.isfinite(s)) for s in scale):
+        return None
+    for col in range(n):
+        pivot = max(
+            range(col, n), key=lambda i: abs(a[i][col])/scale[i])
+        if abs(a[pivot][col]) <= 1e-13*scale[pivot]:
+            return None
+        a[col], a[pivot] = a[pivot], a[col]
+        b[col], b[pivot] = b[pivot], b[col]
+        scale[col], scale[pivot] = scale[pivot], scale[col]
+        for i in range(col+1, n):
+            factor = a[i][col]/a[col][col]
+            for j in range(col+1, n):
+                a[i][j] -= factor*a[col][j]
+            b[i] -= factor*b[col]
+    x = [0.0]*n
+    for i in range(n-1, -1, -1):
+        x[i] = (b[i]-sum(a[i][j]*x[j] for j in range(i+1, n))) \
+            / a[i][i]
+    return x if all(np.isfinite(v) for v in x) else None
+
+
+def _near_reference_candidate(rows, reference):
+    """Best sparse exact correction among all square column selections.
+
+    With m constraints in n coefficients, keep n-m reference coordinates
+    exactly fixed.  Screen every m-column correction by the same row-scaled
+    pivoting used by the numerical kernels, then solve the winning system
+    exactly over Q.  This avoids both normal equations and an arbitrary RREF
+    graph, whose nominally free coordinates can be catastrophically scaled.
+    """
+    ncols = len(reference)
+    nrows = len(rows)
+    residual = [
+        -sum((row[j]*reference[j] for j in range(ncols)), Fraction(0))
+        for row in rows]
+    if not any(residual):
+        return list(reference)
+    best = None
+    for columns in combinations(range(ncols), nrows):
+        square = [[row[j] for j in columns] for row in rows]
+        trial = _scaled_float_solve(square, residual)
+        if trial is None:
+            continue
+        score = sum(v*v for v in trial)
+        peak = max(map(abs, trial), default=0.0)
+        key = (score, peak, columns)
+        if best is None or key < best[0]:
+            best = (key, columns, square)
+    if best is None:
+        raise ValueError("no nonsingular reference correction columns")
+    _, columns, square = best
+    correction = _exact_square_solve(square, residual)
+    if correction is None:
+        raise ArithmeticError("selected reference correction became singular")
+    candidate = list(reference)
+    for j, value in zip(columns, correction):
+        candidate[j] += value
+    return candidate
 
 
 # --------------------------------------------------------------------- #
@@ -104,10 +198,18 @@ def _condition_row(kind: str, b: Fraction, gpoly: Poly, mu, deg_f: int,
     for j in range(dg + 1):
         if kind == "B":
             wj = b ** j
-        else:
+        elif kind == "N":
             term = P.eval_at(Ap, b) * (b ** j)
             if j > 0:
                 term -= Fraction(2 * j) * P.eval_at(A, b) * (b ** (j - 1))
+            wj = term
+        else:  # N': derivative of A' b^j - 2j A b^(j-1)
+            term = P.eval_at(P.deriv(Ap), b) * (b ** j)
+            if j > 0:
+                term -= Fraction(j) * P.eval_at(Ap, b) * (b ** (j - 1))
+            if j > 1:
+                term -= Fraction(2*j*(j-1)) * P.eval_at(A, b) \
+                    * (b ** (j - 2))
             wj = term
         weight.append(gpoly[j] * wj)
     return [sum((weight[j] * mu[i + j] for j in range(dg + 1)), Fraction(0))
@@ -124,24 +226,34 @@ class Design:
 
 
 def design(prescribed, gpoly, mu, deg_f: int | None = None,
-           families=None, combo=None) -> Design:
+           families=None, combo=None, reference=None) -> Design:
     """Build a model whose critical set contains `prescribed`.
 
     `gpoly` and `mu` are fixed by the caller (they determine A); `f` is solved
     for.  `families[k]` selects whether prescribed[k] is imposed as a root of
     "N" (default, the larger family) or of "B".
 
+    ``"N'"`` imposes a derivative condition; pairing ``"N"`` and ``"N'"`` at
+    the same point prescribes an exact saddle-node wall.
+
     `deg_f` defaults to one more than the number of conditions, the smallest
     degree guaranteeing a nonzero solution.  `combo` selects which null vector
     to return when the solution space has dimension > 1 (default: the sum of
     the basis, which avoids the sparse axis-aligned degenerate cases).
+    `reference` instead keeps all but one coefficient per constraint fixed.
+    It screens the possible square correction systems with row-scaled partial
+    pivoting, then solves the smallest correction exactly.  This perturbs an
+    existing design into the constraint space without normal equations or the
+    generic basis sum's coefficient swell.
     """
     pres = tuple(P.as_fraction(b) for b in prescribed)
     fams = tuple(families) if families is not None else ("N",) * len(pres)
     if len(fams) != len(pres):
         raise ValueError("families must match prescribed in length")
-    if any(k not in ("N", "B") for k in fams):
-        raise ValueError("family must be 'N' or 'B'")
+    if any(k not in ("N", "N'", "B") for k in fams):
+        raise ValueError("family must be 'N', \"N'\", or 'B'")
+    if combo is not None and reference is not None:
+        raise ValueError("combo and reference are mutually exclusive")
 
     g = P.poly(gpoly)
     if not g:
@@ -179,7 +291,7 @@ def design(prescribed, gpoly, mu, deg_f: int | None = None,
 
     rows = [_condition_row(k, b, g, mu, deg_f, A, Ap)
             for b, k in zip(pres, fams)]
-    basis = null_space(rows, deg_f + 1)
+    basis, _ = _null_space_with_free(rows, deg_f + 1)
     if not basis:
         raise ValueError(
             f"no nonzero f satisfies {len(pres)} conditions at deg_f={deg_f}; "
@@ -190,7 +302,13 @@ def design(prescribed, gpoly, mu, deg_f: int | None = None,
         return tuple(g[j] * sum((fv[i] * mu[i + j] for i in range(deg_f + 1)),
                                 Fraction(0)) for j in range(dg + 1))
 
-    if combo is not None:
+    if reference is not None:
+        ref = tuple(P.as_fraction(x) for x in reference)
+        if len(ref) > deg_f + 1:
+            raise ValueError("reference degree exceeds deg_f")
+        ref = ref + (Fraction(0),) * (deg_f + 1-len(ref))
+        cands = [_near_reference_candidate(rows, ref)]
+    elif combo is not None:
         cands = [[sum((Fraction(w) * v[i] for w, v in zip(combo, basis)),
                       Fraction(0)) for i in range(deg_f + 1)]]
     else:

@@ -49,6 +49,28 @@ def test_multiple_points_simultaneously(mu):
     assert set(r.realised) == set(pts) and r.missing == ()
 
 
+def test_repeated_N_constraint_prescribes_exact_saddle_node_wall(mu):
+    r = F(-3)
+    d = inverse.design(
+        [r, r], G, mu, deg_f=5, families=["N", "N'"])
+    assert P.eval_at(d.model.N, r) == 0
+    assert P.eval_at(P.deriv(d.model.N), r) == 0
+
+
+def test_reference_recovers_existing_nullspace_representative(mu):
+    target = F(2)
+    original = inverse.design([target], G, mu, deg_f=5)
+    recovered = inverse.design(
+        [target], G, mu, deg_f=5, reference=original.f)
+    assert recovered.f == original.f
+
+
+def test_reference_and_combo_are_mutually_exclusive(mu):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        inverse.design(
+            [F(2)], G, mu, deg_f=5, combo=[1], reference=[1])
+
+
 def test_prescription_is_capped_by_the_degree_of_g(mu):
     """Every condition is a functional on B, which has only deg(g)+1
     coefficients; deg(g)+1 of them force B == 0, satisfying the prescription

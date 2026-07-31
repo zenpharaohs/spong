@@ -110,6 +110,7 @@ def compute(m: Model, view=None,
                     critical_local=s.local,
                     critical_stub=_stable_stub(s, sign, m))
                 br.diag["saddle_b"] = s.b
+                br.diag["stable_sign"] = sign
                 if br.term == "box_exit" and len(br.Y) > 50:
                     br.certs["asymptote"] = atlas.asymptote_certificate(
                         m, br.Y)
@@ -149,6 +150,7 @@ def compute(m: Model, view=None,
                 candidate_enumeration=e,
                 capture_targets=[(q.a, q.b) for q in same_side])
             br.diag["saddle_b"] = s.b
+            br.diag["unstable_direction"] = direction
             br.diag["sublevel_candidate_b"] = [
                 float(q.b) for q in same_side]
             br.diag["sublevel_unique"] = direct is not None
@@ -200,6 +202,7 @@ def compute(m: Model, view=None,
                 br.diag["target"] = None
                 br.certs["connection_ok"] = br.term == "box_exit"
             br.diag["saddle_b"] = s.b
+            br.diag["unstable_direction"] = direction
             branches.append(br)
 
     p = Portrait(m, e, branches, box,

@@ -30,6 +30,15 @@ So *both* root families are linear conditions on `f`, and a prescription is a
 **single homogeneous linear system `M f = 0`**, solved exactly over ℚ.  One
 stage, not two.
 
+The derivative condition `N'(r)=0` is linear in `f` as well.  Prescribing
+`families=["N", "N'"]` at the same rational `r` therefore constructs an exact
+saddle-node wall.  When redesigning an existing model, `reference=f0` keeps
+all but one coefficient per constraint fixed.  Every square correction-column
+set is screened with row-scaled partial pivoting, the smallest correction is
+then solved exactly over Q.  This avoids normal equations and the large
+rational coefficient growth of either an arbitrary basis sum or an
+ill-conditioned RREF graph.
+
 **Exactness.**  `model.Model` accepts `Fraction` coefficients, so a prescribed
 `b` is an *exact* root — `P.eval_at(m.N, b) == 0` on the nose, and the Sturm
 enumeration finds it exactly rather than nearby.
