@@ -136,8 +136,34 @@ NONNEAREST_ATTACHMENT = ZooCase(
 )
 
 
+MINIMAL_QUARTET = ZooCase(
+    name="minimal-quartet",
+    f=(48.45917507921044,
+       -256.81856167890794,
+       246.60346150619446),
+    g=(0.3263637061220092,
+       -1.9874116808556541,
+       1.212138011885117),
+    moment_dist="uniform01",
+    default_view=(-0.5, 6.5, -1.1, 2.3),
+    expected_connections=((-0.6247727737374041, 1.8472900358594468),),
+    description=(
+        "Conjecturally minimal wall-capable portrait (theorems.md Theorem 8): "
+        "four critical points S m S m at degree 2, B positive definite so no "
+        "B-saddles.  Criticals b = -0.624773 (high saddle), 0.318562 (m1), "
+        "0.639595 (low saddle S'), 1.847290 (m2).  At Lambda = 1 (as stored) "
+        "the +b branch of the high saddle skips m1 and S', landing at m2 -- "
+        "the minimal nonadjacent attachment.  Under the Lambda-rheostat "
+        "(f/sqrt(L), sqrt(L)g) the landing flips at the saddle-connection "
+        "wall Lambda* ~= 7.651823524762; wall coordinates at this precision "
+        "are launch-protocol-sensitive (Theorem 8.4)."
+    ),
+)
+
+
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
+    MINIMAL_QUARTET.name: MINIMAL_QUARTET,
     TRICKY_D11.name: TRICKY_D11,
     LINEAR_TARGET_D17_THRASH.name: LINEAR_TARGET_D17_THRASH,
     NONNEAREST_ATTACHMENT.name: NONNEAREST_ATTACHMENT,

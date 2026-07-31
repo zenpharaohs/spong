@@ -357,6 +357,97 @@ continuation certificate above.
 
 ---
 
+## Theorem 8 (Minimal wall portraits)
+
+How small can a Morse instance sitting on a saddle-connection wall be?
+"Small" = number of finite critical points.
+
+**8.1  Floor (PROVED).**  A connection needs two saddles at strictly
+different levels; alternation (Theorem 2) puts a minimum between them, so
+three critical points is the floor.  A Morse 3-critical portrait has exactly
+two types: S m S with both saddles simple B-roots — both at level C, so no
+connection is possible — or S m S with both saddles N-roots and B real-root
+free.  Only the second type is a candidate.  At d_eff = 2 it exists only on
+the deg-N-drop stratum 2α₄β₁ = α₃β₂ (a quartic N has an even number of
+simple real roots); at d_eff ≥ 4 it occupies open parameter sets.
+
+**8.2  Overflight action bound (PROVED).**  Along any descent orbit,
+|dL/db| = |∇L|²/|ḃ| ≥ |∇L| ≥ 2√(Λ A (L−u)) wherever the motion has a
+b-component.  Hence a branch of level c₁ that passes the longitude of a
+saddle at level c₂ < c₁ (keeping L > c₂, as the vertical block requires)
+must dissipate at least the action integral, giving the necessary condition
+
+    c₁ − c₂  ≥  2√Λ ∫ √( A(b) · (c₂ − u(b)) ) db
+
+over the well span {u < c₂} between the saddles.  Corollaries: a
+per-instance quantitative adjacency threshold (the capture half of the
+slaved-regime claim, with no funnel machinery — overflight is impossible
+once √Λ exceeds gap/(2·integral)); and an exact pre-filter for wall hunts.
+The bound is necessary, not sufficient: instances exist satisfying it at
+enormous Λ that still capture (slaving is a separate, dynamical
+obstruction).
+
+**8.3  Three-critical rigidity (partially proved; conjecture).**  Two cases
+are PROVED, both degree-free:
+- *Mirror-symmetric instances always capture.*  On the d_eff = 2 drop
+  stratum, if A is even about b_c = −α₃/(4α₄) then B is automatically even
+  about the same center; the reflection is flow-equivariant, an escaping
+  inner branch must cross the center longitude, and its mirror image — the
+  other saddle's inner branch — would pass through the same point: two
+  distinct orbits through one point.  So both inner branches capture.
+- *Equal-level saddles.*  A branch of level c can neither terminate on nor
+  pass an equal-level saddle (vertical block + strict decrease).
+EMPIRICAL: 88/88 scale-sane instances of the d_eff = 2 stratum, both
+branches, Λ swept over [1e-3, 1e2]: the inner branch captures every time;
+the passing fate never occurs.  **Conjecture: every 3-critical ψ-nice Morse
+instance is finite-plane Morse–Smale.**  The evidence is d_eff = 2 only;
+the d_eff ≥ 4 open-stratum 3-critical instances are the falsification
+target and are untested.
+
+**8.4  Four-critical wall witness (COMPUTER-ASSISTED).**  Subject to 8.3,
+the minimum is four, and it is realized: zoo `minimal-quartet`
+(d_eff = 2, uniform01, B positive definite — no B-saddles; quartic N with
+four simple real roots, S m S m).  Criticals b = −0.6247727737 (S, high,
+Q = 1.914), 0.3185624009 (m₁), 0.6395949203 (S′, low, Q = 14.285),
+1.8472900359 (m₂); Q_∞ = 8.053.  Under the Λ-rheostat the +b branch of S
+lands at m₂ for Λ below and m₁ for Λ above the wall
+
+    Λ* ≈ 7.651823524762  (fp64-width bracket).
+
+Wall coordinates at this precision are launch-protocol-sensitive
+(re-polishing the saddle coordinates moved an earlier instance's bracket by
+~2e-13 relative): a wall should be cited together with its protocol, or
+certified by a signed shooting residual instead.  At Λ = 1 the stored
+instance lands at m₂ outright — skipping m₁ and S′ — so the quartet is also
+the minimal nonadjacent-attachment example (4 criticals against
+`nonnearest-attachment`'s 9).
+
+**8.5  Tube parity; the wall type at four criticals (PROVED / EMPIRICAL).**
+At d_eff = 2 with B root-free, the outermost critical point on each side is
+approached monotonically from a tail at height Q_∞, so Q_∞ exceeds the
+outer saddles' Q values; since the high saddle's Q is below everything in
+its target tube, **the high saddle's target tube is unbounded in every
+4-critical arrangement**.  Consequently the exact confinement argument
+cannot exclude a rim termination at the wall: at Λ* the ω-limit is S′ or
+the rim, and only the observed hug-scaling — closest approach to S′
+falling monotonically (1.3e-1, 5.1e-2, 2.2e-2, 9.5e-3 at bracket offsets
+1e-4 … 1e-13) — identifies the connection S → S′ (EMPIRICAL grade).  The
+smallest configuration whose wall type is FORCED exactly is five criticals,
+S_B m S_N m S_B: the B-root verticals bound the bubble and Theorem 4's
+confinement argument applies verbatim.  Theorem 4's `nonnearest-attachment`
+wall is the wild-caught representative of that type (9 criticals); the
+designed 5-critical version lives on the same deg-N-drop stratum and is an
+open construction target.
+
+**Summary.**  3 = the combinatorial floor, conjecturally never on a wall;
+4 = the minimal wall (witnessed, type empirical); 5 = the minimal wall with
+exactly forced type.  Runtime consequence: 3-critical portraits may assert
+Morse–Smale after the standard capture tests with the conjecture flagged as
+the authority; a certified violation would be a discovery, and the capture
+audit is exactly what would surface it.
+
+---
+
 ## A-posteriori topology certificate
 
 The portraitist audits every polyline self-contact and every pairwise contact
