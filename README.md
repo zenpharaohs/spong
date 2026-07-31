@@ -122,6 +122,17 @@ portrait.  Frontends may supply a `ResolutionPolicy` with frozen calibrated
 binary64 margins; the default records the margins and lets the a-posteriori
 geometry certificate decide.
 
+Many-start optimizer overlays are demo consumers of the certified portrait:
+
+    PYTHONPATH=src:. python demos/optimizer_moustaches.py \
+        --zoo quadratic-stiff --starts 100
+
+This produces separate SGD, momentum-SGD, and Adam panels for both
+low-discrepancy and blue-noise starts, plus a JSON trajectory ledger under
+`out/optimizer_moustaches/`.  Muon is recorded as inapplicable: the trainable
+state `(a,b)` is a vector, whereas Muon acts on matrix-valued hidden weights
+and routes such parameters to auxiliary AdamW in practical implementations.
+
 Named zoo portraits:
 
     PYTHONPATH=src python -m spong.cli --zoo quadratic-stiff --pause

@@ -14,6 +14,8 @@ model's ∇L (Ljung's mean-field ODE is the portrait itself).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -43,37 +45,167 @@ class BatchGradient:
         return np.array([da, db])
 
 
-def run_sgd(grad, z0, lr, n_steps, box=None):
-    z = np.array(z0, dtype=float)
-    traj = [z.copy()]
+def cosine_schedule(base_lr, total_steps, warmup_fraction=0.05,
+                    final_fraction=0.01):
+    """Linear warmup followed by cosine decay."""
+    warmup = max(1, int(round(total_steps*warmup_fraction)))
+
+    def schedule(t):
+        if t <= warmup:
+            return float(base_lr)*t/warmup
+        u = min(1.0, (t-warmup)/max(1, total_steps-warmup))
+        multiplier = final_fraction+(1-final_fraction)*0.5*(
+            1+np.cos(np.pi*u))
+        return float(base_lr)*float(multiplier)
+
+    return schedule
+
+
+def inverse_sqrt_schedule(base_lr, warmup_steps=100):
+    """Linear warmup followed by the conventional inverse-square-root tail."""
+    warmup_steps = max(1, int(warmup_steps))
+
+    def schedule(t):
+        if t <= warmup_steps:
+            return float(base_lr)*t/warmup_steps
+        return float(base_lr)*np.sqrt(warmup_steps/t)
+
+    return schedule
+
+
+def _lr_at(lr, t):
+    return float(lr(t) if callable(lr) else lr)
+
+
+@dataclass
+class SGDState:
+    z: np.ndarray
+    lr: object
+    momentum: float = 0.0
+    nesterov: bool = False
+    velocity: np.ndarray | None = None
+    t: int = 0
+
+    def __post_init__(self):
+        self.z = np.asarray(self.z, dtype=float).copy()
+        if self.velocity is None:
+            self.velocity = np.zeros_like(self.z)
+
+    def step(self, gradient):
+        self.t += 1
+        self.velocity = self.momentum*self.velocity+gradient
+        direction = (gradient+self.momentum*self.velocity
+                     if self.nesterov else self.velocity)
+        self.z = self.z-_lr_at(self.lr, self.t)*direction
+        return self.z
+
+
+@dataclass
+class AdamState:
+    z: np.ndarray
+    lr: object
+    b1: float = 0.9
+    b2: float = 0.999
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    first: np.ndarray | None = None
+    second: np.ndarray | None = None
+    t: int = 0
+
+    def __post_init__(self):
+        self.z = np.asarray(self.z, dtype=float).copy()
+        if self.first is None:
+            self.first = np.zeros_like(self.z)
+        if self.second is None:
+            self.second = np.zeros_like(self.z)
+
+    def step(self, gradient):
+        self.t += 1
+        self.first = self.b1*self.first+(1-self.b1)*gradient
+        self.second = self.b2*self.second+(1-self.b2)*gradient*gradient
+        mh = self.first/(1-self.b1**self.t)
+        vh = self.second/(1-self.b2**self.t)
+        lr = _lr_at(self.lr, self.t)
+        self.z = ((1-lr*self.weight_decay)*self.z
+                  - lr*mh/(np.sqrt(vh)+self.eps))
+        return self.z
+
+
+@dataclass
+class VectorMuonState:
+    """The 2x1 polar-factor surrogate, not matrix-parameter Muon.
+
+    For the scalar-neuron state (a,b), the polar factor of the 2x1 momentum
+    matrix is just its Euclidean normalization.  Real Muon normally routes
+    vector/scalar parameter groups to AdamW; the explicit name prevents this
+    pedagogical surrogate from being mistaken for transformer-style Muon.
+    """
+
+    z: np.ndarray
+    lr: object
+    momentum: float = 0.95
+    nesterov: bool = True
+    buffer: np.ndarray | None = None
+    eps: float = 1e-12
+    t: int = 0
+
+    def __post_init__(self):
+        self.z = np.asarray(self.z, dtype=float).copy()
+        if self.buffer is None:
+            self.buffer = np.zeros_like(self.z)
+
+    def step(self, gradient):
+        self.t += 1
+        self.buffer = self.momentum*self.buffer+(1-self.momentum)*gradient
+        update = (gradient+self.momentum*self.buffer
+                  if self.nesterov else self.buffer)
+        norm = float(np.hypot(*update))
+        if norm > self.eps:
+            update = update/norm
+        self.z = self.z-_lr_at(self.lr, self.t)*update
+        return self.z
+
+
+def run_state(state, grad, n_steps, box=None):
+    """Advance a resumable optimizer state; Thompson scheduling uses one step."""
+    trajectory = [state.z.copy()]
     for _ in range(n_steps):
-        z = z - lr * grad(z[0], z[1])
-        traj.append(z.copy())
+        gradient = np.asarray(grad(*state.z), dtype=float)
+        z = state.step(gradient)
+        trajectory.append(z.copy())
         if not np.all(np.isfinite(z)):
             break
-        if box and not (box[0] <= z[0] <= box[1] and box[2] <= z[1] <= box[3]):
+        if box and not (
+                box[0] <= z[0] <= box[1] and box[2] <= z[1] <= box[3]):
             break
-    return np.array(traj)
+    return np.asarray(trajectory)
+
+
+def run_sgd(grad, z0, lr, n_steps, box=None, momentum=0.0,
+            nesterov=False):
+    state = SGDState(np.asarray(z0), lr, momentum=momentum,
+                     nesterov=nesterov)
+    return run_state(state, grad, n_steps, box=box)
 
 
 def run_adam(grad, z0, lr, n_steps, box=None, b1=0.9, b2=0.999, eps=1e-8):
-    z = np.array(z0, dtype=float)
-    mom = np.zeros(2)
-    vel = np.zeros(2)
-    traj = [z.copy()]
-    for t in range(1, n_steps + 1):
-        g = grad(z[0], z[1])
-        mom = b1 * mom + (1 - b1) * g
-        vel = b2 * vel + (1 - b2) * g * g
-        mh = mom / (1 - b1**t)
-        vh = vel / (1 - b2**t)
-        z = z - lr * mh / (np.sqrt(vh) + eps)
-        traj.append(z.copy())
-        if not np.all(np.isfinite(z)):
-            break
-        if box and not (box[0] <= z[0] <= box[1] and box[2] <= z[1] <= box[3]):
-            break
-    return np.array(traj)
+    state = AdamState(np.asarray(z0), lr, b1=b1, b2=b2, eps=eps)
+    return run_state(state, grad, n_steps, box=box)
+
+
+def run_adamw(grad, z0, lr, n_steps, box=None, b1=0.9, b2=0.95,
+              eps=1e-10, weight_decay=0.0):
+    state = AdamState(
+        np.asarray(z0), lr, b1=b1, b2=b2, eps=eps,
+        weight_decay=weight_decay)
+    return run_state(state, grad, n_steps, box=box)
+
+
+def run_vector_muon(grad, z0, lr, n_steps, box=None, momentum=0.95,
+                    nesterov=True):
+    state = VectorMuonState(
+        np.asarray(z0), lr, momentum=momentum, nesterov=nesterov)
+    return run_state(state, grad, n_steps, box=box)
 
 
 def run_lbfgs(m, z0, n_steps, box=None, mem=8):
