@@ -24,7 +24,8 @@ setup(
         Extension(
             "spong._native",
             ["src/spong/_native.c", "src/c/spong_resolution.c",
-             "src/c/spong_exact_gmp.c", "src/c/spong_topology.c"],
+             "src/c/spong_exact_gmp.c", "src/c/spong_topology.c",
+             "src/c/spong_geometry.c"],
             include_dirs=["include", *gmp_include_dirs],
             library_dirs=gmp_library_dirs,
             libraries=["gmp"],

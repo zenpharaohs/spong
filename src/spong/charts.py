@@ -1337,8 +1337,17 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
 # --------------------------------------------------------------------- #
 
 
-def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None,
-                        start: int = 1):
+def _native_curve_diagnostics(m, Y, digits, start):
+    kernel = getattr(m, "_native_kernel", None)
+    if kernel is None or not hasattr(kernel, "curve_diagnostics"):
+        return None
+    K = ANGLE_DIGIT_BUDGET if digits is None else digits
+    return kernel.curve_diagnostics(
+        np.ascontiguousarray(Y, dtype=np.float64), float(K), int(start))
+
+
+def _angle_energy_detail_python(m: Model, Y: np.ndarray,
+                                digits: float = None, start: int = 1):
     """(E, n_resolved, n_unresolved) — angle energy over resolved vertices.
 
     E = Σ ½‖d_⊥‖² is the discrete integral-curve certificate (E = 0 ⟺ the
@@ -1393,14 +1402,23 @@ def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None,
     return E, used, skipped
 
 
+def angle_energy_detail(m: Model, Y: np.ndarray, digits: float = None,
+                        start: int = 1):
+    """Native angle certificate; Python implementation retained as oracle."""
+    result = _native_curve_diagnostics(m, Y, digits, start)
+    if result is not None:
+        return result[:3]
+    return _angle_energy_detail_python(m, Y, digits=digits, start=start)
+
+
 def angle_energy(m: Model, Y: np.ndarray) -> float:
     """E over the resolved vertices; see `angle_energy_detail` for the counts
     (which callers need — E alone cannot distinguish clean from vacuous)."""
     return angle_energy_detail(m, Y)[0]
 
 
-def backbone_residual(m: Model, Y: np.ndarray, digits: float = None,
-                      start: int = 1) -> float:
+def _backbone_residual_python(m: Model, Y: np.ndarray, digits: float = None,
+                              start: int = 1) -> float:
     """max |w| / |a*| over the vertices `angle_energy` could NOT resolve.
 
     The ALGEBRAIC certificate.  Where the geometric one runs out of digits the
@@ -1434,6 +1452,15 @@ def backbone_residual(m: Model, Y: np.ndarray, digits: float = None,
             continue
         worst = max(worst, abs(a - astar) / abs(astar))
     return worst
+
+
+def backbone_residual(m: Model, Y: np.ndarray, digits: float = None,
+                      start: int = 1) -> float:
+    """Native algebraic tail certificate; Python retained as oracle."""
+    result = _native_curve_diagnostics(m, Y, digits, start)
+    if result is not None:
+        return result[3]
+    return _backbone_residual_python(m, Y, digits=digits, start=start)
 
 
 def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],

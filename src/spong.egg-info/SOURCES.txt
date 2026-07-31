@@ -12,9 +12,11 @@ docs/numerical_linear_algebra.md
 docs/qualification.md
 docs/theorems.md
 include/spong/spong_exact.h
+include/spong/spong_geometry.h
 include/spong/spong_resolution.h
 include/spong/spong_topology.h
 src/c/spong_exact_gmp.c
+src/c/spong_geometry.c
 src/c/spong_resolution.c
 src/c/spong_topology.c
 src/spong/__init__.py
@@ -65,5 +67,6 @@ tests/test_sturm.py
 tests/test_topology.py
 tests/test_validate.py
 tests/c/test_spong_exact.c
+tests/c/test_spong_geometry.c
 tests/c/test_spong_resolution.c
 tests/c/test_spong_topology.c

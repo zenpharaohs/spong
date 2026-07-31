@@ -131,6 +131,15 @@ reason.  This state machine is separately compared against the Python oracle
 over randomized evidence combinations.  These topology entry points comprise
 ABI version 2; version 1 resolution callers remain source- and binary-compatible.
 
+Batched geometric measurements are exposed by
+`include/spong/spong_geometry.h`.  `spong_curve_diagnostics` evaluates the
+angle-energy certificate and its complementary unresolved-tail backbone
+residual in one pass over a packed polyline.  The C implementation explicitly
+uses the same separate binary64 multiply/add rounding as the NumPy oracle;
+this matters on the high-cancellation tails for which the diagnostic measures
+its own evaluation floor.  The scalar Python implementations remain
+differential oracles rather than production loops.
+
 ## Migration boundary
 
 The present production geometry kernels are already written in C, but some are
@@ -141,8 +150,9 @@ Migration proceeds by moving computation—not translating it—into `src/c`:
 2. binary64 qualification and small exact matrix calculus;
 3. GL4/GL6/GL8 and dense collocation;
 4. local Poincaré/graph-transform charts;
-5. global continuation and topology ledger (the streaming BVH contact kernel
-   is native; endpoint-proof orchestration and ledger assembly remain); and
+5. global continuation and topology ledger (the streaming BVH contact kernel,
+   batched curve diagnostics, and certificate state machine are native;
+   endpoint-proof orchestration and ledger assembly remain); and
 6. exact rational polynomial/Sturm analysis through a portable multiprecision
    backend.
 

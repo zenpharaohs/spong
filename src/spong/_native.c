@@ -10,6 +10,7 @@
 #include "spong/spong_resolution.h"
 #include "spong/spong_exact.h"
 #include "spong/spong_topology.h"
+#include "spong/spong_geometry.h"
 
 typedef struct {
     PyObject_HEAD
@@ -36,6 +37,8 @@ typedef struct {
     Py_buffer second;
     spong_contact_scan *scan;
 } NativeContactScan;
+
+static int contact_buffer(PyObject *object, Py_buffer *view);
 
 static const double SQRT3 = 1.73205080756887729352744634150587237;
 static const double SQRT15 = 3.87298334620741688517926539978239961;
@@ -1259,6 +1262,35 @@ static PyMethodDef LocalKernel_methods[] = {
     {NULL, NULL, 0, NULL}
 };
 
+static PyObject *Kernel_curve_diagnostics(Kernel *self, PyObject *args) {
+    PyObject *curve;
+    double digit_budget = 1e3;
+    Py_ssize_t start = 1;
+    if (!PyArg_ParseTuple(args, "O|dn", &curve, &digit_budget, &start))
+        return NULL;
+    Py_buffer view = {0};
+    if (contact_buffer(curve, &view) < 0) return NULL;
+    if (start < 1) start = 1;
+    spong_curve_diagnostics_result result;
+    int status = spong_curve_diagnostics(
+        self->a, (size_t)self->na,
+        self->ap, (size_t)self->nap,
+        self->b, (size_t)self->nb,
+        self->bp, (size_t)self->nbp,
+        (const double *)view.buf, (size_t)view.shape[0],
+        (size_t)start, digit_budget, &result);
+    PyBuffer_Release(&view);
+    if (status != 0) {
+        PyErr_SetString(PyExc_ValueError, "invalid curve diagnostics input");
+        return NULL;
+    }
+    return Py_BuildValue(
+        "dKKd", result.angle_energy,
+        (unsigned long long)result.angle_resolved,
+        (unsigned long long)result.angle_unresolved,
+        result.backbone_residual);
+}
+
 static PyTypeObject LocalKernelType = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name = "spong._native.LocalKernel",
@@ -1288,6 +1320,8 @@ static PyMethodDef Kernel_methods[] = {
      "One 2D normalized-gradient ascent step by GL4, GL6, or GL8."},
     {"potential_step", (PyCFunction)Kernel_potential_step, METH_VARARGS,
      "One 2D constant-potential-rate ascent step by GL4, GL6, or GL8."},
+    {"curve_diagnostics", (PyCFunction)Kernel_curve_diagnostics, METH_VARARGS,
+     "Batched angle-energy and backbone-tail certificates."},
     {NULL, NULL, 0, NULL}
 };
 

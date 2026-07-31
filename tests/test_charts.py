@@ -30,6 +30,29 @@ def test_native_hadamard_transform_matches_python_oracle():
     assert abs(c_rel - py_rel) < 1e-15
 
 
+def test_native_curve_diagnostics_match_python_oracles():
+    m = model.build([1.0, -0.5, 0.25], [0.75, 1.0, -0.2],
+                    model.moments_uniform01(9))
+    if m._native_kernel is None or not hasattr(
+            m._native_kernel, "curve_diagnostics"):
+        pytest.skip("native curve diagnostics not built")
+    b = np.linspace(-2.0, 3.0, 2003)
+    a = np.asarray(m.a_star(b))+1e-5*np.sin(17.0*b)
+    curve = np.ascontiguousarray(np.column_stack((a, b)))
+    for digits, start in ((1e3, 1), (1e6, 37), (1e12, 113)):
+        expected_angle = charts._angle_energy_detail_python(
+            m, curve, digits=digits, start=start)
+        expected_backbone = charts._backbone_residual_python(
+            m, curve, digits=digits, start=start)
+        actual = m._native_kernel.curve_diagnostics(
+            curve, digits, start)
+        assert actual[1:3] == expected_angle[1:3]
+        assert actual[0] == pytest.approx(
+            expected_angle[0], rel=2e-13, abs=1e-28)
+        assert actual[3] == pytest.approx(
+            expected_backbone, rel=2e-13, abs=1e-28)
+
+
 def _lowest_saddle_and_adjacent_min(e):
     saddles = sorted(e.saddles, key=lambda p: p.b)
     s = saddles[0]
