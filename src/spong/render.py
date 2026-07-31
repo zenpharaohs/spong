@@ -388,9 +388,14 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
                 svg.polyline(pts, ov.get("color", "#3060ff"),
                              ov.get("width", 1.6),
                              opacity=ov.get("opacity", 0.95))
-            if len(Yov) and np.all(np.isfinite(Yov[0])):
+            if (ov.get("mark_start", True) and len(Yov)
+                    and np.all(np.isfinite(Yov[0]))):
                 x0, y0 = to_px(Yov[0, 0], Yov[0, 1])
                 svg.circle(x0, y0, 3.2, ov.get("color", "#3060ff"))
+            if (ov.get("mark_end", False) and len(Yov)
+                    and np.all(np.isfinite(Yov[-1]))):
+                x1, y1 = to_px(Yov[-1, 0], Yov[-1, 1])
+                svg.circle(x1, y1, 2.2, ov.get("color", "#3060ff"))
             if ov.get("label"):
                 svg.text(width - 250, ly, ov["label"], size=11,
                          color=ov.get("color", "#3060ff"))
@@ -398,12 +403,22 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
 
     if title:
         svg.text(width / 2, 24, title, size=15, anchor="middle")
-    led = p.ledger.get("summary", {})
-    svg.text(42, height - 14,
-             f"certificates: E_max = {led.get('worst_angle_energy', 0):.2e}"
-             f" | index balanced: {led.get('balanced')}"
-             f" | max turn = {led.get('worst_max_turn_deg', 0):.3f}°",
-             size=10)
+    comparison = p.ledger.get("comparison")
+    if comparison:
+        svg.text(
+            42, height - 14,
+            f"UNCERTIFIED COMPARISON"
+            f" | geometry: {comparison['geometry_method']}"
+            f" | critical points: {comparison['critical_method']}",
+            size=10, color="#a03020")
+    else:
+        led = p.ledger.get("summary", {})
+        svg.text(42, height - 14,
+                 f"certificates: E_max = "
+                 f"{led.get('worst_angle_energy', 0):.2e}"
+                 f" | index balanced: {led.get('balanced')}"
+                 f" | max turn = {led.get('worst_max_turn_deg', 0):.3f}°",
+                 size=10)
     return svg.to_string()
 
 

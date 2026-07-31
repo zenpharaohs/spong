@@ -40,6 +40,44 @@ QUADRATIC_STIFF = ZooCase(
 )
 
 
+TRICKY_D11 = ZooCase(
+    name="tricky-d11",
+    f=(1.12873645202828,
+       -0.289963040800028,
+       1.26155071814115,
+       0.475424811707271,
+       1.17411675149371,
+       0.126947068043646,
+       -0.656815928948082,
+       -1.48139907157878,
+       0.155488995903894,
+       0.818551368521001,
+       -0.292588130834394,
+       -0.540786416488526),
+    g=(1.12873645202828,
+       -0.289963040800028,
+       1.26155071814115,
+       0.475424811707271,
+       1.17411675149371,
+       0.126947068043646,
+       -0.656815928948082,
+       -1.48139907157878,
+       0.155488995903894,
+       0.818551368521001,
+       -0.292588130834394,
+       -0.540786416488526),
+    moment_dist="uniform01",
+    default_view=(-1.5, 2.5, -4.0, 3.0),
+    expected_connections=((-2.738230515199397, -0.7895860210707522),),
+    description=(
+        "Canonical degree-11 hard case with saddle stiffness ratio about "
+        "8.5e8.  Generic adaptive tracers exhaust their budgets or follow "
+        "the nearby backbone; the Hadamard graph transform resolves the "
+        "unstable branch from b=-2.738230... to b=-0.789586...."
+    ),
+)
+
+
 LINEAR_TARGET_D17_THRASH = ZooCase(
     name="linear-target-d17-thrash",
     seed=1158725111,
@@ -100,6 +138,7 @@ NONNEAREST_ATTACHMENT = ZooCase(
 
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
+    TRICKY_D11.name: TRICKY_D11,
     LINEAR_TARGET_D17_THRASH.name: LINEAR_TARGET_D17_THRASH,
     NONNEAREST_ATTACHMENT.name: NONNEAREST_ATTACHMENT,
 }

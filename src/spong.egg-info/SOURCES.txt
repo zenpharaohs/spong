@@ -4,6 +4,7 @@ README.md
 pyproject.toml
 setup.py
 docs/c_api.md
+docs/comparisons.md
 docs/effective_bounds.md
 docs/inverse_construction.md
 docs/kahan_riccati.md
@@ -20,6 +21,8 @@ src/spong/_poly.py
 src/spong/atlas.py
 src/spong/charts.py
 src/spong/cli.py
+src/spong/comparison.py
+src/spong/comparison_cli.py
 src/spong/gauss.py
 src/spong/inverse.py
 src/spong/local.py
@@ -42,6 +45,7 @@ tests/test_atlas.py
 tests/test_certificates.py
 tests/test_charts.py
 tests/test_cli.py
+tests/test_comparison.py
 tests/test_demos.py
 tests/test_enumeration.py
 tests/test_gauss.py

@@ -12,6 +12,7 @@ dependencies = ["numpy"]
 [project.scripts]
 spong-random-portrait = "spong.cli:main"
 spong-validate-native = "spong.validate:main"
+spong-compare-portrait = "spong.comparison_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

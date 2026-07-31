@@ -85,6 +85,20 @@ Use `--no-stable` only for quick scans; it deliberately omits the red stable
 separatrices.
 Installed environments also get the `spong-random-portrait` console command.
 
+For teaching and numerical comparison, installed environments also provide:
+
+    spong-compare-portrait --zoo quadratic-stiff
+
+This generates a side-by-side HTML gallery comparing the certified portrait
+with Forward Euler, Backward Euler, explicit/implicit midpoint, and adaptive
+RKF45 and Rosenbrock-2.  The methods receive a common physical time horizon,
+the gallery includes a bottom-canyon zoom, and its JSON report compares
+common-resolution tangent/gradient angle defects.  Open the result on macOS
+with `open out/comparisons/quadratic-stiff_comparison.html`.
+`--critical-method grid-newton` also replaces exact Morse enumeration with an
+explicitly uncertified multistart finite-difference Newton scan.
+See [docs/comparisons.md](docs/comparisons.md).
+
 Public resolution calls have a total three-outcome contract:
 
 ```python
@@ -111,6 +125,7 @@ geometry certificate decide.
 Named zoo portraits:
 
     PYTHONPATH=src python -m spong.cli --zoo quadratic-stiff --pause
+    PYTHONPATH=src python -m spong.cli --zoo tricky-d11 --pause
     PYTHONPATH=src python -m spong.cli --zoo linear-target-d17-thrash --pause
     PYTHONPATH=src python -m spong.cli --zoo nonnearest-attachment --pause
 
@@ -119,6 +134,11 @@ Named zoo portraits:
 the lowest saddle down to a far finite minimum.  It is the canonical "you
 thought quadratic would be simple?" portrait and a regression for the
 Hadamard/engine handoff at the shallow-water threshold.
+
+`tricky-d11` is the canonical degree-11 `f=g` case with saddle stiffness
+ratio about `8.5e8`.  Ordinary adaptive integrators exhaust their budgets or
+collapse onto the nearby backbone; it is the founding regression that
+motivated the Hadamard graph-transform chart.
 
 `linear-target-d17-thrash` is the seed `1158725111` case with `deg f = 1` and
 `deg g = 17`.  It is a compact overparameterization example: many finite
