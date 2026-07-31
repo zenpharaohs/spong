@@ -9,6 +9,7 @@
 
 #include "spong/spong_resolution.h"
 #include "spong/spong_exact.h"
+#include "spong/spong_topology.h"
 
 typedef struct {
     PyObject_HEAD
@@ -28,6 +29,13 @@ typedef struct {
     spong_sturm_plan *plan;
     spong_sturm_analysis analysis;
 } NativeSturmPlan;
+
+typedef struct {
+    PyObject_HEAD
+    Py_buffer first;
+    Py_buffer second;
+    spong_contact_scan *scan;
+} NativeContactScan;
 
 static const double SQRT3 = 1.73205080756887729352744634150587237;
 static const double SQRT15 = 3.87298334620741688517926539978239961;
@@ -1785,6 +1793,98 @@ static PyObject *NativeSturmPlan_isolate(
             (unsigned long long)work.max_endpoint_bits);
 }
 
+static int contact_buffer(PyObject *object, Py_buffer *view) {
+    if (PyObject_GetBuffer(
+            object, view, PyBUF_FORMAT | PyBUF_ND | PyBUF_STRIDES) < 0)
+        return -1;
+    if (view->ndim != 2 || view->shape == NULL || view->shape[0] < 2
+            || view->shape[1] != 2 || view->itemsize != (Py_ssize_t)sizeof(double)
+            || view->format == NULL || strcmp(view->format, "d") != 0
+            || !PyBuffer_IsContiguous(view, 'C')) {
+        PyBuffer_Release(view);
+        memset(view, 0, sizeof(*view));
+        PyErr_SetString(
+            PyExc_ValueError,
+            "contact curves must be C-contiguous float64 arrays of shape (n,2)");
+        return -1;
+    }
+    return 0;
+}
+
+static void NativeContactScan_dealloc(NativeContactScan *self) {
+    spong_contact_scan_destroy(self->scan);
+    if (self->second.obj != NULL) PyBuffer_Release(&self->second);
+    if (self->first.obj != NULL) PyBuffer_Release(&self->first);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static int NativeContactScan_init(
+        NativeContactScan *self, PyObject *args, PyObject *kwds) {
+    PyObject *first, *second;
+    double tolerance;
+    int self_scan = 0;
+    static char *kwlist[] = {
+        "first", "second", "tolerance", "self_scan", NULL
+    };
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "OOd|p", kwlist,
+            &first, &second, &tolerance, &self_scan))
+        return -1;
+    if (contact_buffer(first, &self->first) < 0) return -1;
+    if (!self_scan && contact_buffer(second, &self->second) < 0) {
+        PyBuffer_Release(&self->first);
+        memset(&self->first, 0, sizeof(self->first));
+        return -1;
+    }
+    self->scan = spong_contact_scan_create(
+        (const double *)self->first.buf, (size_t)self->first.shape[0],
+        self_scan ? NULL : (const double *)self->second.buf,
+        self_scan ? 0 : (size_t)self->second.shape[0],
+        tolerance, self_scan);
+    if (self->scan == NULL) {
+        if (self->second.obj != NULL) PyBuffer_Release(&self->second);
+        PyBuffer_Release(&self->first);
+        memset(&self->first, 0, sizeof(self->first));
+        memset(&self->second, 0, sizeof(self->second));
+        PyErr_SetString(PyExc_ValueError, "could not initialize contact scan");
+        return -1;
+    }
+    return 0;
+}
+
+static PyObject *NativeContactScan_iternext(NativeContactScan *self) {
+    spong_contact_event event;
+    int status = spong_contact_scan_next(self->scan, &event);
+    if (status < 0) {
+        PyErr_SetString(PyExc_RuntimeError, "native contact scan failed");
+        return NULL;
+    }
+    if (status == 0) {
+        PyErr_SetNone(PyExc_StopIteration);
+        return NULL;
+    }
+    const char *kind = event.kind == SPONG_CONTACT_CROSS
+        ? "cross" : "ambiguous";
+    return Py_BuildValue(
+        "KKs(dd)",
+        (unsigned long long)event.first_segment,
+        (unsigned long long)event.second_segment,
+        kind, event.x, event.y);
+}
+
+static PyTypeObject NativeContactScanType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "spong._native.ContactScan",
+    .tp_basicsize = sizeof(NativeContactScan),
+    .tp_dealloc = (destructor)NativeContactScan_dealloc,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_doc = "Streaming native BVH contact scan over float64 polylines.",
+    .tp_iter = PyObject_SelfIter,
+    .tp_iternext = (iternextfunc)NativeContactScan_iternext,
+    .tp_init = (initproc)NativeContactScan_init,
+    .tp_new = PyType_GenericNew,
+};
+
 static PyMethodDef NativeSturmPlan_methods[] = {
     {"count", (PyCFunction)NativeSturmPlan_count, METH_VARARGS,
      "Count distinct roots exactly on (lower, upper]."},
@@ -1850,6 +1950,7 @@ PyMODINIT_FUNC PyInit__native(void) {
     }
     if (PyType_Ready(&LocalKernelType) < 0) return NULL;
     if (PyType_Ready(&NativeSturmPlanType) < 0) return NULL;
+    if (PyType_Ready(&NativeContactScanType) < 0) return NULL;
     m = PyModule_Create(&module);
     if (m == NULL) {
         return NULL;
@@ -1871,6 +1972,13 @@ PyMODINIT_FUNC PyInit__native(void) {
     if (PyModule_AddObject(m, "SturmPlan",
                            (PyObject *)&NativeSturmPlanType) < 0) {
         Py_DECREF(&NativeSturmPlanType);
+        Py_DECREF(m);
+        return NULL;
+    }
+    Py_INCREF(&NativeContactScanType);
+    if (PyModule_AddObject(m, "ContactScan",
+                           (PyObject *)&NativeContactScanType) < 0) {
+        Py_DECREF(&NativeContactScanType);
         Py_DECREF(m);
         return NULL;
     }

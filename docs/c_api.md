@@ -4,7 +4,8 @@ SPONG has one computational implementation and multiple adapters.  Python,
 MATLAB, command-line tools, and mobile applications must not reproduce
 qualification thresholds or terminal-state logic.
 
-The public C99 ABI begins in `include/spong/spong_resolution.h`.  It is:
+The public C99 ABI begins in `include/spong/spong_resolution.h`.  The
+resolution-policy portion is:
 
 - allocation-free and exception-free;
 - expressed with fixed-width fields;
@@ -114,6 +115,17 @@ form; Apple and Android application builds normally consume the static target.
 Cross builds must supply GMP through `GMP_INCLUDE_DIR` and `GMP_LIBRARY`;
 Python builds may set `SPONG_GMP_PREFIX`.
 
+Global contact certification begins in
+`include/spong/spong_topology.h`.  `spong_contact_scan_create` builds the same
+balanced bounding-volume hierarchy used by the Python oracle, while
+`spong_contact_scan_next` streams transverse and FP64-ambiguous segment events
+without allocating a potentially enormous result list.  Pair scans compare
+two invariant manifolds; self scans visit every nonadjacent segment pair once.
+The caller retains the packed `(a,b)` arrays until
+`spong_contact_scan_destroy` and can stop immediately when its event budget is
+exhausted.  The standalone C test and randomized Python differential test
+exercise the same orientation, proximity, and intersection-point formulas.
+
 ## Migration boundary
 
 The present production geometry kernels are already written in C, but some are
@@ -124,7 +136,8 @@ Migration proceeds by moving computation—not translating it—into `src/c`:
 2. binary64 qualification and small exact matrix calculus;
 3. GL4/GL6/GL8 and dense collocation;
 4. local Poincaré/graph-transform charts;
-5. global continuation and topology ledger; and
+5. global continuation and topology ledger (the streaming BVH contact kernel
+   is native; endpoint-proof orchestration and ledger assembly remain); and
 6. exact rational polynomial/Sturm analysis through a portable multiprecision
    backend.
 

@@ -2,9 +2,44 @@ from dataclasses import replace
 from fractions import Fraction
 
 import numpy as np
+import pytest
 
 from spong import model, portrait, sturm, topology
 from spong.charts import Branch
+
+
+def _canonical_events(events):
+    return sorted(events, key=lambda event: (event[0], event[1], event[2]))
+
+
+def test_native_contact_scan_matches_python_bvh_oracle():
+    native = pytest.importorskip("spong._native")
+    if not hasattr(native, "ContactScan"):
+        pytest.skip("native contact scanner not built")
+    rng = np.random.default_rng(41017)
+    first = np.cumsum(rng.normal(size=(83, 2)), axis=0)
+    second = np.cumsum(rng.normal(size=(71, 2)), axis=0)
+    tolerance = 128*np.finfo(float).eps*max(
+        1.0, np.max(np.abs(first)), np.max(np.abs(second)))
+
+    expected_pair = _canonical_events(topology._pair_events(
+        first, topology._tree(first), second, topology._tree(second),
+        tolerance))
+    actual_pair = _canonical_events(native.ContactScan(
+        np.ascontiguousarray(first), np.ascontiguousarray(second),
+        tolerance, False))
+    expected_self = _canonical_events(topology._self_events(
+        first, topology._tree(first), tolerance))
+    actual_self = _canonical_events(native.ContactScan(
+        np.ascontiguousarray(first), None, tolerance, True))
+
+    for expected, actual in ((expected_pair, actual_pair),
+                             (expected_self, actual_self)):
+        assert [(x[0], x[1], x[2]) for x in actual] == [
+            (x[0], x[1], x[2]) for x in expected]
+        np.testing.assert_allclose(
+            [x[3] for x in actual], [x[3] for x in expected],
+            rtol=0.0, atol=4*np.finfo(float).eps)
 
 
 def test_bvh_audit_finds_a_forbidden_transverse_crossing(d2):

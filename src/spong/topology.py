@@ -136,6 +136,39 @@ def _self_events(Y, root, tol):
     yield from visit(root)
 
 
+def _native_contact_available():
+    try:
+        from . import _native
+    except ImportError:
+        return False
+    return hasattr(_native, "ContactScan")
+
+
+def _pair_contact_events(Y1, root1, Y2, root2, tol):
+    """Production contact stream, with the Python BVH retained as oracle."""
+    try:
+        from . import _native
+        scanner = _native.ContactScan(
+            np.ascontiguousarray(Y1, dtype=np.float64),
+            np.ascontiguousarray(Y2, dtype=np.float64), tol, False)
+    except (ImportError, AttributeError):
+        yield from _pair_events(Y1, root1, Y2, root2, tol)
+        return
+    yield from scanner
+
+
+def _self_contact_events(Y, root, tol):
+    """Production self-contact stream, with the Python BVH as oracle."""
+    try:
+        from . import _native
+        scanner = _native.ContactScan(
+            np.ascontiguousarray(Y, dtype=np.float64), None, tol, True)
+    except (ImportError, AttributeError):
+        yield from _self_events(Y, root, tol)
+        return
+    yield from scanner
+
+
 def _strictly_monotone_subarc(Y, first_segment, second_segment):
     """Whether one coordinate exactly orders the intervening polyline."""
     lo, hi = sorted((first_segment, second_segment))
@@ -768,7 +801,8 @@ def audit(m, enumeration, branches, box) -> dict:
             "stable_tails": stable_tails,
         }
     budget_exceeded = segment_count > segment_budget
-    trees = ([] if budget_exceeded else
+    native_contacts = _native_contact_available()
+    trees = ([] if budget_exceeded or native_contacts else
              [_tree(np.asarray(br.Y)) for br in branches])
     critical = np.asarray([(p.a, p.b) for p in enumeration.points])
     allowed_radius = max(1024*np.finfo(float).eps*scale, 1e-11)
@@ -856,8 +890,9 @@ def audit(m, enumeration, branches, box) -> dict:
             sample.append(item)
 
     for i, br in enumerate(branches if not budget_exceeded else ()):
-        for si, sj, kind, point in _self_events(
-                np.asarray(br.Y), trees[i], predicate_tol):
+        root = None if native_contacts else trees[i]
+        for si, sj, kind, point in _self_contact_events(
+                np.asarray(br.Y), root, predicate_tol):
             if (kind == "ambiguous" and _strictly_monotone_subarc(
                     br.Y, si, sj)):
                 # Exact monotonicity of either polyline coordinate orders the
@@ -888,9 +923,11 @@ def audit(m, enumeration, branches, box) -> dict:
     for i in range(0 if budget_exceeded or event_budget_exceeded
                    else len(branches)):
         for j in range(i+1, len(branches)):
-            events = _pair_events(
-                np.asarray(branches[i].Y), trees[i],
-                np.asarray(branches[j].Y), trees[j], predicate_tol)
+            events = _pair_contact_events(
+                np.asarray(branches[i].Y),
+                None if native_contacts else trees[i],
+                np.asarray(branches[j].Y),
+                None if native_contacts else trees[j], predicate_tol)
             for si, sj, kind, point in events:
                 same_source_stub_germ = (
                     branches[i].diag.get("saddle_b") is not None
