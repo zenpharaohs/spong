@@ -12,10 +12,12 @@ import pytest
 
 from demos import initializers
 from demos import adam_flow
+from demos import batch_moment_portraits
 from demos import hybrid_saddle_connection
 from demos import optimizer_moustaches
 from demos import optimizers as opt
 from demos import saddle_connections
+from demos import saddle_connection_comparison
 from demos import saddle_connection_triptych
 from demos import thompson
 from spong import charts, model, portrait, sturm, zoo
@@ -259,6 +261,37 @@ def test_empirical_adam_innovation_matches_empirical_loss_gradient():
                        rtol=2e-14, atol=2e-14)
 
 
+def test_batch_portrait_moments_are_exact_for_binary64_samples():
+    moments = batch_moment_portraits.exact_empirical_moments(
+        [0.0, 0.5, 1.0], 5)
+    assert moments == (
+        Fraction(1), Fraction(1, 2), Fraction(5, 12),
+        Fraction(3, 8), Fraction(17, 48))
+
+
+def test_batch_portrait_streams_are_nested_and_independent():
+    prefix = batch_moment_portraits.nested_uniform_batch(19, 2, 8)
+    longer = batch_moment_portraits.nested_uniform_batch(19, 2, 32)
+    other = batch_moment_portraits.nested_uniform_batch(19, 3, 8)
+    assert np.array_equal(prefix, longer[:8])
+    assert not np.array_equal(prefix, other)
+
+
+def test_batch_portrait_report_disclaims_cross_moment_branch_identity():
+    report = {
+        "view": (-1, 1, -1, 1),
+        "results": [{
+            "batch_size": 8, "batch_index": 0, "certified": False,
+            "branches": [], "critical_points": [],
+            "moment_error_max": 0.1,
+        }],
+    }
+    html = batch_moment_portraits._html(report)
+    normalized = " ".join(html.split())
+    assert "No branch identity is asserted across moment space" in normalized
+    assert "Only portraits whose global topology audit certified" in normalized
+
+
 def test_zero_residual_is_an_exact_stochastic_adam_equilibrium():
     inputs, _ = adam_flow.empirical_uniform_grid(32)
     innovation = adam_flow.negative_sample_gradient(
@@ -299,6 +332,34 @@ def test_saddle_connection_triptych_is_a_distinct_zoo_wall_family():
                            rtol=0, atol=0)
         assert np.allclose(case.g, root*np.asarray(base.g),
                            rtol=0, atol=0)
+
+
+def test_wall_family_bracket_is_the_citable_object():
+    family = zoo.get_wall_family("nonnearest-saddle-connection")
+    assert family.wall_bracket is not None
+    lo, hi = family.wall_bracket
+    # ordering: the representative center lies strictly inside the bracket,
+    # which lies strictly inside the chamber parameters
+    assert family.below_parameter < lo < family.wall_parameter \
+        < hi < family.above_parameter
+    # the bracket is tight relative to the chamber gap but has nonzero width
+    assert 0 < hi-lo < 1e-9*family.wall_parameter
+    # a bracket must carry its verification protocol
+    assert family.bracket_protocol
+    assert "Radau" in family.bracket_protocol
+    assert "DOP853" in family.bracket_protocol
+
+
+def test_wall_family_bracket_validation_rejects_malformed_records():
+    import dataclasses
+
+    family = zoo.get_wall_family("nonnearest-saddle-connection")
+    with pytest.raises(ValueError):
+        dataclasses.replace(
+            family, wall_bracket=(family.above_parameter,
+                                  family.above_parameter+1))
+    with pytest.raises(ValueError):
+        dataclasses.replace(family, bracket_protocol="")
 
 
 def test_wall_limit_surgery_removes_only_the_two_involved_continuations():
@@ -347,3 +408,53 @@ def test_triptych_svg_contains_three_nested_panels():
     assert combined.count("<text>") == 3
     assert 'width="1920"' in combined
     assert combined.count("<line ") == 2
+    compact = saddle_connection_triptych.triptych_svg(
+        panels, panel_height=330)
+    assert 'height="330"' in compact
+    assert 'viewBox="0 0 1920 330"' in compact
+
+
+def test_saddle_connection_comparison_geometry_helpers():
+    point = np.array([1.0, 0.25])
+    curve = np.array([[0.0, 0.0], [2.0, 0.0]])
+    assert saddle_connection_comparison.point_polyline_distance(
+        point, curve) == pytest.approx(0.25)
+
+    family = zoo.get_wall_family("nonnearest-saddle-connection")
+    branches = [charts.Branch(
+        "unstable", np.array([[0.0, family.source_b], [1.0, 1.0]]),
+        "capture", {}, {
+            "saddle_b": family.source_b,
+            "unstable_direction": family.unstable_direction,
+        })]
+    candidate = portrait.Portrait(None, None, branches, None, None, {})
+    assert saddle_connection_comparison.tracked_branch(
+        candidate, family) is branches[0]
+
+    svg = saddle_connection_comparison.transverse_gallery_svg([
+        ("method A", [(-0.06, -2e-3), (0.0, -1e-3), (0.06, 1e-3)]),
+        ("method B", [(-0.06, 2e-6), (0.0, 1e-6), (0.06, -1e-6)]),
+    ])
+    assert svg.startswith('<svg xmlns="http://www.w3.org/2000/svg"')
+    assert svg.count('<polyline class="wu"') == 2
+    assert svg.count('<polyline class="ws"') == 2
+    assert "max |d|=2.000e-03" in svg
+    assert "max |d|=2.000e-06" in svg
+
+
+@pytest.mark.slow
+def test_saddle_connection_side_chambers_certify_in_requested_view():
+    """Regression for coincident terminal tails in the handle-slide zoo."""
+    family = zoo.get_wall_family("nonnearest-saddle-connection")
+    for member in ("below", "above"):
+        p = portrait.compute(
+            saddle_connection_triptych.build_member(member),
+            view=family.default_view)
+        assert p.box[0] < family.default_view[0]
+        assert p.box[1] > family.default_view[1]
+        assert p.box[2] < family.default_view[2]
+        assert p.box[3] > family.default_view[3]
+        assert p.ledger["topology"]["status"] == "certified"
+        assert p.ledger["topology"]["raw_event_count"] == 0
+        assert all(tail["method"] == "exact_superlevel_product"
+                   for tail in p.ledger["topology"]["stable_tails"])

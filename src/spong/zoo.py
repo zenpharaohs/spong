@@ -29,6 +29,13 @@ class WallFamily:
     portrait command promises one certified Morse-Smale portrait, whereas a
     wall member has a saddle connection and must be depicted by a dedicated
     limiting construction.
+
+    ``wall_parameter`` is a representative center for display and member
+    materialization only.  The citable object is ``wall_bracket``: an
+    interval whose endpoints have verified OPPOSITE landing fates under the
+    protocol recorded in ``bracket_protocol``.  Wall coordinates tighter
+    than the bracket are launch-protocol-dependent (theorems.md Theorem 8.4)
+    and must not be quoted without their protocol.
     """
 
     name: str
@@ -42,6 +49,20 @@ class WallFamily:
     unstable_direction: int
     default_view: tuple[float, float, float, float]
     description: str
+    wall_bracket: tuple[float, float] | None = None
+    bracket_protocol: str = ""
+
+    def __post_init__(self):
+        if self.wall_bracket is None:
+            return
+        lo, hi = self.wall_bracket
+        if not (self.below_parameter < lo < self.wall_parameter
+                < hi < self.above_parameter):
+            raise ValueError(
+                "wall_bracket must satisfy below < lo < wall < hi < above")
+        if not self.bracket_protocol:
+            raise ValueError(
+                "a wall_bracket requires a nonempty bracket_protocol")
 
 
 QUADRATIC_STIFF = ZooCase(
@@ -201,10 +222,21 @@ NONNEAREST_SADDLE_CONNECTION = WallFamily(
         "Three-state Lambda-rheostat family through the B-to-N saddle "
         "connection forced in Theorem 4.  Lambda=2 and Lambda=4 lie in the "
         "two Morse-Smale chambers and have clean, robustly different branch "
-        "landings; at Lambda*=2.177709563954844 the positive-b unstable "
-        "branch of the B saddle connects to the N saddle.  The center "
-        "portrait is a geometric wall limit, not an ordinary certified "
-        "portrait."
+        "landings; at the wall the positive-b unstable branch of the B "
+        "saddle connects to the N saddle.  Lambda* is quoted through its "
+        "bracket; digits inside the bracket are protocol-dependent.  The "
+        "center portrait is a geometric wall limit, not an ordinary "
+        "certified portrait."
+    ),
+    wall_bracket=(2.177709563952666, 2.1777095639570216),
+    bracket_protocol=(
+        "Landing fates at both endpoints verified by two independent "
+        "integrators (Radau rtol 1e-12 atol 1e-14; DOP853 rtol 1e-13 "
+        "atol 1e-15), jet-eigenvector launch offset 1e-8 from the "
+        "Newton-polished saddle at b=-0.4770682827686173: far minimum at "
+        "the lower endpoint, near minimum at the upper endpoint, all four "
+        "runs agreeing.  Numerical-oracle grade, not a signed-shooting "
+        "certificate."
     ),
 )
 

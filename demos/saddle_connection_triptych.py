@@ -1,17 +1,18 @@
 """Render the three portraits across the Theorem-4 saddle connection.
 
-The two side panels are ordinary Morse-chamber SPONG portraits with clean
-individual branches and robustly separated landing fates.  Their present
-full-plane topology audit remains FP64-unresolved because asymptotically
-adjacent stable tails exhaust the contact-event budget.  The center panel is
-deliberately different: the ordinary portraitist must refuse a
+The two side panels are certified Morse-chamber SPONG portraits with clean
+individual branches and robustly separated landing fates.  Exact sublevel
+and superlevel product completions prevent coincident terminal samples from
+being mistaken for changes to the finite Morse skeleton.  The center panel
+is deliberately different: the ordinary portraitist must refuse a
 non-Morse-Smale saddle connection, so we remove the two numerical branch
 continuations involved in the slide and insert their common geometric wall
 limit.  A high-accuracy Radau trace at the measured wall supplies that segment
 and must enter a small neighborhood of the target saddle.
 
-The horizontal scale is the physical ``a`` coordinate in every panel.  Each
-panel contains an inset around the B-to-N connection/turning region.
+The horizontal scale is the physical ``a`` coordinate in every panel.  The
+three full portraits are kept visually unobstructed; a second three-panel
+strip shows the B-to-N connection/turning region at larger scale.
 
 Usage:
   PYTHONPATH=src python3 demos/saddle_connection_triptych.py
@@ -178,10 +179,6 @@ def panel_svg(p, family, title, connection=None):
     main = render.plane_view(
         p, view=family.default_view, width=640, height=500,
         n_levels=32, n_grid=901, title=title, overlays=overlays)
-    detail = render.plane_view(
-        p, view=detail_view(p, family), width=270, height=190,
-        n_levels=14, n_grid=501, title="connection detail",
-        overlays=overlays)
     topology = topology_status(p)
     audit_note = ""
     if connection is None and topology != "certified":
@@ -194,24 +191,35 @@ def panel_svg(p, family, title, connection=None):
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="500" '
         'viewBox="0 0 640 500">\n'
-        f'{_svg_body(main)}\n{audit_note}'
-        '<svg x="350" y="48" width="270" height="190" '
-        'viewBox="0 0 270 190">\n'
-        f'{_svg_body(detail)}\n</svg>\n'
-        '<rect x="350" y="48" width="270" height="190" fill="none" '
-        'stroke="#555" stroke-width="1.2"/>\n</svg>')
+        f'{_svg_body(main)}\n{audit_note}</svg>')
 
 
-def triptych_svg(panels):
-    width, height = 1920, 500
+def detail_panel_svg(p, family, title, connection=None):
+    overlays = None
+    if connection is not None:
+        overlays = [{
+            "Y": connection,
+            "color": "#7b3fb4",
+            "width": 3.2,
+            "mark_start": False,
+            "mark_end": False,
+            "label": "B→N saddle connection",
+        }]
+    return render.plane_view(
+        p, view=detail_view(p, family), width=640, height=330,
+        n_levels=18, n_grid=601, title=title, overlays=overlays)
+
+
+def triptych_svg(panels, panel_height=500):
+    width, height = 1920, panel_height
     nested = []
     for i, svg in enumerate(panels):
         nested.append(
-            f'<svg x="{640*i}" y="0" width="640" height="500" '
-            f'viewBox="0 0 640 500">{_svg_body(svg)}</svg>')
+            f'<svg x="{640*i}" y="0" width="640" height="{height}" '
+            f'viewBox="0 0 640 {height}">{_svg_body(svg)}</svg>')
         if i:
             nested.append(
-                f'<line x1="{640*i}" y1="0" x2="{640*i}" y2="500" '
+                f'<line x1="{640*i}" y1="0" x2="{640*i}" y2="{height}" '
                 'stroke="#999" stroke-width="1"/>')
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
@@ -235,9 +243,11 @@ def main(argv=None):
     family = zoo.get_wall_family("nonnearest-saddle-connection")
     portraits = {}
     for member in ("below", "wall", "above"):
-        # Compute on the global automatic box (which contains the remote
-        # b≈7.42 minimum); ``default_view`` is a rendering crop only.
-        portraits[member] = portrait.compute(build_member(member))
+        # Pass the requested view through the normal box contract so every
+        # visible curve is continued beyond the rendering crop.  The
+        # resulting trace box also contains the remote b≈7.42 minimum.
+        portraits[member] = portrait.compute(
+            build_member(member), view=family.default_view)
 
     for member in ("below", "above"):
         if not portraits[member].ledger.get("summary", {}).get(
@@ -255,22 +265,45 @@ def main(argv=None):
     for key in portraits:
         portraits[key] = decimate_portrait(portraits[key])
 
+    if family.wall_bracket is not None:
+        lo, hi = family.wall_bracket
+        wall_title = f"Wall: Λ* ∈ [{lo:.15g}, {hi:.15g}]"
+    else:
+        wall_title = f"Wall: Λ*≈{family.wall_parameter:.15g}"
     titles = {
         "below": f"Below wall: Λ={family.below_parameter:g} → far minimum",
-        "wall": f"Wall: Λ*≈{family.wall_parameter:.15g}",
+        "wall": wall_title,
         "above": f"Above wall: Λ={family.above_parameter:g} → near minimum",
     }
     panels = {}
+    detail_panels = {}
     for member in ("below", "wall", "above"):
+        member_connection = connection if member == "wall" else None
         panels[member] = panel_svg(
             portraits[member], family, titles[member],
-            connection if member == "wall" else None)
+            member_connection)
+        detail_panels[member] = detail_panel_svg(
+            portraits[member], family,
+            f'{titles[member]} | connection detail', member_connection)
         (args.output_dir/f"{family.name}-{member}.svg").write_text(
             panels[member])
     triptych = triptych_svg([panels[x] for x in ("below", "wall", "above")])
     triptych_name = f"{family.name}-triptych.svg"
     (args.output_dir/triptych_name).write_text(triptych)
+    detail_triptych = triptych_svg(
+        [detail_panels[x] for x in ("below", "wall", "above")],
+        panel_height=330)
+    detail_name = f"{family.name}-connection-detail.svg"
+    (args.output_dir/detail_name).write_text(detail_triptych)
 
+    if family.wall_bracket is not None:
+        blo, bhi = family.wall_bracket
+        bracket_html = (
+            f"<p>The wall parameter is citable only through its bracket: "
+            f"Λ* ∈ [<code>{blo!r}</code>, <code>{bhi!r}</code>]. "
+            f"{family.bracket_protocol}</p>")
+    else:
+        bracket_html = ""
     html_name = f"{family.name}.html"
     (args.output_dir/html_name).write_text(f"""<!doctype html>
 <meta charset="utf-8"><title>{family.name}</title>
@@ -280,12 +313,14 @@ code{{background:#eee;padding:2px 4px}}</style>
 <h1>Saddle-connection handle slide</h1>
 <p>{family.description}</p>
 <object data="{triptych_name}" type="image/svg+xml"></object>
+<h2>Connection detail</h2>
+<object data="{detail_name}" type="image/svg+xml"></object>
 <p>The side panels are ordinary Morse-chamber portraits with individually
-qualified branches and robustly different landing fates. Their current global
-contact audits are reported in the JSON ledger rather than silently called
-certified. The center panel is the geometric wall limit: purple is the common
-B→N invariant-manifold segment; the two off-wall continuations it replaces
-are intentionally absent.</p>
+qualified branches, certified global contact audits, and robustly different
+landing fates. The center panel is the geometric wall limit: purple is the
+common B→N invariant-manifold segment; the two off-wall continuations it
+replaces are intentionally absent.</p>
+{bracket_html}
 """)
     report = {
         "format": "spong-saddle-connection-triptych-v1",
@@ -295,6 +330,8 @@ are intentionally absent.</p>
             "wall": family.wall_parameter,
             "above": family.above_parameter,
         },
+        "wall_bracket": family.wall_bracket,
+        "bracket_protocol": family.bracket_protocol,
         "tracked": {
             "source_b": family.source_b,
             "target_b": family.target_b,
@@ -312,6 +349,7 @@ are intentionally absent.</p>
         "wall_trace": trace,
         "wall_surgery": surgery,
         "triptych": triptych_name,
+        "connection_detail": detail_name,
         "html": html_name,
     }
     (args.output_dir/f"{family.name}.json").write_text(
