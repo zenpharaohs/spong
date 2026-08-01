@@ -452,6 +452,42 @@ def _target_matches(point, target, tolerance):
     ) <= tolerance
 
 
+def _earliest_monotone_certificate(last_index, certificate_at):
+    """Find the first certified sample in a terminal monotone suffix.
+
+    ``certificate_at`` must be truthy on a suffix of ``0..last_index``.
+    Exponential search makes the cost logarithmic even for the very long
+    capture and escape curves produced by stiff examples; bisection then
+    places the topological completion at the earliest certified sample.
+    """
+    best = None
+    failed_index = None
+    offset = 0
+    while True:
+        index = max(0, last_index-offset)
+        candidate = certificate_at(index)
+        if candidate is not None:
+            best = candidate
+        elif best is not None:
+            failed_index = index
+            break
+        if index == 0:
+            break
+        offset = 1 if offset == 0 else min(last_index, 2*offset)
+
+    if best is not None and failed_index is not None:
+        lo, hi = failed_index+1, best["entry_index"]
+        while lo < hi:
+            mid = (lo+hi)//2
+            candidate = certificate_at(mid)
+            if candidate is None:
+                lo = mid+1
+            else:
+                best = candidate
+                hi = mid
+    return best
+
+
 def _capture_certificate(m, enumeration, branch, allowed_radius,
                          basin_radii):
     """Find a pre-connector point in a one-minimum bounded sublevel tube."""
@@ -461,62 +497,138 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
     # Y[-1] is the exact critical endpoint appended after event detection.
     # It is useful for drawing but cannot prove that continuation entered the
     # basin.  Search only measured points preceding that connector.
-    # Descent makes the last measured point the strongest candidate: its
-    # sublevel component is the smallest one seen before the drawing-only
-    # connector.  A short logarithmic fallback tolerates dense-output/event
-    # placement noise without turning exact Sturm isolation into a scan over
-    # hundreds of nearly identical dyadic levels.
-    offsets = (1, 2, 4, 8, 16, 32, 64, 128, 256)
-    indices = []
-    for offset in offsets:
-        index = len(branch.Y)-1-offset
-        if index >= 0 and index not in indices:
-            indices.append(index)
-    for index in indices:
-        inventory = _sublevel_component_inventory(
-            m, enumeration, branch.Y[index])
-        if not inventory["certified"]:
-            continue
-        if (not inventory["bounded"] or inventory["saddles"]
-                or len(inventory["minima"]) != 1):
-            continue
-        minimum = inventory["minima"][0]
-        if not _target_matches(
-                (minimum.a, minimum.b), target, allowed_radius):
-            continue
-        return {
-            "certified": True,
-            "reason": None,
-            "method": "exact_level_tube",
-            "entry_index": index,
-            "minimum": (float(minimum.a), float(minimum.b)),
-            "level_upper": inventory["level_upper"],
-            "b_interval": (inventory["left_boundary"],
-                           inventory["right_boundary"]),
-        }
-
-    # A global minimum can share every positive sublevel component with an
-    # end at infinity, so no bounded tube exists even though local capture is
-    # completely regular.  The independently constructed strong-convexity
-    # ball is forward invariant under descent and contains no other critical
-    # point.  As above, the appended exact endpoint is never evidence.
     matching = [q for q in enumeration.minima if _target_matches(
         (q.a, q.b), target, allowed_radius)]
-    if len(matching) == 1:
-        minimum = matching[0]
-        radius = basin_radii.get((float(minimum.a), float(minimum.b)), 0.0)
-        for index in indices:
-            if radius > 0.0 and _norm2(
-                    np.asarray(branch.Y[index], dtype=float)
-                    - np.asarray((minimum.a, minimum.b))) < radius:
+    minimum = matching[0] if len(matching) == 1 else None
+    radius = (0.0 if minimum is None else basin_radii.get(
+        (float(minimum.a), float(minimum.b)), 0.0))
+    last = len(branch.Y)-2
+
+    def first_true(predicate):
+        if not predicate(last):
+            return None
+        lo, hi = 0, last
+        while lo < hi:
+            mid = (lo+hi)//2
+            if predicate(mid):
+                hi = mid
+            else:
+                lo = mid+1
+        return lo
+
+    def exact_tube_at(index):
+        inventory = _sublevel_component_inventory(
+            m, enumeration, branch.Y[index])
+        if (inventory["certified"] and inventory["bounded"]
+                and not inventory["saddles"]
+                and len(inventory["minima"]) == 1):
+            contained = inventory["minima"][0]
+            if _target_matches(
+                    (contained.a, contained.b), target, allowed_radius):
                 return {
                     "certified": True,
                     "reason": None,
-                    "method": "strictly_convex_ball",
+                    "method": "exact_level_tube",
                     "entry_index": index,
-                    "minimum": (float(minimum.a), float(minimum.b)),
-                    "radius": float(radius),
+                    "minimum": (float(contained.a), float(contained.b)),
+                    "level_upper": inventory["level_upper"],
+                    "b_interval": (inventory["left_boundary"],
+                                   inventory["right_boundary"]),
                 }
+        return None
+
+    # Find the earliest measured point, after the independently certified
+    # local graph, in the terminal one-minimum product.  Once descent has
+    # entered a bounded sublevel component containing the target minimum and
+    # no saddle, every later point remains in that product.  The lowest saddle
+    # level above the minimum is only a cheap floating locator; every accepted
+    # point is independently proved by ``exact_tube_at``.
+    #
+    # An older rule selected the halfway level between the minimum and the
+    # lowest saddle above it.  That was safe for endpoint naming but much too
+    # late for topology completion: independently traced unstable branches
+    # entering the same basin can become closer than the polyline resolution
+    # thousands of samples before the halfway level.  Their harmless terminal
+    # chords then exhausted the contact-event budget.  Starting the exact
+    # product at its first certified post-graph sample discharges only
+    # unstable/unstable contacts inside the named basin; stable/unstable
+    # contacts remain fully audited.  Starting at ``critical_steps`` also
+    # avoids repeating exact level-set work inside the materialized graph,
+    # whose injectivity is already certified separately.
+    if minimum is not None:
+        lower = min(last, max(0, int(branch.diag.get(
+            "critical_steps", 0))))
+        result = exact_tube_at(lower)
+        if result is not None:
+            return result
+
+        minimum_level = float(m.L(minimum.a, minimum.b))
+        saddle_levels = sorted(
+            float(m.L(q.a, q.b)) for q in enumeration.saddles
+            if float(m.L(q.a, q.b)) > minimum_level)
+        if saddle_levels:
+            threshold = np.nextafter(saddle_levels[0], -np.inf)
+
+            def below_merging_level(index):
+                return float(m.L(
+                    float(branch.Y[index, 0]),
+                    float(branch.Y[index, 1]))) < threshold
+
+            if below_merging_level(last):
+                lo, hi = lower, last
+                while lo < hi:
+                    mid = (lo+hi)//2
+                    if below_merging_level(mid):
+                        hi = mid
+                    else:
+                        lo = mid+1
+                locator = lo
+                # The strict dyadic upper level may still overlap the saddle
+                # at the first floating locator.  Probe forward
+                # exponentially until the exact one-minimum inventory closes.
+                failed = lower
+                offset = 0
+                best = None
+                while True:
+                    index = min(last, locator+offset)
+                    candidate = exact_tube_at(index)
+                    if candidate is not None:
+                        best = candidate
+                        break
+                    failed = index
+                    if index == last:
+                        break
+                    offset = 1 if offset == 0 else min(
+                        last-locator, 2*offset)
+                if best is not None:
+                    lo, hi = failed+1, best["entry_index"]
+                    while lo < hi:
+                        mid = (lo+hi)//2
+                        candidate = exact_tube_at(mid)
+                        if candidate is None:
+                            lo = mid+1
+                        else:
+                            best = candidate
+                            hi = mid
+                    return best
+
+    # A global minimum can share every positive sublevel component with an
+    # end at infinity.  Its independently certified strong-convexity ball is
+    # a forward-invariant substitute for the bounded level tube.  Its
+    # Euclidean membership predicate is cheap enough for exact bisection.
+    if minimum is not None and radius > 0.0:
+        center = np.asarray((minimum.a, minimum.b))
+        index = first_true(lambda i: _norm2(
+            np.asarray(branch.Y[i], dtype=float)-center) < radius)
+        if index is not None:
+            return {
+                "certified": True,
+                "reason": None,
+                "method": "strictly_convex_ball",
+                "entry_index": index,
+                "minimum": (float(minimum.a), float(minimum.b)),
+                "radius": float(radius),
+            }
     return {"certified": False,
             "reason": "no_level_tube_or_convex_capture_ball"}
 
@@ -541,7 +653,7 @@ def _strictly_positive_on_ray(polynomial, start, direction):
     return all(coefficient >= 0 for coefficient in shifted)
 
 
-def _unstable_far_field_funnel(m, branch):
+def _unstable_far_field_funnel(m, branch, index=None):
     """Exact shrinking invariant corridor around the backbone on a b-ray.
 
     Put r=a/a*(b)-1, h=sign(b)b, and s=hr.  The corridor |s|<=k
@@ -554,7 +666,9 @@ def _unstable_far_field_funnel(m, branch):
     polynomial sign tests make b monotone outward and the two boundaries
     point inward on the complete ray.
     """
-    endpoint = branch.Y[-1]
+    if index is None:
+        index = len(branch.Y)-1
+    endpoint = branch.Y[index]
     try:
         aq, bq = (Fraction.from_float(float(x)) for x in endpoint)
         A, B = m.alpha, m.beta
@@ -618,7 +732,7 @@ def _unstable_far_field_funnel(m, branch):
         "certified": True,
         "reason": None,
         "method": "exact_backbone_funnel",
-        "entry_index": len(branch.Y)-1,
+        "entry_index": index,
         "end": ("b_plus_infinity" if direction > 0
                 else "b_minus_infinity"),
         "scaled_relative_half_width": float(width),
@@ -633,21 +747,17 @@ def _unstable_escape_certificate(m, enumeration, branch, box,
         return {"certified": False, "reason": "not_unstable_box_exit"}
     if not _box_exit_crossing(branch.Y, box, boundary_tolerance):
         return {"certified": False, "reason": "no_box_boundary_crossing"}
-    offsets = (0, 1, 2, 4, 8, 16, 32, 64, 128)
-    indices = []
-    for offset in offsets:
-        index = len(branch.Y)-1-offset
-        if index >= 0 and index not in indices:
-            indices.append(index)
-    for index in indices:
+    last = len(branch.Y)-1
+
+    def certificate_at(index):
         inventory = _sublevel_component_inventory(
             m, enumeration, branch.Y[index])
         if not inventory["certified"]:
-            continue
+            return None
         if inventory["minima"] or inventory["saddles"]:
-            continue
+            return None
         if len(inventory["unbounded_sides"]) != 1:
-            continue
+            return None
         return {
             "certified": True,
             "reason": None,
@@ -658,7 +768,77 @@ def _unstable_escape_certificate(m, enumeration, branch, box,
             "b_interval": (inventory["left_boundary"],
                            inventory["right_boundary"]),
         }
-    funnel = _unstable_far_field_funnel(m, branch)
+
+    # Begin no earlier than the separately certified local graph.  A global
+    # ``below every critical value`` locator is too conservative here: an
+    # unbounded component may already contain no critical point while a lower
+    # minimum lives in a different component.  Exact inventories are cheap
+    # enough to bracket the product directly.  Every retained candidate is
+    # independently verified; the search ordering is only an accelerator.
+    lower = min(last, max(0, int(branch.diag.get("critical_steps", 0))))
+    tube = None
+    failed_before_tube = None
+    offset = 0
+    while True:
+        index = max(lower, last-offset)
+        candidate = certificate_at(index)
+        if candidate is not None:
+            tube = candidate
+        elif tube is not None:
+            failed_before_tube = index
+            break
+        if index == lower:
+            break
+        offset = 1 if offset == 0 else min(last-lower, 2*offset)
+    if tube is not None and failed_before_tube is not None:
+        lo = failed_before_tube
+        hi = tube["entry_index"]
+        while hi-lo > 1:
+            mid = (lo+hi)//2
+            candidate = certificate_at(mid)
+            if candidate is None:
+                lo = mid
+            else:
+                hi = mid
+                tube = candidate
+    if tube is not None:
+        return tube
+    # The shrinking corridor is often already invariant shortly before the
+    # trace reaches the box.  Certifying it only at the final sample leaves a
+    # small band of numerically indistinguishable same-end chords in the
+    # audited prefix.  Probe backwards geometrically and retain the earliest
+    # independently verified corridor; no monotonicity assumption about the
+    # floating trace is used.
+    funnel = None
+    failed_before_funnel = None
+    offset = 0
+    while True:
+        index = max(lower, last-offset)
+        candidate = _unstable_far_field_funnel(m, branch, index)
+        if candidate is not None:
+            funnel = candidate
+        elif funnel is not None:
+            failed_before_funnel = index
+            break
+        if index == lower:
+            break
+        offset = 1 if offset == 0 else min(last-lower, 2*offset)
+    if funnel is not None and failed_before_funnel is not None:
+        # The geometric probes deliberately leave a coarse bracket.  Refine
+        # that bracket with independently proved candidates so the completed
+        # product begins before the first asymptotic chord-contact band.  The
+        # returned corridor is valid even if candidate success were not
+        # monotone; monotonicity is used only to find a useful earlier sample.
+        lo = failed_before_funnel
+        hi = funnel["entry_index"]
+        while hi-lo > 1:
+            mid = (lo+hi)//2
+            candidate = _unstable_far_field_funnel(m, branch, mid)
+            if candidate is None:
+                lo = mid
+            else:
+                hi = mid
+                funnel = candidate
     if funnel is not None:
         return funnel
     return {"certified": False,
@@ -731,12 +911,11 @@ def _stable_escape_certificate(m, enumeration, branch, box,
         return {"certified": False, "reason": "not_stable_box_exit"}
     if not _box_exit_crossing(branch.Y, box, boundary_tolerance):
         return {"certified": False, "reason": "no_box_boundary_crossing"}
-    offsets = (0, 1, 2, 4, 8, 16, 32, 64, 128)
-    best = None
-    for offset in offsets:
-        index = len(branch.Y)-1-offset
-        if index < 0:
-            continue
+    cache = {}
+
+    def certificate_at(index):
+        if index in cache:
+            return cache[index]
         try:
             lower = _strict_level_at_float_point(
                 m, branch.Y[index], above=False)
@@ -745,18 +924,32 @@ def _stable_escape_certificate(m, enumeration, branch, box,
             signs = [_sign_at_critical_point(
                 m, point, level_polynomial) for point in enumeration.points]
         except (ArithmeticError, OverflowError, ValueError):
-            continue
+            cache[index] = None
+            return None
         # u(q) < lower exactly when A(q)(C-lower)-B(q)^2 < 0.
         if all(sign == -1 for sign in signs):
-            best = {
+            result = {
                 "certified": True,
                 "reason": None,
+                "method": "exact_superlevel_product",
                 "entry_index": index,
                 "level_lower": _finite_float_or_none(lower),
                 "exit_side": _exit_side(branch.Y[-1], box),
             }
-        elif best is not None:
-            break
+        else:
+            result = None
+        cache[index] = result
+        return result
+
+    # The old fixed 128-point lookback placed the certified exterior suffix
+    # almost at the compute-box boundary.  Stable branches can contain tens of
+    # thousands of samples, and asymptotically adjacent tails then become
+    # indistinguishable before the suffix begins.  Search exponentially back
+    # through the monotone-ascent trace, then bisect the transition to retain
+    # the earliest sampled point whose loss is *exactly* above every finite
+    # critical value.
+    best = _earliest_monotone_certificate(
+        len(branch.Y)-1, certificate_at)
     if best is not None:
         return best
     return {"certified": False,
@@ -968,6 +1161,17 @@ def audit(m, enumeration, branches, box) -> dict:
         root = None if native_contacts else trees[i]
         for si, sj, kind, point in _self_contact_events(
                 np.asarray(br.Y), root, predicate_tol):
+            suffix = terminal_suffixes[i]
+            completed_stable_tail = (
+                suffix["kind"] == "stable_infinity"
+                and suffix["start"] is not None
+                and min(si, sj) >= suffix["start"])
+            if completed_stable_tail:
+                # Above every finite critical value the gradient flow is a
+                # product.  The certified stable suffix is represented by an
+                # order-preserving arc to the compactification boundary, not
+                # by numerically indistinguishable asymptotic chords.
+                continue
             if (kind == "ambiguous" and _strictly_monotone_subarc(
                     br.Y, si, sj)):
                 # Exact monotonicity of either polyline coordinate orders the
@@ -1036,6 +1240,16 @@ def audit(m, enumeration, branches, box) -> dict:
                     and _norm2(
                         np.asarray(ti["terminal"])
                         - np.asarray(tj["terminal"])) <= allowed_radius)
+                same_completed_stable_exterior = (
+                    ti["kind"] == tj["kind"] == "stable_infinity"
+                    and ti["start"] is not None and tj["start"] is not None
+                    and ti["side"] == tj["side"]
+                    and si >= ti["start"] and sj >= tj["start"])
+                same_completed_unstable_exterior = (
+                    ti["kind"] == tj["kind"] == "unstable_infinity"
+                    and ti["start"] is not None and tj["start"] is not None
+                    and ti["end"] == tj["end"]
+                    and si >= ti["start"] and sj >= tj["start"])
                 # Unstable curves are basin interiors, not basin boundaries.
                 # Once continuation has independently captured both at the
                 # same certified critical point, their mutual polyline
@@ -1043,12 +1257,14 @@ def audit(m, enumeration, branches, box) -> dict:
                 # rerouted inside that basin.  Crossings with a STABLE
                 # separatrix remain forbidden everywhere: those are the
                 # topology-changing events this audit is designed to catch.
-                # Only same-basin unstable tails after entry into an exactly
-                # named one-minimum tube are exempt; their incidence is fixed
-                # and they may be rerouted within the tube.  Every other
-                # measured finite segment remains subject to the contact
-                # audit, including branches escaping through one box side.
-                if same_sublevel_end:
+                # The time-reversed analogue applies to stable tails after
+                # exact entry above every finite critical level.  That
+                # critical-point-free exterior is a product, so the sampled
+                # suffixes are replaced by disjoint, order-preserving arcs to
+                # infinity.  All prefixes and every stable/unstable contact
+                # remain subject to the scan.
+                if (same_sublevel_end or same_completed_stable_exterior
+                        or same_completed_unstable_exterior):
                     continue
                 raw_event_count += 1
                 if raw_event_count > raw_event_budget:

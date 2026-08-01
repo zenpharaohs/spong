@@ -266,7 +266,8 @@ def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
                   if not x["certified"]]
     assert len(unresolved) == 1
     assert unresolved[0]["kind"] == "finite_capture"
-    assert all(x["certified"] and x["method"] == "exact_backbone_funnel"
+    assert all(x["certified"] and x["method"] in (
+                   "exact_sublevel_tube", "exact_backbone_funnel")
                for x in topology["unstable_ends"]
                if x["kind"] == "infinity_escape")
     assert set(p.ledger["timing"]) == {
@@ -300,7 +301,8 @@ def test_stiff_stub_extends_before_global_handoff():
     if topology["resolution_reason"] == "topology_contact":
         assert topology["forbidden_count"] > 0
     assert sum(not x["certified"] for x in topology["unstable_ends"]) == 1
-    assert all(x["certified"] and x["method"] == "exact_backbone_funnel"
+    assert all(x["certified"] and x["method"] in (
+                   "exact_sublevel_tube", "exact_backbone_funnel")
                for x in topology["unstable_ends"]
                if x["kind"] == "infinity_escape")
     saddle = max(p.enumeration.saddles, key=lambda q: q.b)

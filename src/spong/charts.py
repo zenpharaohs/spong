@@ -1123,7 +1123,11 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         # retry — the zoom-proof guarantee enforced at trace time
         b_prev, w_prev = b, w
         retry_floor = continuation_floor
-        for _retry in range(7):
+        # Initial attempt plus seven halvings to ``continuation_floor``.
+        # Seven total attempts fell out of the loop immediately after the
+        # seventh halve, bypassing the floor fallback with the last NaN stage
+        # value still live.
+        for _retry in range(8):
             h = np.nan
             try:
                 if chart == "slow":
@@ -1160,7 +1164,10 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                     m.L(a_new_test, b_new) - m.L(a_prev, b_prev))
                 descent_slack = 64.0*np.finfo(float).eps * (
                     1.0 + abs(float(m.L(a_prev, b_prev))))
-                if (expected >= 0.0
+                if (not all(np.isfinite(x) for x in (
+                        a_prev, a_new_test, expected, actual,
+                        descent_slack))
+                        or expected >= 0.0
                         or actual > 1e-4*expected + descent_slack):
                     step_failed = True
             # A failed stage solve is a STEP-SIZE signal, not a fatal error.
@@ -1784,7 +1791,19 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 # until past it.
                 diag["zones"].append(("shallow_rejected", b_cur,
                                       float(bg[j]), iters))
-                shallow_gate = (float(bg[min(j, n_grid - 1)]), sgn)
+                gate_end = float(bg[min(j, n_grid - 1)])
+                if (gate_end-b_cur)*sgn <= 0.0:
+                    # Continuation has overshot the nominal sounding
+                    # interval.  Re-entering with a gate behind the current
+                    # state immediately triggers the same rejected zone and
+                    # eventually aborts at the zone-count limit.  The finite
+                    # sounding grid has no forward shallow-water ownership
+                    # information here, so let the certified continuation
+                    # engine own the remainder to the trace-box boundary.
+                    gate_end = float(box[3] if sgn > 0.0 else box[2])
+                    diag["sounding_interval_exhausted"] = (
+                        diag.get("sounding_interval_exhausted", 0)+1)
+                shallow_gate = (gate_end, sgn)
                 tail, term_e, sw, (b_cur, w_cur) = _continue_curve(
                     m, b_cur, w_cur, +1, targets, box, ds,
                     cap_r=cap_r, ds0=launch_scale,

@@ -100,10 +100,17 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     # them before asking unstable branches to discover their destinations.
     span_scale = max(display_view[3] - display_view[2],
                      display_view[1] - display_view[0])
+    # Escalation must improve geometric resolution as well as enlarge the
+    # trace box.  Merely extending the same sampled curves repeats identical
+    # pre-terminal chord contacts at every level.  Halving the requested chord
+    # scale lets dense collocation distinguish nearby invariant manifolds
+    # before the exact terminal-product completion takes over.
+    resolution_divisor = 2.0**geometry_level
     for s in e.saddles:
         for sign in (+1, -1):
             br = charts.trace_stable(
-                m, s.b, sign, box=box, ds=span_scale / 30000.0,
+                m, s.b, sign, box=box,
+                ds=span_scale/(30000.0*resolution_divisor),
                 critical_local=s.local,
                 critical_stub=_stable_stub(s, sign, m))
             br.diag["saddle_b"] = s.b
@@ -114,7 +121,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             branches.append(br)
 
     discovery_ds = max(display_view[3]-display_view[2],
-                       display_view[1]-display_view[0]) / 30000.0
+                       display_view[1]-display_view[0]) / (
+                           30000.0*resolution_divisor)
     for s in e.saddles:
         # ---- unstable branches: discover capture, never prescribe it --- #
         for direction in (+1, -1):
@@ -134,7 +142,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
                 chord_direct = float(np.hypot(
                     direct.a-s.a, direct.b-s.b))
                 trace_ds = max(
-                    db_direct/4000.0, chord_direct/8000.0)
+                    db_direct/(4000.0*resolution_divisor),
+                    chord_direct/(8000.0*resolution_divisor))
             br = charts.trace_unstable(
                 m, s.b, nominal, box=box,
                 ds=trace_ds,

@@ -165,7 +165,15 @@ coefficients are the finite-work admission rule; otherwise the funnel declines.
 Stable escape requires an actual trace-box crossing and an exact lower
 level at which every finite critical value is proved lower by rational interval
 evaluation.  Asymptote residuals remain metrology and never substitute for
-these finite endpoint or contact certificates.
+these finite endpoint or contact certificates.  After exact superlevel entry,
+stable branches sharing a certified trace-box exit side are completed by
+disjoint, order-preserving arcs through the critical-point-free exterior.
+That side is the finite boundary-order certificate; the runtime does not infer
+an endpoint merely from a fitted asymptote.
+Likewise, captured unstable branches are completed inside their exactly named
+one-minimum sublevel component.  Only mutual contacts wholly inside such a
+certified terminal product are trimmed; every measured prefix and every
+stable/unstable contact remains part of the audit.
 
 The exact Morse/discriminant margins certify only the critical-point
 inventory and its local indices.  They do **not** certify structural stability

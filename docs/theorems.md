@@ -566,9 +566,14 @@ basin-interior representatives of the same terminal component, not basin
 boundaries; their sampled suffixes may be replaced by disjoint arcs without
 changing the Morse complex.  Their mutual contacts are therefore trimmed only
 after both independent continuations certify the same critical endpoint.
-Sublevel suffixes below the applicable saddle level and superlevel stable
-suffixes in the same compactified end provide stronger local trimming
-certificates where available.
+The dual construction applies to stable branches after exact entry above
+every finite critical value.  The critical-point-free exterior is a product.
+Stable suffixes with the same certified trace-box exit side are represented
+by disjoint, order-preserving arcs to infinity; that side supplies their
+boundary order without guessing an asymptotic attachment.  The audit locates
+the earliest certified sample
+of each monotone stable suffix by exponential search and bisection.  Contacts
+before either exact entry, and every stable/unstable contact, remain forbidden.
 
 The trace box is escalated when a stable exit has not yet entered either a
 certified superlevel end or a valid algebraic asymptotic regime.  Failure after

@@ -99,6 +99,53 @@ def test_same_minimum_unstable_contacts_are_trimmed_but_separatrix_is_not(d2):
     assert separated["forbidden_intersections"]
 
 
+def test_earliest_monotone_certificate_finds_start_of_long_suffix():
+    calls = []
+
+    def certificate_at(index):
+        calls.append(index)
+        if index < 137:
+            return None
+        return {"entry_index": index}
+
+    result = topology._earliest_monotone_certificate(100000, certificate_at)
+    assert result["entry_index"] == 137
+    assert len(calls) < 40
+
+
+def test_same_end_stable_contacts_are_trimmed_only_after_superlevel(
+        d2, monkeypatch):
+    """The exact superlevel product replaces coincident sampled tails;
+    their measured prefixes remain subject to the ordinary contact scan."""
+    m, e = d2
+    branches = [
+        Branch("stable", np.array([
+            [-2., -1.], [-1., -1.], [0., -1.], [1., 1.], [2., 1.]]),
+               "box_exit"),
+        Branch("stable", np.array([
+            [-2., 1.], [-1., 1.], [0., 1.], [1., -1.], [2., -1.]]),
+               "box_exit"),
+    ]
+
+    def complete_tail(*_args, **_kwargs):
+        return {
+            "certified": True, "reason": None,
+            "method": "exact_superlevel_product",
+            "entry_index": 2, "level_lower": 1.0, "exit_side": 1,
+        }
+
+    monkeypatch.setattr(topology, "_stable_escape_certificate", complete_tail)
+    completed = topology.audit(m, e, branches, (-2., 2., -2., 2.))
+    assert not completed["forbidden_intersections"]
+
+    def late_tail(*_args, **_kwargs):
+        return {**complete_tail(), "entry_index": 3}
+
+    monkeypatch.setattr(topology, "_stable_escape_certificate", late_tail)
+    measured = topology.audit(m, e, branches, (-2., 2., -2., 2.))
+    assert measured["forbidden_intersections"]
+
+
 def test_portraitist_runs_stable_first_and_emits_topology_certificate():
     m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
     p = portrait.compute(m)
