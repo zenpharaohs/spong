@@ -25,6 +25,8 @@ GEOMETRY_METHODS = (
     "implicit-midpoint",
     "rkf45",
     "ros2",
+    "stork2",
+    "stork4",
 )
 
 
@@ -238,6 +240,146 @@ def _ros2_trial(m, y, h, time_direction):
     return second, second-first, True
 
 
+def _stork2_b(j):
+    """RKG2 coefficient used by the published STORK-2 recurrence."""
+    if j == 0:
+        return 1.0
+    if j == 1:
+        return 1.0/3.0
+    return (4.0*(j-1)*(j+4)
+            / (3.0*j*(j+1)*(j+2)*(j+3)))
+
+
+def _stork2_step(m, y, h, time_direction, previous_velocity,
+                 previous_h, stages=20):
+    """One autonomous-flow STORK-2 macro step with first-order Taylor NFEs.
+
+    STORK replaces the internal RKG2 model evaluations by a time-Taylor
+    approximation from macro-step velocity history.  For an autonomous SPONG
+    flow, this is the total velocity derivative along the computed orbit.  The
+    first macro step is Forward Euler, matching the published startup.
+    """
+    velocity = _rhs(m, y, time_direction)
+    if previous_velocity is None or previous_h is None:
+        return y+h*velocity, velocity
+    if stages < 2:
+        raise ValueError("STORK-2 requires at least two stabilized stages")
+    velocity_derivative = (velocity-previous_velocity)/previous_h
+    base = np.asarray(y, dtype=float)
+    y_jm2 = base.copy()
+    y_jm1 = base.copy()
+    denominator = stages*stages+stages-2
+    for j in range(1, stages+1):
+        if j == 1:
+            mu_tilde = 6.0/((stages+4)*(stages-1))
+            y_j = y_jm1+h*mu_tilde*velocity
+        else:
+            fraction = (4.0/(3.0*denominator) if j == 2 else
+                        ((j-1)**2+(j-1)-2.0)/denominator)
+            virtual_velocity = velocity+fraction*h*velocity_derivative
+            bj = _stork2_b(j)
+            mu = (2*j+1)*bj/(j*_stork2_b(j-1))
+            nu = -(j+1)*bj/(j*_stork2_b(j-2))
+            mu_tilde = mu*6.0/((stages+4)*(stages-1))
+            gamma_tilde = -mu_tilde*(
+                1.0-j*(j+1)*_stork2_b(j-1)/2.0)
+            y_j = (mu*y_jm1+nu*y_jm2+(1.0-mu-nu)*base
+                   +h*mu_tilde*virtual_velocity+h*gamma_tilde*velocity)
+        y_jm2, y_jm1 = y_jm1, y_j
+    return y_jm1, velocity
+
+
+_STORK4_COEFFICIENTS = {
+    # Published ROCK4 tables used by the STORK reference implementation.
+    # The recurrence degree is followed by the four-stage composition.
+    9: (
+        (0.01862250741526137, 0.02250861576538788,
+         0.006766202022280821, 0.02586805882924489,
+         0.0317004234603281, 0.02877953008086195,
+         0.06376714023863055, 0.03131867762450776,
+         0.09801783524123062, 0.0335586405620185,
+         0.1322218594416999, 0.035606882312253,
+         0.1658724905539629, 0.0377737167357727,
+         0.2016177039517425, 0.04119698781191684,
+         0.2539572842035754),
+        (-0.148972804305139, 0.475296959544537,
+         -0.245899260153289, 0.01272030101911,
+         -0.0357508839759137, 0.481825981739298),
+        (0.678662206121957, -0.263538563990534,
+         -0.347971227180309, 0.621040683222628)),
+    20: (
+        (0.005278040811520425, 0.006402421198476983,
+         0.007026749310824704, 0.007381444032562888,
+         0.03309125386700502, 0.0082346855199241,
+         0.06683990648107069, 0.00898122293954147,
+         0.1030531116670419, 0.009637773923336658,
+         0.1392177117208699, 0.01021841796444464,
+         0.1741238287384007, 0.01073483180895483,
+         0.2072226942408981, 0.01119665624742548,
+         0.238310549894101, 0.01161186412382382,
+         0.2673653866792523, 0.01198709958412187,
+         0.294460708386312, 0.01232800940556657,
+         0.3197217653056301, 0.01263963481803662,
+         0.3433101656487968, 0.01292700918588335,
+         0.3654364911202174, 0.01319625157476125,
+         0.3864151426812009, 0.01345671217793918,
+         0.4067976665874104, 0.01372517143690529,
+         0.4276578990766819, 0.0140336859283097,
+         0.451161671749244, 0.01444284729184994,
+         0.481626462022525, 0.01505946839641039,
+         0.5272614695163532),
+        (-0.126496410155342, 0.495458691659965,
+         -0.269513232370108, -0.0103575442717928,
+         -0.017638711552781, 0.479887174404288),
+        (0.731832397913825, -0.309659464712225,
+         -0.358881456195461, 0.614544900863432)),
+}
+
+
+def _stork4_step(m, y, h, time_direction, previous_velocity,
+                 previous_h, stages=20):
+    """Published STORK-4 recurrence with first-order Taylor virtual NFEs."""
+    velocity = _rhs(m, y, time_direction)
+    if previous_velocity is None or previous_h is None:
+        return y+h*velocity, velocity
+    if stages not in _STORK4_COEFFICIENTS:
+        raise ValueError(
+            "comparison STORK-4 tables are available for 9 or 20 stages")
+    recurrence, finishing_a, finishing_b = _STORK4_COEFFICIENTS[stages]
+    velocity_derivative = (velocity-previous_velocity)/previous_h
+    base = np.asarray(y, dtype=float)
+
+    # Orthogonal-polynomial recurrence.  The released scheduler leaves Y_j
+    # stale after constructing Y_1; the paper's Algorithm 2 explicitly uses
+    # this Y_1, which is the mathematically consistent initialization here.
+    y_jm2 = base.copy()
+    y_jm1 = base+h*recurrence[0]*velocity
+    c_jm2 = 0.0
+    c_jm1 = h*recurrence[0]
+    for j in range(2, stages+1):
+        mu = recurrence[2*(j-2)+1]
+        previous_weight = 1.0+recurrence[2*(j-2)+2]
+        older_weight = -recurrence[2*(j-2)+2]
+        virtual_velocity = velocity+c_jm1*velocity_derivative
+        y_j = (h*mu*virtual_velocity+previous_weight*y_jm1
+               +older_weight*y_jm2)
+        c_j = h*mu+previous_weight*c_jm1+older_weight*c_jm2
+        y_jm2, y_jm1 = y_jm1, y_j
+        c_jm2, c_jm1 = c_jm1, c_j
+
+    # Four-stage order-four composition, retaining Taylor virtual NFEs.
+    v1 = velocity+c_jm1*velocity_derivative
+    c2 = c_jm1+h*finishing_a[0]
+    v2 = velocity+c2*velocity_derivative
+    c3 = c_jm1+h*(finishing_a[1]+finishing_a[2])
+    v3 = velocity+c3*velocity_derivative
+    c4 = c_jm1+h*sum(finishing_a[3:6])
+    v4 = velocity+c4*velocity_derivative
+    result = y_jm1+h*(finishing_b[0]*v1+finishing_b[1]*v2
+                      +finishing_b[2]*v3+finishing_b[3]*v4)
+    return result, velocity
+
+
 def _symmetric_eigenvector(H, lower):
     h11, h12, h22 = float(H[0, 0]), float(H[0, 1]), float(H[1, 1])
     trace = h11+h22
@@ -263,7 +405,8 @@ def _outside(y, box):
 
 
 def _trace(m, start, method, box, critical_points, origin, time_direction,
-           step_size, max_steps, time_horizon, rtol, atol):
+           step_size, max_steps, time_horizon, rtol, atol,
+           capture_kinds=None, stork_stages=20):
     y = np.asarray(start, dtype=float)
     points = [y.copy()]
     h = float(step_size)
@@ -275,6 +418,8 @@ def _trace(m, start, method, box, critical_points, origin, time_direction,
     capture = 2e-4*span
     display_resolution = span/5000.0
     term = "max_steps"
+    stork_previous_velocity = None
+    stork_previous_h = None
     for iteration in range(max_steps):
         remaining = time_horizon-elapsed_time
         if remaining <= 16*np.finfo(float).eps*max(1.0, time_horizon):
@@ -323,6 +468,19 @@ def _trace(m, start, method, box, critical_points, origin, time_direction,
             ynew = candidate
             h = next_h
             h_used = trial_h
+        elif method in ("stork2", "stork4"):
+            with np.errstate(over="ignore", invalid="ignore",
+                             divide="ignore"):
+                stepper = (_stork2_step if method == "stork2"
+                           else _stork4_step)
+                ynew, current_velocity = stepper(
+                    m, y, trial_h, time_direction,
+                    stork_previous_velocity, stork_previous_h,
+                    stages=stork_stages)
+            stork_previous_velocity = current_velocity
+            stork_previous_h = trial_h
+            accepted += 1
+            h_used = trial_h
         else:
             ynew, ok = _fixed_step(
                 m, method, y, trial_h, time_direction)
@@ -347,6 +505,7 @@ def _trace(m, start, method, box, critical_points, origin, time_direction,
         if iteration >= 3:
             distances = [
                 np.hypot(y[0]-q.a, y[1]-q.b) for q in critical_points
+                if capture_kinds is None or q.kind in capture_kinds
                 if np.hypot(q.a-origin[0], q.b-origin[1]) > capture]
             if distances and min(distances) < capture:
                 term = "capture"
@@ -445,7 +604,8 @@ def casual_portrait(
         m: Model, method: str, *, critical_method: str = "certified",
         reference_enumeration=None, view=None, step_size: float = 0.01,
         max_steps: int = 20000, time_horizon: float | None = None,
-        rtol: float = 1e-3, atol: float = 1e-6, critical_grid: int = 17):
+        rtol: float = 1e-3, atol: float = 1e-6, critical_grid: int = 17,
+        capture_saddles: bool = True, stork_stages: int = 20):
     """Trace saddle manifolds with an explicitly uncertified baseline."""
     if method not in GEOMETRY_METHODS:
         raise ValueError(f"unknown comparison geometry method {method!r}")
@@ -481,7 +641,14 @@ def casual_portrait(
                     m, start, method, display_box, enumeration.points,
                     (saddle.a, saddle.b),
                     time_direction, step_size, max_steps, time_horizon,
-                    rtol, atol)
+                    rtol, atol,
+                    # A naive finite-radius saddle capture can make a
+                    # structurally unstable wall look accidentally exact.
+                    # Comparison demos may instead continue unstable traces
+                    # until a minimum so truncation and launch errors reveal
+                    # which chamber the numerical pseudo-orbit selected.
+                    ({"min"} if kind == "unstable" and not capture_saddles
+                     else None), stork_stages=stork_stages)
                 for key in totals:
                     totals[key] += diag[key]
                 Y = np.asarray(points)
@@ -491,6 +658,9 @@ def casual_portrait(
                     kind, Y, term,
                     certs=geometry, diag={
                         **diag, "saddle_b": saddle.b,
+                        f"{kind}_direction": (
+                            1 if start[1] > saddle.b else -1),
+                        "launch_eigenvector_sign": sign,
                         "uncertified": True,
                     }))
     ledger = {
@@ -498,10 +668,13 @@ def casual_portrait(
             "uncertified": True,
             "geometry_method": method,
             "critical_method": critical_method,
+            "capture_saddles": capture_saddles,
             "step_size": step_size,
             "time_horizon": time_horizon,
             "rtol": rtol,
             "atol": atol,
+            "stork_stages": (
+                stork_stages if method in ("stork2", "stork4") else None),
             "critical_diagnostics": critical_diag,
             "integration_totals": totals,
         },

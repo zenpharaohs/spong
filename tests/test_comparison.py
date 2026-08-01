@@ -66,12 +66,56 @@ def test_ros2_trial_is_second_order_and_stable_on_linear_flow():
     assert np.max(np.abs(error)) > 0
 
 
+def test_stork2_autonomous_recurrence_uses_euler_startup_and_converges():
+    m = _LinearModel(1.0)
+    initial = np.array([1.0, -2.0])
+    y, previous = comparison._stork2_step(
+        m, initial, 0.01, +1, None, None, stages=20)
+    assert np.array_equal(y, 0.99*initial)
+    previous_h = 0.01
+    for _ in range(9):
+        y, previous = comparison._stork2_step(
+            m, y, 0.01, +1, previous, previous_h, stages=20)
+    assert np.allclose(y, math.exp(-0.1)*initial, rtol=7e-5, atol=7e-5)
+
+
+@pytest.mark.parametrize("stages", [9, 20])
+def test_stork4_published_recurrence_uses_euler_startup_and_converges(stages):
+    m = _LinearModel(1.0)
+    initial = np.array([1.0, -2.0])
+    y, previous = comparison._stork4_step(
+        m, initial, 0.01, +1, None, None, stages=stages)
+    assert np.array_equal(y, 0.99*initial)
+    for _ in range(9):
+        y, previous = comparison._stork4_step(
+            m, y, 0.01, +1, previous, 0.01, stages=stages)
+    assert np.allclose(y, math.exp(-0.1)*initial, rtol=8e-5, atol=8e-5)
+
+
 def test_common_resolution_angle_diagnostic_is_zero_on_straight_flow():
     m = _LinearModel(1.0)
     Y = np.column_stack((np.linspace(1.0, 0.1, 100), np.zeros(100)))
     detail = comparison.integral_curve_diagnostics(m, Y, spacing=0.01)
     assert detail["angle_energy_common"] < 1e-28
     assert detail["angle_rms_deg"] < 1e-12
+
+
+def test_minimum_only_capture_exposes_numerical_passage_by_a_saddle():
+    m = _LinearModel(1.0)
+    critical = (
+        comparison.CasualCriticalPoint(0.0, 0.0, "saddle"),
+        comparison.CasualCriticalPoint(5.0, 0.0, "min"),
+    )
+    common = dict(
+        m=m, start=np.array([1.0, 0.0]), method="forward-euler",
+        box=(-2.0, 8.0, -5.0, 5.0), critical_points=critical,
+        origin=(2.0, 0.0), time_direction=1, step_size=0.1,
+        max_steps=100, time_horizon=10.0, rtol=1e-3, atol=1e-6)
+    _, ordinary_term, _ = comparison._trace(**common)
+    _, minimum_only_term, _ = comparison._trace(
+        **common, capture_kinds={"min"})
+    assert ordinary_term == "capture"
+    assert minimum_only_term == "time_horizon"
 
 
 def _quadratic_stiff():
@@ -110,6 +154,7 @@ def test_casual_geometry_is_separate_and_marked_uncertified(method):
     assert len(p.branches) == 4*len(enumeration.saddles)
     assert p.ledger["comparison"]["uncertified"]
     assert p.ledger["comparison"]["geometry_method"] == method
+    assert p.ledger["comparison"]["capture_saddles"]
     assert all(br.diag["elapsed_time"] <= 1.0+1e-14 for br in p.branches)
     assert all("angle_rms_deg" in br.certs for br in p.branches)
     svg = render.plane_view(p, width=320, height=240, n_levels=4, n_grid=101)

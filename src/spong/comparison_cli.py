@@ -95,6 +95,9 @@ def main(argv=None):
         help="common physical final time; default is step-size*max-steps")
     parser.add_argument("--rtol", type=float, default=1e-3)
     parser.add_argument("--atol", type=float, default=1e-6)
+    parser.add_argument(
+        "--stork-stages", type=int, default=20,
+        help="stabilized stages for STORK-2/4 (STORK-4 supports 9 or 20)")
     parser.add_argument("--width", type=int, default=800)
     parser.add_argument("--height", type=int, default=600)
     parser.add_argument("--no-bottom-zoom", action="store_true")
@@ -144,7 +147,8 @@ def main(argv=None):
             step_size=args.step_size, max_steps=args.max_steps,
             time_horizon=args.time_horizon,
             rtol=args.rtol, atol=args.atol,
-            critical_grid=args.critical_grid)
+            critical_grid=args.critical_grid,
+            stork_stages=args.stork_stages)
         filename = (
             f"{case.name}_{args.critical_method}_{method}.svg")
         render.save(render.plane_view(
@@ -236,6 +240,7 @@ def main(argv=None):
             "time_horizon": args.time_horizon,
             "rtol": args.rtol,
             "atol": args.atol,
+            "stork_stages": args.stork_stages,
         },
         "comparisons": records,
     }

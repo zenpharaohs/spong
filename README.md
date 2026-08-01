@@ -93,7 +93,8 @@ For teaching and numerical comparison, installed environments also provide:
 
 This generates a side-by-side HTML gallery comparing the certified portrait
 with Forward Euler, Backward Euler, explicit/implicit midpoint, and adaptive
-RKF45 and Rosenbrock-2.  The methods receive a common physical time horizon,
+RKF45, Rosenbrock-2, and STORK-2/4.  The methods receive a common physical
+time horizon,
 the gallery includes a bottom-canyon zoom, and its JSON report compares
 common-resolution tangent/gradient angle defects.  Open the result on macOS
 with `open out/comparisons/quadratic-stiff_comparison.html`.
