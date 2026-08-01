@@ -11,6 +11,7 @@
 #include "spong/spong_exact.h"
 #include "spong/spong_topology.h"
 #include "spong/spong_geometry.h"
+#include "spong/spong_local.h"
 
 typedef struct {
     PyObject_HEAD
@@ -2083,6 +2084,121 @@ static PyTypeObject NativeSturmPlanType = {
     .tp_new = PyType_GenericNew,
 };
 
+static PyObject *native_poincare_pullback(
+        PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *coefficients, *selected;
+    Py_ssize_t nu, ns;
+    const char *lambda_u, *lambda_s;
+    unsigned long long precision_bits = 192;
+    if (!PyArg_ParseTuple(
+            args, "OnnOss|K", &coefficients, &nu, &ns, &selected,
+            &lambda_u, &lambda_s, &precision_bits))
+        return NULL;
+    if (nu < 1 || ns < 1 || nu > PY_SSIZE_T_MAX/ns
+            || nu*ns > PY_SSIZE_T_MAX/2) {
+        PyErr_SetString(PyExc_ValueError, "invalid normal polynomial shape");
+        return NULL;
+    }
+    PyObject *seq = PySequence_Fast(
+        coefficients, "normal coefficients must be a flat sequence");
+    if (seq == NULL)
+        return NULL;
+    Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
+    if (count != 2*nu*ns) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "normal coefficient count mismatch");
+        return NULL;
+    }
+    const char **text = (const char **)PyMem_Calloc(
+        (size_t)count, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc(
+        (size_t)count, sizeof(PyObject *));
+    if (text == NULL || owned == NULL) {
+        PyMem_Free(text);
+        PyMem_Free(owned);
+        Py_DECREF(seq);
+        return PyErr_NoMemory();
+    }
+    PyObject **items = PySequence_Fast_ITEMS(seq);
+    for (Py_ssize_t i = 0; i < count; ++i) {
+        owned[i] = PyObject_Str(items[i]);
+        if (owned[i] == NULL)
+            goto cleanup;
+        text[i] = PyUnicode_AsUTF8(owned[i]);
+        if (text[i] == NULL)
+            goto cleanup;
+    }
+    double *map = NULL;
+    Py_ssize_t map_count = 0;
+    if (copy_seq(selected, &map, &map_count) != 0)
+        goto cleanup;
+    if (map_count != 6) {
+        PyMem_Free(map);
+        PyErr_SetString(PyExc_ValueError, "selected map must have 6 entries");
+        goto cleanup;
+    }
+    spong_vector_polynomial result;
+    int status = spong_poincare_pullback_decimal(
+        text, (size_t)nu, (size_t)ns, map, lambda_u, lambda_s,
+        (uint64_t)precision_bits, &result);
+    PyMem_Free(map);
+    if (status != SPONG_EXACT_OK) {
+        PyErr_Format(
+            PyExc_ArithmeticError,
+            "native Poincare pullback refused with status %d", status);
+        goto cleanup;
+    }
+    PyObject *components = PyTuple_New(2);
+    if (components == NULL) {
+        spong_vector_polynomial_destroy(&result);
+        goto cleanup;
+    }
+    for (size_t component = 0; component < 2; ++component) {
+        PyObject *rows = PyTuple_New((Py_ssize_t)result.u_count);
+        if (rows == NULL) {
+            Py_DECREF(components);
+            spong_vector_polynomial_destroy(&result);
+            goto cleanup;
+        }
+        PyTuple_SET_ITEM(components, (Py_ssize_t)component, rows);
+        for (size_t i = 0; i < result.u_count; ++i) {
+            PyObject *row = PyTuple_New((Py_ssize_t)result.s_count);
+            if (row == NULL) {
+                Py_DECREF(components);
+                spong_vector_polynomial_destroy(&result);
+                goto cleanup;
+            }
+            PyTuple_SET_ITEM(rows, (Py_ssize_t)i, row);
+            for (size_t j = 0; j < result.s_count; ++j) {
+                PyObject *value = PyFloat_FromDouble(result.coefficients[
+                    (component*result.u_count+i)*result.s_count+j]);
+                if (value == NULL) {
+                    Py_DECREF(components);
+                    spong_vector_polynomial_destroy(&result);
+                    goto cleanup;
+                }
+                PyTuple_SET_ITEM(row, (Py_ssize_t)j, value);
+            }
+        }
+    }
+    spong_vector_polynomial_destroy(&result);
+    for (Py_ssize_t i = 0; i < count; ++i)
+        Py_XDECREF(owned[i]);
+    PyMem_Free(text);
+    PyMem_Free(owned);
+    Py_DECREF(seq);
+    return components;
+
+cleanup:
+    for (Py_ssize_t i = 0; i < count; ++i)
+        Py_XDECREF(owned[i]);
+    PyMem_Free(text);
+    PyMem_Free(owned);
+    Py_DECREF(seq);
+    return NULL;
+}
+
 static PyMethodDef module_methods[] = {
     {"resolution_preflight", native_resolution_preflight, METH_VARARGS,
      "Apply the shared C resolution policy to exact-Morse measurements."},
@@ -2094,6 +2210,8 @@ static PyMethodDef module_methods[] = {
      "Exact GMP Sturm analysis of an integer polynomial."},
     {"sturm_count_interval", native_sturm_count_interval, METH_VARARGS,
      "Exact GMP distinct-root count on a rational interval."},
+    {"poincare_pullback", native_poincare_pullback, METH_VARARGS,
+     "Compose a Poincare chart in high precision and round once."},
     {NULL, NULL, 0, NULL}
 };
 

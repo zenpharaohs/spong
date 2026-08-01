@@ -14,6 +14,7 @@ add_library(spong_core ${SPONG_LIBRARY_TYPE}
     src/c/spong_exact_gmp.c
     src/c/spong_topology.c
     src/c/spong_geometry.c
+    src/c/spong_local_gmp.c
 )
 add_library(spong::core ALIAS spong_core)
 target_include_directories(spong_core
@@ -35,7 +36,7 @@ set_target_properties(spong_core PROPERTIES
     C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     PUBLIC_HEADER
-        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h"
+        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h"
 )
 if(SPONG_BUILD_SHARED)
     target_compile_definitions(spong_core
@@ -62,6 +63,9 @@ if(SPONG_BUILD_C_TESTS)
     add_executable(test_spong_geometry tests/c/test_spong_geometry.c)
     target_link_libraries(test_spong_geometry PRIVATE spong::core)
     add_test(NAME spong_geometry_c_abi COMMAND test_spong_geometry)
+    add_executable(test_spong_local tests/c/test_spong_local.c)
+    target_link_libraries(test_spong_local PRIVATE spong::core)
+    add_test(NAME spong_local_c_abi COMMAND test_spong_local)
 endif()
 
 include(GNUInstallDirs)

@@ -148,6 +148,15 @@ this matters on the high-cancellation tails for which the diagnostic measures
 its own evaluation floor.  The scalar Python implementations remain
 differential oracles rather than production loops.
 
+High-precision near-critical chart composition is exposed by
+`include/spong/spong_local.h`.  `spong_poincare_pullback_decimal` forms
+`adj(DT) F(T(z))` for the selected quadratic Poincaré map in GMP floating
+arithmetic, restores the structural critical point and diagonal linear part,
+and rounds the completed coefficient array to binary64 once.  Decimal spectral
+data cross as strings, while the map coefficients cross as the exact doubles
+that will map the resulting curve.  The production path uses at least 192 bits
+and is differentially checked against the retained Decimal implementation.
+
 ## Migration boundary
 
 The present production geometry kernels are already written in C, but some are

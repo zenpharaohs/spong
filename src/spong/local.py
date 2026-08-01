@@ -508,7 +508,7 @@ def _poincare_candidates(jet: LocalJet, nearby_b: tuple[float, ...],
         # must not silently select a kernel expressed in different coordinates.
         return rounded, _native.LocalKernel(rounded), normal
 
-    def pulled_back_native(normal, selected_decimal, chart_eigenvalues):
+    def pulled_back_python(normal, selected_decimal, chart_eigenvalues):
         """Build adj(DT) F(T(z)) before the one binary64 rounding.
 
         The determinant omitted from the inverse Jacobian is a positive
@@ -579,10 +579,27 @@ def _poincare_candidates(jet: LocalJet, nearby_b: tuple[float, ...],
                       for j in range(degree_s+1))
                 for i in range(degree_u+1))
             for component in pulled)
+        return rounded
+
+    def pulled_back_native(normal, selected_decimal, chart_eigenvalues):
+        """Compose the chart in the frontend-independent precision core."""
         try:
             from . import _native
         except (ImportError, AttributeError):
             return None
+        nu = len(normal[0])
+        ns = len(normal[0][0])
+        flat_normal = tuple(
+            str(value)
+            for component in normal
+            for row in component
+            for value in row)
+        flat_selected = tuple(
+            float(value) for row in selected_decimal for value in row)
+        rounded = _native.poincare_pullback(
+            flat_normal, nu, ns, flat_selected,
+            str(chart_eigenvalues[0]), str(chart_eigenvalues[1]),
+            max(192, 4*jet.spectral.decimal_precision))
         return _native.LocalKernel(rounded)
     out = []
     for manifold, depart in (("unstable", 0), ("stable", 1)):

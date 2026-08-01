@@ -1,10 +1,96 @@
 import ast
+from decimal import Decimal, localcontext
 from fractions import Fraction
 from pathlib import Path
+import random
 
 import numpy as np
 
 from spong import _native, charts, gauss, inverse, model, sturm
+
+
+def _decimal_poincare_pullback(normal, selected, eigenvalues):
+    zero, one = Decimal(0), Decimal(1)
+
+    def add(a, b, scale=one):
+        out = dict(a)
+        for key, value in b.items():
+            out[key] = out.get(key, zero)+scale*value
+            if not out[key]:
+                del out[key]
+        return out
+
+    def mul(a, b):
+        out = {}
+        for (i, j), x in a.items():
+            for (k, l), y in b.items():
+                key = i+k, j+l
+                out[key] = out.get(key, zero)+x*y
+        return {key: value for key, value in out.items() if value}
+
+    def power(a, exponent):
+        out = {(0, 0): one}
+        for _ in range(exponent):
+            out = mul(out, a)
+        return out
+
+    p, q = selected
+    U = {(1, 0): one, (2, 0): p[0],
+         (1, 1): p[1], (0, 2): p[2]}
+    S = {(0, 1): one, (2, 0): q[0],
+         (1, 1): q[1], (0, 2): q[2]}
+    fields = []
+    for component in normal:
+        field = {}
+        for i, row in enumerate(component):
+            for j, coefficient in enumerate(row):
+                if coefficient:
+                    field = add(
+                        field, mul(power(U, i), power(S, j)), coefficient)
+        fields.append(field)
+    j00 = {(0, 0): one, (1, 0): 2*p[0], (0, 1): p[1]}
+    j01 = {(1, 0): p[1], (0, 1): 2*p[2]}
+    j10 = {(1, 0): 2*q[0], (0, 1): q[1]}
+    j11 = {(0, 0): one, (1, 0): q[1], (0, 1): 2*q[2]}
+    pulled = (
+        add(mul(j11, fields[0]), mul(j01, fields[1]), -one),
+        add(mul(j00, fields[1]), mul(j10, fields[0]), -one),
+    )
+    for component in pulled:
+        component.pop((0, 0), None)
+    pulled[0][(1, 0)] = eigenvalues[0]
+    pulled[0].pop((0, 1), None)
+    pulled[1].pop((1, 0), None)
+    pulled[1][(0, 1)] = eigenvalues[1]
+    nu = 1+max(i for component in pulled for i, _ in component)
+    ns = 1+max(j for component in pulled for _, j in component)
+    return tuple(tuple(tuple(float(component.get((i, j), zero))
+                             for j in range(ns)) for i in range(nu))
+                 for component in pulled)
+
+
+def test_native_high_precision_poincare_pullback_matches_decimal_oracle():
+    rng = random.Random(20260807)
+    with localcontext() as context:
+        context.prec = 70
+        for _ in range(24):
+            normal = tuple(tuple(tuple(
+                Decimal(rng.randrange(-100, 101))/Decimal(37)
+                for _ in range(3)) for _ in range(3)) for _ in range(2))
+            selected = tuple(tuple(Decimal.from_float(
+                rng.uniform(-0.08, 0.08)) for _ in range(3))
+                for _ in range(2))
+            eigenvalues = Decimal("2.125"), Decimal("-7.75")
+            expected = _decimal_poincare_pullback(
+                normal, selected, eigenvalues)
+            actual = _native.poincare_pullback(
+                tuple(str(x) for component in normal
+                      for row in component for x in row),
+                3, 3,
+                tuple(float(x) for row in selected for x in row),
+                str(eigenvalues[0]), str(eigenvalues[1]), 256)
+            assert np.shape(actual) == np.shape(expected)
+            assert np.allclose(actual, expected, rtol=4e-15, atol=1e-15)
 
 
 def test_production_np_linalg_calls_are_explicitly_allowlisted():
