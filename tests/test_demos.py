@@ -16,8 +16,9 @@ from demos import hybrid_saddle_connection
 from demos import optimizer_moustaches
 from demos import optimizers as opt
 from demos import saddle_connections
+from demos import saddle_connection_triptych
 from demos import thompson
-from spong import model, sturm
+from spong import charts, model, portrait, sturm, zoo
 
 
 def test_batch_gradient_matches_mean_field(d2):
@@ -279,3 +280,70 @@ def test_adam_field_grid_is_reproducible_and_reports_chain_error():
     assert first.field.shape == (5, 5, 2)
     assert np.all(np.isfinite(first.field))
     assert first.diagnostics["chain_rms_difference"] >= 0
+
+
+def test_saddle_connection_triptych_is_a_distinct_zoo_wall_family():
+    family = zoo.get_wall_family("nonnearest-saddle-connection")
+    assert family.name in zoo.wall_family_names()
+    assert family.name not in zoo.names()
+    assert family.below_parameter < family.wall_parameter \
+        < family.above_parameter
+    base = zoo.get(family.base_case)
+    for member, lam in (
+            ("below", family.below_parameter),
+            ("wall", family.wall_parameter),
+            ("above", family.above_parameter)):
+        case = zoo.rheostat_member(family, member)
+        root = np.sqrt(lam)
+        assert np.allclose(case.f, np.asarray(base.f)/root,
+                           rtol=0, atol=0)
+        assert np.allclose(case.g, root*np.asarray(base.g),
+                           rtol=0, atol=0)
+
+
+def test_wall_limit_surgery_removes_only_the_two_involved_continuations():
+    from types import SimpleNamespace
+
+    family = zoo.get_wall_family("nonnearest-saddle-connection")
+    source = SimpleNamespace(
+        kind="saddle", a=0.0, b=family.source_b)
+    target = SimpleNamespace(
+        kind="saddle", a=1.0, b=family.target_b)
+    enumeration = SimpleNamespace(points=[source, target])
+
+    def branch(kind, Y, **diag):
+        return charts.Branch(kind, np.asarray(Y, dtype=float), "box_exit",
+                             {}, diag)
+
+    branches = [
+        branch("unstable", [(0, family.source_b), (1, 1)],
+               saddle_b=family.source_b, unstable_direction=1),
+        branch("stable", [(1, family.target_b), (.01, family.source_b+.01)],
+               saddle_b=family.target_b, stable_sign=1),
+        branch("stable", [(1, family.target_b), (4, 4)],
+               saddle_b=family.target_b, stable_sign=-1),
+        branch("unstable", [(0, family.source_b), (-1, -1)],
+               saddle_b=family.source_b, unstable_direction=-1),
+    ]
+    original = portrait.Portrait(
+        None, enumeration, branches, (-5, 5, -5, 5), None, {})
+    wall, diagnostics = saddle_connection_triptych.wall_limit_portrait(
+        original, family, np.array(((0, family.source_b),
+                                    (1, family.target_b))))
+    assert diagnostics["removed_source_unstable"] == 0
+    assert diagnostics["removed_target_stable"] == 1
+    assert len(wall.branches) == 2
+    assert wall.ledger["comparison"]["geometry_method"] \
+        == "geometric wall limit"
+
+
+def test_triptych_svg_contains_three_nested_panels():
+    panels = [
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>A</text></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>B</text></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>C</text></svg>',
+    ]
+    combined = saddle_connection_triptych.triptych_svg(panels)
+    assert combined.count("<text>") == 3
+    assert 'width="1920"' in combined
+    assert combined.count("<line ") == 2

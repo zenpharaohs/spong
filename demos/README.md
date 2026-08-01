@@ -103,6 +103,22 @@ Here now:
   section crossings lie in the same local level-set chart; a small tangent
   projection between distant level-set components is not a bracket.
 
+- `saddle_connection_triptych.py` — renders the registered
+  `nonnearest-saddle-connection` zoo wall family as three panels: the
+  Λ=2 chamber, the geometric B→N wall limit at Λ*≈2.177709563954844, and the
+  Λ=4 chamber.  Each panel includes an enlarged connection-region inset.  The
+  side panels have clean individual branches and robustly different landing
+  fates; their current full-plane contact audits remain FP64-unresolved on
+  asymptotically adjacent stable tails and are reported as such.  The center
+  is explicitly not passed off as an ordinary certified portrait: the two
+  off-wall continuations are removed and their common saddle-to-saddle limit
+  is drawn once.
+
+  ```sh
+  PYTHONPATH=src python3 demos/saddle_connection_triptych.py
+  open out/saddle_connection_triptych/nonnearest-saddle-connection.html
+  ```
+
 Planned next: batch-morphing across moment space.  Loss of the Morse
 critical-point inventory is controlled by exact algebraic walls
 (`disc(B·N)`/the reduced numerator and ψ-positivity).  These are not all the

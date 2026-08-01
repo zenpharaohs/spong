@@ -21,6 +21,29 @@ class ZooCase:
     expected_connections: tuple[tuple[float, float], ...] = ()
 
 
+@dataclass(frozen=True)
+class WallFamily:
+    """A parameterized non-Morse-Smale wall and two ordinary chambers.
+
+    Wall families are deliberately separate from ``CASES``: the ordinary
+    portrait command promises one certified Morse-Smale portrait, whereas a
+    wall member has a saddle connection and must be depicted by a dedicated
+    limiting construction.
+    """
+
+    name: str
+    base_case: str
+    parameter_name: str
+    below_parameter: float
+    wall_parameter: float
+    above_parameter: float
+    source_b: float
+    target_b: float
+    unstable_direction: int
+    default_view: tuple[float, float, float, float]
+    description: str
+
+
 QUADRATIC_STIFF = ZooCase(
     name="quadratic-stiff",
     seed=2735729614,
@@ -163,6 +186,29 @@ MINIMAL_QUARTET = ZooCase(
 )
 
 
+NONNEAREST_SADDLE_CONNECTION = WallFamily(
+    name="nonnearest-saddle-connection",
+    base_case=NONNEAREST_ATTACHMENT.name,
+    parameter_name="Lambda",
+    below_parameter=2.0,
+    wall_parameter=2.177709563954844,
+    above_parameter=4.0,
+    source_b=-0.4770682827686173,
+    target_b=0.6402740918269282,
+    unstable_direction=1,
+    default_view=(-2.5, 4.5, -1.8, 1.8),
+    description=(
+        "Three-state Lambda-rheostat family through the B-to-N saddle "
+        "connection forced in Theorem 4.  Lambda=2 and Lambda=4 lie in the "
+        "two Morse-Smale chambers and have clean, robustly different branch "
+        "landings; at Lambda*=2.177709563954844 the positive-b unstable "
+        "branch of the B saddle connects to the N saddle.  The center "
+        "portrait is a geometric wall limit, not an ordinary certified "
+        "portrait."
+    ),
+)
+
+
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
     MINIMAL_QUARTET.name: MINIMAL_QUARTET,
@@ -172,9 +218,53 @@ CASES = {
 }
 
 
+WALL_FAMILIES = {
+    NONNEAREST_SADDLE_CONNECTION.name: NONNEAREST_SADDLE_CONNECTION,
+}
+
+
 def names() -> tuple[str, ...]:
     return tuple(sorted(CASES))
 
 
 def get(name: str) -> ZooCase:
     return CASES[name]
+
+
+def wall_family_names() -> tuple[str, ...]:
+    return tuple(sorted(WALL_FAMILIES))
+
+
+def get_wall_family(name: str) -> WallFamily:
+    return WALL_FAMILIES[name]
+
+
+def rheostat_member(family: str | WallFamily, member: str) -> ZooCase:
+    """Materialize one Lambda-rheostat member as ordinary ``(f,g,mu)`` data.
+
+    The wall member is returned as coefficient data but remains outside
+    ``CASES`` because its geometry is intentionally non-Morse-Smale.
+    """
+    import math
+
+    wall = get_wall_family(family) if isinstance(family, str) else family
+    parameters = {
+        "below": wall.below_parameter,
+        "wall": wall.wall_parameter,
+        "above": wall.above_parameter,
+    }
+    if member not in parameters:
+        raise KeyError(member)
+    lam = parameters[member]
+    base = get(wall.base_case)
+    root = math.sqrt(lam)
+    return ZooCase(
+        name=f"{wall.name}-{member}",
+        f=tuple(value/root for value in base.f),
+        g=tuple(root*value for value in base.g),
+        moment_dist=base.moment_dist,
+        default_view=wall.default_view,
+        description=(
+            f"{member.capitalize()} member of {wall.name} at Lambda={lam:.16g}. "
+            + wall.description),
+    )
