@@ -106,25 +106,60 @@ Here now:
 - `saddle_connection_triptych.py` — renders the registered
   `nonnearest-saddle-connection` zoo wall family as three panels: the
   Λ=2 chamber, the geometric B→N wall limit at Λ*≈2.177709563954844, and the
-  Λ=4 chamber.  Each panel includes an enlarged connection-region inset.  The
-  side panels have clean individual branches and robustly different landing
-  fates; their current full-plane contact audits remain FP64-unresolved on
-  asymptotically adjacent stable tails and are reported as such.  The center
-  is explicitly not passed off as an ordinary certified portrait: the two
-  off-wall continuations are removed and their common saddle-to-saddle limit
-  is drawn once.
+  Λ=4 chamber.  The main triptych keeps all three portraits unobstructed; a
+  separate three-panel strip enlarges the connection/turning region.  The
+  side panels have clean individual branches, certified global contact
+  audits, and robustly different landing fates.  Exact terminal product
+  completions prevent coincident samples inside a named minimum tube or
+  stable superlevel end from being mistaken for finite-skeleton crossings.
+  The center is explicitly not passed off as an ordinary certified portrait:
+  the two off-wall continuations are removed and their common
+  saddle-to-saddle limit is drawn once.
 
   ```sh
   PYTHONPATH=src python3 demos/saddle_connection_triptych.py
   open out/saddle_connection_triptych/nonnearest-saddle-connection.html
   ```
+- `saddle_connection_comparison.py` — holds the exact wall model and exact
+  Sturm critical-point inventory fixed, then replaces only the invariant-
+  manifold geometry with Forward/Backward Euler, explicit/implicit midpoint,
+  RKF45, or the `ode23s`-like ROS2 method.  For unstable traces, casual
+  finite-radius saddle capture is disabled: otherwise entering a ball around
+  the N saddle would make an approximate curve look like the exact B→N
+  connection.  Each panel contains only the green/red phase portrait produced
+  by that discretization—no optimizer or highlighted trajectory overlay.
+  Continuing the discretized B-unstable branch reveals which outgoing N
+  branch, and hence which minimum, is selected by accumulated launch and
+  integration error.  The fixed-step default is deliberately moderate
+  (`h=0.05`), rather than the visually flattering `h=0.01`.  A separate
+  centerline-subtracted transverse-section figure removes the common motion
+  along the connection and displays the otherwise subpixel disagreement of
+  the independently traced `W^u(B)` and `W^s(N)` curves.
 
-Planned next: batch-morphing across moment space.  Loss of the Morse
-critical-point inventory is controlled by exact algebraic walls
-(`disc(B·N)`/the reduced numerator and ψ-positivity).  These are not all the
-walls of the phase portrait: global saddle--saddle handle slides occur where
-a separatrix shooting map vanishes while the algebraic Morse data can remain
-fixed.  Such walls require geometric bracketing and a-posteriori topology
-certification.  The present Λ construction varies `f` and `g`; demonstrating
-a handle slide on a fixed-`(f,g)`, moment-only batch path remains a separate
-experiment.
+  ```sh
+  PYTHONPATH=src:. python3 demos/saddle_connection_comparison.py
+  open out/saddle_connection_comparison/nonnearest-saddle-connection-casual-comparison.html
+  ```
+
+- `batch_moment_portraits.py` — fixes `f` and `g` at the registered
+  population handle-slide member, draws independent raw samples from U(0,1),
+  and builds each batch loss from the exact empirical moments of those
+  binary64 samples.  Up to six independently certified skeletons are
+  superposed for each selected batch size; any unresolved portrait is withheld
+  and reported.  The sample streams are nested across batch sizes, so
+  increasing `N` adds observations instead of silently replacing the
+  experiment.
+
+  The demo intentionally does **not** give a source-labelled branch an
+  identity across batches.  Even when the endpoint Morse inventories agree,
+  the affine span between population and empirical moments may contain a
+  critical-point bifurcation.  `--span-probes` performs exact Morse analyses
+  at rational points on that segment, but this finite probe is a diagnostic,
+  not an exclusion proof for an algebraic wall between probes.  Every drawn
+  batch skeleton is independently certified by the geometry engine.
+
+  ```sh
+  PYTHONPATH=src:. python3 demos/batch_moment_portraits.py \
+      --batch-sizes 32,128,512 --batches 6 --jobs 6
+  open out/batch_moment_portraits/nonnearest-saddle-connection-batches.html
+  ```
