@@ -32,6 +32,9 @@ from spong import model, portrait, sturm, zoo
 
 
 FAMILY = "nonnearest-saddle-connection"
+MIDPOINT_256_WALL_BRACKET = (2.1776985, 2.1776988)
+MIDPOINT_256_WALL_CENTER = sum(MIDPOINT_256_WALL_BRACKET)/2.0
+ADAM_256_B32_ORACLE_WALL = 2.40
 
 
 def exact_empirical_moments(samples, count: int):
@@ -48,6 +51,67 @@ def exact_empirical_moments(samples, count: int):
     return tuple(
         sum((x**degree for x in points), Fraction(0))/n
         for degree in range(count))
+
+
+def exact_midpoint_moments(size: int, count: int):
+    """Exact moments of the deterministic midpoint law on [0,1]."""
+    if size <= 0:
+        raise ValueError("support size must be positive")
+    points = tuple(Fraction(2*i+1, 2*size) for i in range(size))
+    return tuple(
+        sum((x**degree for x in points), Fraction(0))/size
+        for degree in range(count))
+
+
+def matched_midpoint_control():
+    """The matched-law control for the separate Adam wall experiment.
+
+    The bracket is a numerical-oracle signed-shooting result, not an interval
+    proof.  Its endpoints were computed with exact midpoint moments and the
+    production conditioned-stub/GL8 geometry.  All 49 regular sections had
+    the recorded sign at each endpoint.  Ordinary topology certification is
+    expected to refuse this close to the non-Morse-Smale wall.
+    """
+    case = wall_case()
+    count = 2*max(len(case.f)-1, len(case.g)-1)+1
+    population = model.moments_uniform01(count)
+    empirical = exact_midpoint_moments(256, count)
+    family = zoo.get_wall_family(FAMILY)
+    shift = MIDPOINT_256_WALL_CENTER-family.wall_parameter
+    return {
+        "support": "midpoint_uniform01",
+        "support_size": 256,
+        "moments_exact": [
+            [x.numerator, x.denominator] for x in empirical],
+        "moment_error_max": max(
+            abs(float(x-y)) for x, y in zip(empirical, population)),
+        "moment_relative_error_max": max(
+            abs(float(x-y)/float(y))
+            for x, y in zip(empirical[1:], population[1:])),
+        "wall_bracket": MIDPOINT_256_WALL_BRACKET,
+        "wall_parameter": MIDPOINT_256_WALL_CENTER,
+        "population_wall_parameter": family.wall_parameter,
+        "shift_from_population_wall": shift,
+        "relative_shift": shift/family.wall_parameter,
+        "bracket_protocol": (
+            "Exact midpoint-256 moments; production Poincare/Hadamard "
+            "critical stubs and IRK-GL8 continuation; signed two-sided "
+            "shooting on 49 regular sections. At Lambda=2.1776985 every "
+            "section was positive (range 7.84e-8 to 1.73e-7); at "
+            "Lambda=2.1776988 every section was negative (range -1.75e-7 "
+            "to -2.53e-8). Numerical-oracle grade, not an interval proof."),
+        "affine_span_probe": {
+            "points": 33,
+            "distinct_endpoint_signatures": 1,
+            "proof": False,
+        },
+        "adam_oracle_wall": ADAM_256_B32_ORACLE_WALL,
+        "adam_oracle_protocol": (
+            "Dereich-Jentzen-Kassing stochastic Adam oracle, midpoint-256 "
+            "support, batch size 32; approximate and not certified."),
+        "adam_minus_sd_wall": (
+            ADAM_256_B32_ORACLE_WALL-MIDPOINT_256_WALL_CENTER),
+    }
 
 
 def nested_uniform_batch(seed: int, batch_index: int, size: int):
@@ -166,6 +230,8 @@ def compute_batch(task):
 
 def _html(report):
     data = json.dumps(report, separators=(",", ":"))
+    control = report["matched_midpoint_256"]
+    bracket = control["wall_bracket"]
     return f"""<!doctype html>
 <meta charset="utf-8"><title>SPONG empirical-batch portraits</title>
 <style>
@@ -173,12 +239,24 @@ body{{font-family:system-ui;margin:24px;background:#fafafa;color:#222}}
 main{{max-width:1200px;margin:auto}} .controls{{display:flex;gap:14px;flex-wrap:wrap}}
 svg{{width:100%;height:auto;background:white;border:1px solid #bbb}}
 button{{padding:6px 12px}} .note{{max-width:80ch}} code{{background:#eee}}
+.control{{border-collapse:collapse;margin:14px 0 20px}}.control th,.control td{{padding:5px 12px;border-bottom:1px solid #ccc;text-align:left}}
 </style>
 <main><h1>Empirical-batch perturbations at the population handle slide</h1>
 <p class="note">Each color is one nested U(0,1) batch stream. Solid curves
 are unstable manifolds; dashed curves are stable manifolds. Only portraits
 whose global topology audit certified are drawn. No branch identity is
 asserted across moment space.</p>
+<h2>Matched midpoint-256 control</h2>
+<table class="control"><tbody>
+<tr><th>Steepest-descent wall</th><td>[{bracket[0]:.10f}, {bracket[1]:.10f}]</td></tr>
+<tr><th>Shift from population wall</th><td>{control['shift_from_population_wall']:.3e}</td></tr>
+<tr><th>Adam oracle wall</th><td>approximately {control['adam_oracle_wall']:.2f}</td></tr>
+<tr><th>Adam minus matched SD</th><td>approximately {control['adam_minus_sd_wall']:.3f}</td></tr>
+</tbody></table>
+<p class="note">The SD bracket uses exact midpoint moments and two-sided
+signed shooting on 49 regular sections. It is numerical-oracle evidence, not
+an interval proof. The much larger Adam displacement is therefore not an
+artifact of comparing its empirical support with continuous-uniform moments.</p>
 <div class="controls" id="sizes"></div>
 <svg id="plot" viewBox="0 0 1120 610" role="img"
  aria-label="Superposed certified empirical-batch Morse skeletons"></svg>
@@ -242,6 +320,7 @@ def main(argv=None):
             "view": family.default_view,
             "branch_identity_across_batches": False,
             "span_probe_is_proof": False,
+            "matched_midpoint_256": matched_midpoint_control(),
             "results": results,
         }
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -284,6 +363,7 @@ def main(argv=None):
         "view": family.default_view,
         "branch_identity_across_batches": False,
         "span_probe_is_proof": False,
+        "matched_midpoint_256": matched_midpoint_control(),
         "results": results,
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -158,8 +158,30 @@ Here now:
   not an exclusion proof for an algebraic wall between probes.  Every drawn
   batch skeleton is independently certified by the geometry engine.
 
+  A distinguished deterministic control uses the same exact midpoint-256
+  empirical law as the Adam oracle.  Production conditioned-stub/GL8
+  continuation and signed shooting on 49 regular sections bracket its
+  steepest-descent wall in `[2.1776985, 2.1776988]`, only about `-1.09e-5`
+  from the continuous-uniform wall.  The separate Adam oracle wall near
+  `2.40` is therefore not explained by the earlier distribution mismatch.
+  Both wall numbers retain their protocol labels: the midpoint SD bracket is
+  numerical-oracle signed-shooting evidence, while the Adam value remains an
+  uncertified stochastic-field oracle.
+
   ```sh
   PYTHONPATH=src:. python3 demos/batch_moment_portraits.py \
       --batch-sizes 32,128,512 --batches 6 --jobs 6
   open out/batch_moment_portraits/nonnearest-saddle-connection-batches.html
+  ```
+
+- `l2_l4_phase_portraits.py` — compares the certified Hilbertian `p=2`
+  portrait with an explicitly non-certified stiff-implicit `p=4` oracle for
+  `f = g = 1 + x + x^2` under `U(0,1)` and `N(0,1)`.  The exact-fit minimum is
+  Morse and quadratic for `p=2`, but has zero Hessian and a positive quartic
+  leading form for `p=4`; each conditional fiber is quartic in `a`, so its
+  backbone equation is cubic.
+
+  ```sh
+  PYTHONPATH=src:. python3 demos/l2_l4_phase_portraits.py
+  open out/l2_l4_phase_portraits/comparison.html
   ```

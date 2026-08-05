@@ -14,6 +14,7 @@ from demos import initializers
 from demos import adam_flow
 from demos import batch_moment_portraits
 from demos import hybrid_saddle_connection
+from demos import l2_l4_phase_portraits
 from demos import optimizer_moustaches
 from demos import optimizers as opt
 from demos import saddle_connections
@@ -32,6 +33,38 @@ def test_batch_gradient_matches_mean_field(d2):
     est = np.mean([g(a, b) for _ in range(20)], axis=0)
     exact = m.gradL(a, b)
     assert np.allclose(est, exact, rtol=0.05, atol=0.02)
+
+
+def test_l4_exact_fit_has_zero_hessian_and_quartic_leading_loss():
+    q = l2_l4_phase_portraits.QuarticModel(
+        [1, 1, 1], [1, 1, 1], model.moments_uniform01(9))
+    loss, gradient, hessian = q.values(1.0, 1.0)
+    assert loss == pytest.approx(0.0, abs=1e-30)
+    assert np.array_equal(gradient, [0.0, 0.0])
+    assert np.array_equal(hessian, np.zeros((2, 2)))
+    direction = np.array([0.7, -0.4])
+    values = [q.L(*(np.ones(2)+scale*direction))
+              for scale in (1e-2, 5e-3)]
+    assert values[0]/values[1] == pytest.approx(16.0, rel=0.025)
+
+
+def test_l4_conditional_minimizer_annuls_a_gradient():
+    q = l2_l4_phase_portraits.QuarticModel(
+        [1, 1, 1], [1, 1, 1], model.moments_normal01(9))
+    for b in (-1.0, 0.0, 0.6, 1.0):
+        a = q.a_star(b)
+        assert q.gradL(a, b)[0] == pytest.approx(0.0, abs=2e-10)
+
+
+def test_l4_closed_form_symmetric_eigenpairs_have_small_residuals():
+    hessian = np.array([[8537.22993, -68.1664021],
+                        [-68.1664021, 0.542783399]])
+    for smaller in (True, False):
+        eigenvalue, vector = l2_l4_phase_portraits._sym2_eigenpair(
+            hessian, smaller=smaller)
+        assert np.linalg.norm(vector) == pytest.approx(1.0)
+        assert np.linalg.norm(hessian @ vector-eigenvalue*vector) \
+            <= 2e-12*np.linalg.norm(hessian)
 
 
 def test_lbfgs_reaches_a_minimum(d2):
@@ -269,6 +302,21 @@ def test_batch_portrait_moments_are_exact_for_binary64_samples():
         Fraction(3, 8), Fraction(17, 48))
 
 
+def test_midpoint_256_control_uses_the_adam_oracles_exact_law():
+    _, support = adam_flow.empirical_uniform_grid(256)
+    expected = adam_flow.empirical_moments(support, 11)
+    actual = batch_moment_portraits.exact_midpoint_moments(256, 11)
+    assert actual == expected
+    control = batch_moment_portraits.matched_midpoint_control()
+    lo, hi = control["wall_bracket"]
+    assert lo < control["wall_parameter"] < hi
+    assert control["shift_from_population_wall"] < 0
+    assert abs(control["shift_from_population_wall"]) < 2e-5
+    assert control["adam_minus_sd_wall"] > 0.2
+    assert not control["affine_span_probe"]["proof"]
+    assert "Numerical-oracle" in control["bracket_protocol"]
+
+
 def test_batch_portrait_streams_are_nested_and_independent():
     prefix = batch_moment_portraits.nested_uniform_batch(19, 2, 8)
     longer = batch_moment_portraits.nested_uniform_batch(19, 2, 32)
@@ -280,6 +328,8 @@ def test_batch_portrait_streams_are_nested_and_independent():
 def test_batch_portrait_report_disclaims_cross_moment_branch_identity():
     report = {
         "view": (-1, 1, -1, 1),
+        "matched_midpoint_256": (
+            batch_moment_portraits.matched_midpoint_control()),
         "results": [{
             "batch_size": 8, "batch_index": 0, "certified": False,
             "branches": [], "critical_points": [],
