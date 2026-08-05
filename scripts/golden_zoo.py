@@ -240,6 +240,12 @@ def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] not in ("freeze", "check"):
         print(__doc__)
         return 2
+    try:
+        from spong import engine
+        print(f"engine: {engine.active_name()}"
+              f"{'' if engine.current().is_native else '  (python implementation)'}")
+    except ImportError:
+        pass
     return (do_freeze if sys.argv[1] == "freeze" else do_check)(sys.argv[2:])
 
 

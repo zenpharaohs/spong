@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from . import atlas, charts, sturm, topology
+from . import atlas, charts, engine, sturm, topology
 from .model import Model
 
 
@@ -112,7 +112,7 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     resolution_divisor = 2.0**geometry_level
     for s in e.saddles:
         for sign in (+1, -1):
-            br = charts.trace_stable(
+            br = engine.trace_stable(
                 m, s.b, sign, box=box,
                 ds=span_scale/(30000.0*resolution_divisor),
                 critical_local=s.local,
@@ -148,7 +148,7 @@ def compute(m: Model, view=None, geometry_level: int = 0,
                 trace_ds = max(
                     db_direct/(4000.0*resolution_divisor),
                     chord_direct/(8000.0*resolution_divisor))
-            br = charts.trace_unstable(
+            br = engine.trace_unstable(
                 m, s.b, nominal, box=box,
                 ds=trace_ds,
                 cap_r=_capture_radius(e, trace_ds),
@@ -175,7 +175,7 @@ def compute(m: Model, view=None, geometry_level: int = 0,
                 chord = float(np.hypot(destination.a-s.a, db))
                 refine_ds = max(db/4000.0, chord/8000.0)
                 refine_cap_r = _capture_radius(e, refine_ds)
-                refined = charts.trace_unstable(
+                refined = engine.trace_unstable(
                     m, s.b, (destination.a, destination.b), box=box,
                     ds=refine_ds, cap_r=refine_cap_r,
                     critical_local=s.local,
