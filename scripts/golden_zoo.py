@@ -61,6 +61,27 @@ def _moments(name: str, n: int):
     return model.moments_uniform01(n)
 
 
+def _plain(x):
+    """Coerce NumPy scalars and arrays to plain Python types.
+
+    Certificates like connection_ok come back as numpy bools because they are
+    formed from numpy comparisons; np.bool is not JSON serializable and is not
+    a subclass of Python bool, so it would also compare wrongly against a
+    golden loaded from JSON.  Normalizing at capture keeps both honest.
+    """
+    if isinstance(x, dict):
+        return {k: _plain(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_plain(v) for v in x]
+    if hasattr(x, "item") and getattr(x, "shape", None) == ():
+        return _plain(x.item())
+    if hasattr(x, "tolist") and not isinstance(x, (str, bytes)):
+        return _plain(x.tolist())
+    if isinstance(x, float) and x != x:
+        return "nan"                      # JSON has no NaN; keep it comparable
+    return x
+
+
 def capture(name: str) -> dict:
     z = zoo.get(name)
     f, g = list(z.f), list(z.g)
@@ -70,7 +91,7 @@ def capture(name: str) -> dict:
     led, e = p.ledger, p.enumeration
     top = led.get("topology", {})
 
-    return {
+    return _plain({
         "case": {
             "name": z.name,
             "f": [float(x) for x in z.f],
@@ -102,7 +123,7 @@ def capture(name: str) -> dict:
                 for att in top.get("attempts", [])
             ],
         },
-    }
+    })
 
 
 # --------------------------------------------------------------------------
