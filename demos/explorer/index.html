@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>One-neuron loss explorer</title>
+<style>
+  :root{
+    --ground:#D3D9DD; --paper:#FAFBFB; --ink:#121D26; --ink-2:#4A5A66;
+    --rule:#A6B2BA; --rule-2:#C7CFD5;
+    --target:#12507A; --response:#C25E00;
+    /* spong house palette, from render.py */
+    --contour:#c8c8c8; --backbone:#e6a817; --unstable:#00b400;
+    --stable:#d40000; --glyph:#111111; --rim:#888888; --trace:#5B3E8C;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Charter,Georgia,serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--mono);
+       font-size:12px;line-height:1.45;padding:14px;display:flex;flex-direction:column;gap:10px}
+  h1{font-family:var(--serif);font-weight:600;font-size:19px;margin:0}
+  .eyebrow{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);margin:0 0 2px}
+  header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  header .note{color:var(--ink-2);font-size:11px}
+  .panel{background:var(--paper);border:1px solid var(--rule);padding:10px 12px 12px}
+  .panel > .cap{font-family:var(--serif);font-size:13px;font-style:italic;margin:0 0 8px;
+       display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--rule-2);padding-bottom:5px}
+  .cap .rhs{font-family:var(--mono);font-style:normal;color:var(--ink-2);font-size:11px}
+  .grid{display:grid;grid-template-columns:1.35fr 1fr;gap:10px}
+  .stack{display:flex;flex-direction:column;gap:10px}
+  canvas{display:block;width:100%;height:auto;cursor:crosshair}
+  #cResp{cursor:default}
+  label{display:block;color:var(--ink-2);font-size:10px;letter-spacing:.08em;
+        text-transform:uppercase;margin-bottom:3px}
+  input,select{width:100%;font-family:var(--mono);font-size:12px;padding:4px 6px;
+       border:1px solid var(--rule);background:#fff;color:var(--ink)}
+  input:focus,select:focus,button:focus{outline:2px solid var(--target);outline-offset:1px}
+  .controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px 10px}
+  .wide{grid-column:1/-1}
+  button{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+       padding:5px 10px;cursor:pointer;border:1px solid var(--ink);background:var(--ink);color:var(--paper)}
+  button.ghost{background:transparent;color:var(--ink)}
+  .toolbar{display:flex;gap:4px;align-items:center;margin:0 0 8px}
+  .tool{background:transparent;color:var(--ink-2);border:1px solid var(--rule-2);padding:4px 9px}
+  .tool.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .toolbar .gap{width:10px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  td{padding:2px 0;border-bottom:1px dotted var(--rule-2)}
+  td.k{color:var(--ink-2);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  td.v{text-align:right;font-variant-numeric:tabular-nums}
+  .swatch{display:inline-block;width:9px;height:9px;margin-right:5px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--ink-2);font-size:11px;margin-top:6px}
+  .status{font-size:11px;color:var(--ink-2)}
+  .status.busy{color:var(--response)}
+  .status.err{color:var(--saddle)}
+  .stale{opacity:.35}
+</style>
+
+<header>
+  <div>
+    <p class="eyebrow">one-neuron polynomial net · mean-square loss</p>
+    <h1>a·g(bx) against f(x)</h1>
+  </div>
+  <span class="note">select · pan · zoom box · trace, MATLAB style · arrows pan, +/− zoom, 0 resets · click the backbone panel to snap to a*(b)</span>
+</header>
+
+<div class="grid">
+  <div class="stack">
+    <div class="panel">
+      <p class="cap">Phase portrait <span class="rhs" id="portraitInfo"></span></p>
+      <div class="toolbar" id="tools">
+        <button class="tool on" data-tool="select">select</button>
+        <button class="tool" data-tool="pan">pan</button>
+        <button class="tool" data-tool="zoom">zoom box</button>
+        <button class="tool" data-tool="trace">trace</button>
+        <span class="gap"></span>
+        <button class="tool" id="zoomIn">+</button>
+        <button class="tool" id="zoomOut">−</button>
+        <button class="tool" id="reset">reset</button>
+      </div>
+      <canvas id="cPort" width="760" height="470" tabindex="0"></canvas>
+    </div>
+    <div class="panel">
+      <p class="cap">Backbone a*(b) and loss along it <span class="rhs">stops mark certified critical points</span></p>
+      <canvas id="cBone" width="760" height="230"></canvas>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <p class="cap">Response <span class="rhs" id="respInfo"></span></p>
+      <canvas id="cResp" width="440" height="290"></canvas>
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--target)"></i>f(x)</span>
+        <span><i class="swatch" style="background:var(--response)"></i>a·g(bx)</span>
+        <span><i class="swatch" style="background:var(--backbone)"></i>backbone</span>
+        <span><i class="swatch" style="background:var(--unstable)"></i>unstable</span>
+        <span><i class="swatch" style="background:var(--stable)"></i>stable</span>
+        <span>● local min · ○ global · ▲ N-saddle · ◇ B-saddle</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="cap">Readout <span class="rhs" id="certInfo"></span></p>
+      <table id="readout"></table>
+    </div>
+
+    <div class="panel">
+      <p class="cap">Model <span class="rhs status" id="status">ready</span></p>
+      <div class="controls">
+        <div class="wide">
+          <label for="preset">preset</label>
+          <select id="preset">
+            <option value="">— custom —</option>
+            <option value="quad">f = g = 1 + x + x²</option>
+          </select>
+        </div>
+        <div class="wide">
+          <label for="fIn">f coefficients (low → high)</label>
+          <input id="fIn" type="text" value="1, 1, 1">
+        </div>
+        <div class="wide">
+          <label for="gIn">g coefficients</label>
+          <input id="gIn" type="text" value="1, 1, 1">
+        </div>
+        <div>
+          <label for="dist">moments</label>
+          <select id="dist">
+            <option value="uniform01">U(0,1)</option>
+            <option value="normal01">N(0,1)</option>
+            <option value="empirical">empirical batch</option>
+          </select>
+        </div>
+        <div>
+          <label for="nsample">batch n</label>
+          <input id="nsample" type="number" value="64" min="1" step="1">
+        </div>
+        <div class="wide row">
+          <button id="recompute">recompute portrait</button>
+          <button id="fit" class="ghost">fit to skeleton</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="cap">Descent <span class="rhs">demo layer, not certified</span></p>
+      <div class="controls">
+        <div>
+          <label for="method">method</label>
+          <select id="method">
+            <option value="flow">continuous</option>
+            <option value="sgd">SGD</option>
+            <option value="adam">Adam</option>
+          </select>
+        </div>
+        <div>
+          <label for="lr">step</label>
+          <input id="lr" type="number" value="0.02" step="0.005" min="0.0001">
+        </div>
+        <div>
+          <label for="nbatch">batch n</label>
+          <input id="nbatch" type="number" value="32" min="1" step="1">
+        </div>
+        <div>
+          <label for="filt">moment filter</label>
+          <select id="filt">
+            <option value="none">none</option>
+            <option value="ewma">EWMA (d=1)</option>
+            <option value="mf2">maxflat d=2</option>
+            <option value="mf3">maxflat d=3</option>
+          </select>
+        </div>
+        <div class="wide row">
+          <button id="clearTr" class="ghost">clear traces</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* Presentation arithmetic only.  Everything analytic -- critical points,
+   their classification, separatrices, certificates -- arrives from
+   portrait.certified_compute via /portrait.  The client evaluates
+   L(a,b) = C - 2aB(b) + a^2 A(b) and the two polynomials, nothing more. */
+
+const evalp = (p, x) => { let s = 0; for (let i = p.length - 1; i >= 0; i--) s = s * x + p[i]; return s; };
+const dpoly = p => p.length < 2 ? [0] : p.slice(1).map((c, k) => c * (k + 1));
+const parseCoeffs = s => {
+  const v = s.split(/[,\s]+/).map(Number).filter(Number.isFinite);
+  return v.length ? v : [1];
+};
+
+const els = id => document.getElementById(id);
+const cP = els("cPort"), xP = cP.getContext("2d");
+const cB = els("cBone"), xB = cB.getContext("2d");
+const cR = els("cResp"), xR = cR.getContext("2d");
+const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+
+const S = {
+  view: { a0: -2, a1: 4, b0: -4, b1: 4 },
+  home: { a0: -2, a1: 4, b0: -4, b1: 4 },
+  sel: { a: 1, b: 1 },
+  tool: "select",
+  rubber: null,
+  traces: [],
+  P: null,          // last certified payload
+  stale: true,
+  Ap: [0], Bp: [0]
+};
+
+const Lof = (a, b) => S.P.field.C - 2 * a * evalp(S.P.field.B, b) + a * a * evalp(S.P.field.A, b);
+const gradOf = (a, b) => {
+  const A = evalp(S.P.field.A, b), B = evalp(S.P.field.B, b);
+  return [2 * (a * A - B), -2 * a * evalp(S.Bp, b) + a * a * evalp(S.Ap, b)];
+};
+const aStar = b => evalp(S.P.field.B, b) / evalp(S.P.field.A, b);
+
+/* ---------------- backend ---------------- */
+function sampleBatch(n, kind){
+  const xs = [];
+  for (let i = 0; i < n; i++){
+    if (kind === "normal01"){
+      const u = Math.max(Math.random(), 1e-12), v = Math.random();
+      xs.push(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v));
+    } else xs.push(Math.random());
+  }
+  return xs;
+}
+
+let seq = 0, inflight = null;
+async function recompute(_unused, zooName){
+  const id = ++seq;
+  if (inflight) inflight.abort();      // abandon a superseded request
+  inflight = new AbortController();
+  const st = els("status");
+  st.className = "status busy"; st.textContent = "computing certified portrait…";
+  S.stale = true; draw();
+
+  const dist = els("dist").value;
+  const moments = dist === "empirical"
+    ? { kind: "empirical", samples: sampleBatch(Math.max(1, +els("nsample").value), "uniform01") }
+    : { kind: dist };
+  const v = S.view;
+  // A zoo request carries only the name: the server takes f, g, the moment
+  // distribution and default_view from the zoo entry, exactly as the CLI does.
+  // For hand-entered coefficients we ALWAYS send the current view.  Leaving it
+  // to the library is unbounded -- _trace_box widens whatever box it derives,
+  // and separatrices are chord-traced across the result, so a case whose
+  // natural box is large can trace for a very long time.  The view you are
+  // looking at is the honest bound.
+  const body = zooName ? { zoo: zooName } : {
+    f: parseCoeffs(els("fIn").value),
+    g: parseCoeffs(els("gIn").value),
+    moments,
+    view: [v.a0, v.a1, v.b0, v.b1]
+  };
+  try {
+    const r = await fetch("/portrait", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal: inflight.signal
+    });
+    const data = await r.json();
+    if (id !== seq) return;
+    if (data.error){ st.className = "status err"; st.textContent = data.error; return; }
+    S.P = data;
+    S.Ap = dpoly(data.field.A); S.Bp = dpoly(data.field.B);
+    if (zooName){                      // reflect what the zoo entry supplied
+      els("fIn").value = data.f.map(c => +c.toPrecision(15)).join(", ");
+      els("gIn").value = data.g.map(c => +c.toPrecision(15)).join(", ");
+    }
+    if (zooName){                      // adopt the zoo entry's own framing
+      let vv = data.view;
+      if (!vv && data.box){            // no display view: undo _trace_box's 1.35
+        const [A0,A1,B0,B1] = data.box, k = 1/1.35;
+        const ac = (A0+A1)/2, bc = (B0+B1)/2;
+        vv = [ac+(A0-ac)*k, ac+(A1-ac)*k, bc+(B0-bc)*k, bc+(B1-bc)*k];
+      }
+      if (vv){
+        const [a0, a1, b0, b1] = vv;
+        S.view = { a0, a1, b0, b1 };
+        S.home = { a0, a1, b0, b1 };
+      }
+    }
+    S.stale = false;
+    st.className = "status";
+    const e = data.enumeration;
+    let t;
+    if (data.cached) t = "cached";
+    else {
+      const lt = data.ledger_timing || {}, at = data.attempts || [];
+      const parts = [`${data.elapsed_sec.toFixed(2)}s`];
+      if (lt.geometry_sec != null)
+        parts.push(`geom ${lt.geometry_sec.toFixed(2)}s`
+                 + `, enum ${(lt.enumeration_sec || 0).toFixed(2)}s`
+                 + `, stubs ${(lt.stub_materialization_sec || 0).toFixed(2)}s`);
+      parts.push(at.length > 1
+        ? `escalated to level ${data.geometry_level} (${at.length} attempts)`
+        : `level ${data.geometry_level ?? "?"}`);
+      parts.push(`${data.n_branches} branches / ${data.n_branch_points} pts`);
+      t = parts.join(" · ")
+        + ((data.native && data.native.loaded) ? "" : " · NO C CORE");
+      // per-level detail on hover
+      st.title = at.map(x =>
+        `level ${x.geometry_level}: ${x.status} (${x.reason || "—"}) `
+        + `${x.elapsed_sec.toFixed(2)}s`).join("\n");
+    }
+    st.textContent = `certified · ${e.n_critical} critical points · ${t}`;
+    draw();
+  } catch (e){
+    if (e && e.name === "AbortError") return;
+    if (id !== seq) return;
+    st.className = "status err";
+    st.textContent = "backend unreachable — start demos/explorer/serve.py";
+  }
+}
+
+/* ---------------- portrait ---------------- */
+/* Critical-point glyphs, following render.py: filled dot = local minimum,
+   open circle = global minimum, triangle = N-root saddle, open diamond =
+   B-root saddle (a saddle by the det H = -4B'^2 clause, so it gets its own
+   mark), cross = degenerate. */
+function glyph(ctx, x, y, c){
+  const G = css("--glyph");
+  if (c.kind === "min" && c.global){
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = G; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke();
+  } else if (c.kind === "min"){
+    ctx.fillStyle = G; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x, y, 3.4, 0, 7); ctx.fill(); ctx.stroke();
+  } else if (c.kind === "saddle" && c.source === "B"){
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = G; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(x, y-5.2); ctx.lineTo(x+5.2, y);
+    ctx.lineTo(x, y+5.2); ctx.lineTo(x-5.2, y); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else if (c.kind === "saddle"){
+    ctx.fillStyle = G; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x, y-4.8); ctx.lineTo(x-4.2, y+2.4);
+    ctx.lineTo(x+4.2, y+2.4); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else {
+    ctx.strokeStyle = css("--rim"); ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(x-4,y-4); ctx.lineTo(x+4,y+4);
+    ctx.moveTo(x+4,y-4); ctx.lineTo(x-4,y+4);
+    ctx.stroke();
+  }
+}
+
+function drawPortrait(){
+  const W = cP.width, H = cP.height, v = S.view;
+  xP.setTransform(1,0,0,1,0,0);
+  xP.fillStyle = "#fff"; xP.fillRect(0,0,W,H);
+  if (!S.P) return;
+  const F = S.P.field;
+
+  // a horizontal, b vertical increasing upward -- the house convention,
+  // matching render._mapper and the (a_lo, a_hi, b_lo, b_hi) view tuple.
+  const X = a => (a - v.a0) / (v.a1 - v.a0) * W;
+  const Y = b => H - (b - v.b0) / (v.b1 - v.b0) * H;
+
+  // Level curves in closed form: a_pm(b;c) = a*(b) pm sqrt((c - u(b))/A(b)).
+  // No marching squares, no grid artifacts -- the same construction render.py
+  // uses, evaluated on a dense b-grid.
+  const M = 1200, bs = [], As = [], us = [], ast = [];
+  for (let i = 0; i <= M; i++){
+    const b = v.b0 + i / M * (v.b1 - v.b0);
+    const A = evalp(F.A, b), den = evalp(F.backbone_den, b);
+    bs.push(b); As.push(A);
+    ast.push(A > 1e-13 ? evalp(F.B, b) / A : NaN);
+    us.push(Math.abs(den) > 1e-300 ? F.C - evalp(F.backbone_num, b) / den : NaN);
+  }
+  const uv = us.filter(Number.isFinite);
+  const uMin = uv.length ? Math.min(...uv) : 0;
+  let Lmax = uMin;
+  for (const a of [v.a0, v.a1]) for (const b of [v.b0, v.b1])
+    Lmax = Math.max(Lmax, Lof(a, b));
+  const NL = 44, margin = 2 * (v.a1 - v.a0);
+  xP.strokeStyle = css("--contour"); xP.lineWidth = 1;
+  for (let k = 1; k <= NL; k++){
+    const c = uMin + (Lmax - uMin) * Math.pow(k / (NL + 1), 2);
+    for (const sgn of [1, -1]){
+      xP.beginPath();
+      let on = false;
+      for (let i = 0; i <= M; i++){
+        const A = As[i], u = us[i];
+        if (!(A > 1e-13) || !Number.isFinite(u) || c <= u){ on = false; continue; }
+        const a = ast[i] + sgn * Math.sqrt((c - u) / A);
+        if (a < v.a0 - margin || a > v.a1 + margin){ on = false; continue; }
+        const x = X(a), y = Y(bs[i]);
+        on ? xP.lineTo(x, y) : (xP.moveTo(x, y), on = true);
+      }
+      xP.stroke();
+    }
+  }
+
+  // backbone
+  xP.strokeStyle = css("--backbone"); xP.lineWidth = 2;
+  xP.beginPath();
+  let on = false;
+  for (let i = 0; i <= M; i++){
+    const a = ast[i];
+    if (!Number.isFinite(a) || a < v.a0 - margin || a > v.a1 + margin){ on = false; continue; }
+    const x = X(a), y = Y(bs[i]);
+    on ? xP.lineTo(x, y) : (xP.moveTo(x, y), on = true);
+  }
+  xP.stroke();
+
+  // certified separatrices: green unstable, red stable.
+  // Drawn with pixel-scale decimation, not data decimation: vertices closer
+  // together than ~0.6px are skipped, so zooming in progressively reveals the
+  // full traced resolution instead of a pre-thinned copy of it.
+  xP.globalAlpha = S.stale ? .28 : 1;
+  xP.lineWidth = 1.7;
+  for (const br of S.P.branches){
+    xP.strokeStyle = br.kind === "unstable" ? css("--unstable") : css("--stable");
+    xP.beginPath();
+    let px = NaN, py = NaN, started = false;
+    const pts = br.points;
+    for (let i = 0; i < pts.length; i++){
+      const x = X(pts[i][0]), y = Y(pts[i][1]);
+      const last = i === pts.length - 1;
+      if (!started){ xP.moveTo(x, y); px = x; py = y; started = true; continue; }
+      if (!last && Math.abs(x - px) < .6 && Math.abs(y - py) < .6) continue;
+      xP.lineTo(x, y); px = x; py = y;
+    }
+    xP.stroke();
+  }
+
+  // user traces (demo layer)
+  xP.globalAlpha = 1;
+  xP.lineWidth = 1.4; xP.strokeStyle = css("--trace");
+  for (const tr of S.traces){
+    xP.beginPath();
+    tr.forEach((p, i) => i ? xP.lineTo(X(p[0]), Y(p[1])) : xP.moveTo(X(p[0]), Y(p[1])));
+    xP.stroke();
+    const last = tr[tr.length-1];
+    xP.fillStyle = css("--trace");
+    xP.beginPath(); xP.arc(X(last[0]), Y(last[1]), 3, 0, 7); xP.fill();
+  }
+
+  // certified critical points on top
+  xP.globalAlpha = S.stale ? .28 : 1;
+  for (const c of S.P.critical){
+    if (c.a < v.a0 || c.a > v.a1 || c.b < v.b0 || c.b > v.b1) continue;
+    glyph(xP, X(c.a), Y(c.b), c);
+  }
+  xP.globalAlpha = 1;
+
+  const sx = X(S.sel.a), sy = Y(S.sel.b);
+  xP.strokeStyle = css("--response"); xP.lineWidth = 1; xP.beginPath();
+  xP.moveTo(sx,0); xP.lineTo(sx,H); xP.moveTo(0,sy); xP.lineTo(W,sy); xP.stroke();
+  xP.beginPath(); xP.arc(sx, sy, 5, 0, 7); xP.stroke();
+
+  xP.fillStyle = css("--ink-2"); xP.font = "10px " + css("--mono");
+  xP.fillText(`a ${v.a0.toFixed(2)} … ${v.a1.toFixed(2)}`, 6, H - 6);
+  xP.save(); xP.translate(10, H - 22); xP.rotate(-Math.PI/2);
+  xP.fillText(`b ${v.b0.toFixed(2)} … ${v.b1.toFixed(2)}`, 0, 0);
+  xP.restore();
+
+  const en = S.P.enumeration;
+  // Below the traced chord scale, linear interpolation between vertices is no
+  // longer a certified rendering -- say so rather than magnify silently.
+  const scale = Math.max(W / (v.a1 - v.a0), H / (v.b1 - v.b0));
+  const chordPx = (S.P.chord_max || 0) * scale;
+  els("portraitInfo").textContent =
+    `${en.n_min} minima / ${en.n_saddle} saddles`
+    + (S.stale ? "  · stale" : "")
+    + (chordPx > 2 ? `  · past traced resolution (chord ≈ ${chordPx.toFixed(0)} px)` : "");
+}
+
+/* ---------------- backbone ---------------- */
+function drawBone(){
+  const W = cB.width, H = cB.height, v = S.view;
+  xB.clearRect(0,0,W,H);
+  if (!S.P) return;
+  const F = S.P.field, pad = { l:52, r:52, t:14, b:24 };
+  const X = b => pad.l + (b - v.b0) / (v.b1 - v.b0) * (W - pad.l - pad.r);
+  const bs=[], as=[], us=[];
+  for (let i = 0; i <= 600; i++){
+    const b = v.b0 + i / 600 * (v.b1 - v.b0), A = evalp(F.A, b), B = evalp(F.B, b);
+    const den = evalp(F.backbone_den, b);
+    bs.push(b);
+    as.push(A > 1e-13 ? B / A : NaN);
+    // u = C - B^2/A drawn through the model's own reduced numerator/denominator
+    us.push(Math.abs(den) > 1e-300 ? F.C - evalp(F.backbone_num, b) / den : NaN);
+  }
+  const uv = us.filter(Number.isFinite);
+  const uHi = Math.max(...uv, S.P.varf * .1), uLo = Math.min(...uv, 0);
+  const Ya = a => pad.t + (v.a1 - a) / (v.a1 - v.a0) * (H - pad.t - pad.b);
+  const Yu = u => pad.t + (uHi - u) / ((uHi - uLo) || 1) * (H - pad.t - pad.b);
+
+  xB.strokeStyle = css("--rule-2"); xB.lineWidth = 1; xB.beginPath();
+  xB.moveTo(pad.l, H - pad.b); xB.lineTo(W - pad.r, H - pad.b); xB.stroke();
+
+  xB.strokeStyle = css("--target"); xB.lineWidth = 1.6; xB.beginPath();
+  let st = false;
+  for (let i = 0; i < bs.length; i++){
+    if (!Number.isFinite(us[i])){ st = false; continue; }
+    const x = X(bs[i]), y = Yu(us[i]);
+    st ? xB.lineTo(x,y) : (xB.moveTo(x,y), st = true);
+  }
+  xB.stroke();
+
+  xB.strokeStyle = css("--backbone"); xB.lineWidth = 1.8;
+  xB.setLineDash([]); xB.beginPath(); st = false;
+  for (let i = 0; i < bs.length; i++){
+    if (!Number.isFinite(as[i]) || as[i] < v.a0 || as[i] > v.a1){ st = false; continue; }
+    const x = X(bs[i]), y = Ya(as[i]);
+    st ? xB.lineTo(x,y) : (xB.moveTo(x,y), st = true);
+  }
+  xB.stroke(); xB.setLineDash([]);
+
+  xB.globalAlpha = S.stale ? .28 : 1;
+  for (const c of S.P.critical){
+    if (c.b < v.b0 || c.b > v.b1) continue;
+    const x = X(c.b);
+    xB.strokeStyle = css("--rule-2"); xB.lineWidth = 1;
+    xB.beginPath(); xB.moveTo(x, pad.t); xB.lineTo(x, H - pad.b); xB.stroke();
+    const u = F.C - evalp(F.backbone_num, c.b) / evalp(F.backbone_den, c.b);
+    glyph(xB, x, Yu(u), c);   // same coding as the portrait
+  }
+  xB.globalAlpha = 1;
+
+  xB.strokeStyle = css("--ink"); xB.lineWidth = 1; xB.beginPath();
+  xB.moveTo(X(S.sel.b), pad.t - 6); xB.lineTo(X(S.sel.b), H - pad.b); xB.stroke();
+
+  xB.fillStyle = css("--ink-2"); xB.font = "10px " + css("--mono");
+  xB.fillText("u(b) = L on backbone", pad.l, 11);
+  xB.fillText(v.b0.toFixed(2), pad.l, H - 8);
+  xB.textAlign = "right";
+  xB.fillText("a*(b)", W - pad.r, 11);
+  xB.fillText(v.b1.toFixed(2), W - pad.r, H - 8);
+  xB.textAlign = "left";
+}
+
+/* ---------------- response ---------------- */
+function drawResp(){
+  const W = cR.width, H = cR.height;
+  xR.clearRect(0,0,W,H);
+  if (!S.P) return;
+  const f = S.P.f, g = S.P.g, pad = { l:44, r:12, t:12, b:26 };
+  const kind = els("dist").value;
+  const x0 = kind === "normal01" ? -3 : 0, x1 = kind === "normal01" ? 3 : 1;
+  const N = 220, xs=[], Fv=[], Rv=[];
+  for (let i = 0; i <= N; i++){
+    const x = x0 + i / N * (x1 - x0);
+    xs.push(x); Fv.push(evalp(f, x)); Rv.push(S.sel.a * evalp(g, S.sel.b * x));
+  }
+  let lo = Math.min(...Fv, ...Rv), hi = Math.max(...Fv, ...Rv);
+  if (!(hi > lo)) hi = lo + 1;
+  const pd = .08 * (hi - lo); lo -= pd; hi += pd;
+  const X = x => pad.l + (x - x0) / (x1 - x0) * (W - pad.l - pad.r);
+  const Y = y => pad.t + (hi - y) / (hi - lo) * (H - pad.t - pad.b);
+
+  xR.beginPath();
+  xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Fv[i])) : xR.moveTo(X(x), Y(Fv[i])));
+  for (let i = xs.length-1; i >= 0; i--) xR.lineTo(X(xs[i]), Y(Rv[i]));
+  xR.closePath(); xR.fillStyle = "rgba(194,94,0,.13)"; xR.fill();
+
+  xR.strokeStyle = css("--rule-2"); xR.lineWidth = 1;
+  if (lo < 0 && hi > 0){ xR.beginPath(); xR.moveTo(pad.l, Y(0)); xR.lineTo(W-pad.r, Y(0)); xR.stroke(); }
+  xR.beginPath(); xR.moveTo(pad.l, pad.t); xR.lineTo(pad.l, H - pad.b); xR.stroke();
+
+  xR.lineWidth = 2; xR.strokeStyle = css("--target"); xR.beginPath();
+  xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Fv[i])) : xR.moveTo(X(x), Y(Fv[i])));
+  xR.stroke();
+  xR.lineWidth = 1.8; xR.strokeStyle = css("--response"); xR.setLineDash([5,4]); xR.beginPath();
+  xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Rv[i])) : xR.moveTo(X(x), Y(Rv[i])));
+  xR.stroke(); xR.setLineDash([]);
+
+  xR.fillStyle = css("--ink-2"); xR.font = "10px " + css("--mono");
+  xR.fillText(x0.toFixed(2), pad.l, H - 9);
+  xR.textAlign = "right";
+  xR.fillText(x1.toFixed(2), W - pad.r, H - 9);
+  xR.fillText(hi.toFixed(2), pad.l - 5, Y(hi) + 4);
+  xR.fillText(lo.toFixed(2), pad.l - 5, Y(lo) + 4);
+  xR.textAlign = "left";
+
+  els("respInfo").textContent = `L/Var = ${(Lof(S.sel.a, S.sel.b) / S.P.varf).toFixed(4)}`;
+}
+
+/* ---------------- readout ---------------- */
+function drawReadout(){
+  if (!S.P){ els("readout").innerHTML = ""; return; }
+  const a = S.sel.a, b = S.sel.b, L = Lof(a, b), gr = gradOf(a, b);
+  const near = S.P.critical.find(c => Math.hypot(c.a - a, c.b - b) < 2e-3);
+  const rows = [
+    ["a", a.toFixed(6)], ["b", b.toFixed(6)],
+    ["L", L.toPrecision(6)], ["L / Var(f)", (L / S.P.varf).toFixed(5)],
+    ["‖∇L‖", Math.hypot(gr[0], gr[1]).toPrecision(4)],
+    ["a*(b)", aStar(b).toFixed(6)],
+    ["A(b) = ψ", evalp(S.P.field.A, b).toPrecision(5)],
+    ["nearest critical", near ? `${near.kind} (root of ${near.source})` : "—"],
+    ["sign u″ there [EXACT]", near ? (near.u2_sign > 0 ? "+" : near.u2_sign < 0 ? "−" : "0") : "—"]
+  ];
+  els("readout").innerHTML = rows.map(r =>
+    `<tr><td class="k">${r[0]}</td><td class="v">${r[1]}</td></tr>`).join("");
+  const e = S.P.enumeration, s = S.P.ledger_summary || {};
+  els("certInfo").textContent =
+    `ψ>0 ${e.psi_positive ? "✓" : "✗"} · Morse ${e.morse ? "✓" : "✗"} · ` +
+    `alternates ${e.alternates ? "✓" : "✗"} · branches ${s.all_branches_clean ? "clean" : "—"}`;
+}
+
+/* zoom-box rubber band, drawn last so it sits over everything */
+function drawRubber(){
+  if (!S.rubber) return;
+  const r = cP.getBoundingClientRect();
+  const sx = cP.width / r.width, sy = cP.height / r.height;
+  const x0 = (S.rubber.x0 - r.left) * sx, y0 = (S.rubber.y0 - r.top) * sy;
+  const x1 = (S.rubber.x1 - r.left) * sx, y1 = (S.rubber.y1 - r.top) * sy;
+  xP.save();
+  xP.strokeStyle = css("--ink"); xP.lineWidth = 1; xP.setLineDash([4, 3]);
+  xP.strokeRect(Math.min(x0, x1), Math.min(y0, y1),
+                Math.abs(x1 - x0), Math.abs(y1 - y0));
+  xP.restore();
+}
+
+function draw(){ drawPortrait(); drawBone(); drawResp(); drawReadout(); drawRubber(); }
+
+/* ---------------- descent (demo layer) ---------------- */
+function maxflatKernel(d, lam){
+  const h = []; let binom = 1;
+  for (let t = 0; t < 200; t++){
+    h.push(binom * Math.pow(1 - lam, d) * Math.pow(lam, t));
+    binom = binom * (t + d) / (t + 1);
+  }
+  return h;
+}
+function empiricalField(n, kmax){
+  const mu = new Array(kmax + 1).fill(0);
+  for (let i = 0; i < n; i++){
+    const x = Math.random();
+    let p = 1;
+    for (let k = 0; k <= kmax; k++){ mu[k] += p; p *= x; }
+  }
+  return mu.map(v => v / n);
+}
+function fieldFromMoments(mu){
+  const f = S.P.f, g = S.P.g, ng = g.length, nf = f.length;
+  const A = new Array(2*ng-1).fill(0);
+  for (let i = 0; i < ng; i++) for (let j = 0; j < ng; j++) A[i+j] += g[i]*g[j]*mu[i+j];
+  const B = new Array(ng).fill(0);
+  for (let j = 0; j < ng; j++){ let s = 0; for (let i = 0; i < nf; i++) s += f[i]*mu[i+j]; B[j] = g[j]*s; }
+  return { A, B, Ap: dpoly(A), Bp: dpoly(B) };
+}
+function runTrace(a0, b0){
+  if (!S.P) return;
+  const method = els("method").value, lr = +els("lr").value;
+  const n = Math.max(1, Math.round(+els("nbatch").value));
+  const filt = els("filt").value;
+  const d = filt === "mf3" ? 3 : filt === "mf2" ? 2 : 1;
+  const h = filt === "none" ? [1] : maxflatKernel(d, .85);
+  const kmax = S.P.field.A.length;
+  let a = a0, b = b0, mt = [0,0], vt = [0,0];
+  const path = [[a,b]], hist = [];
+  for (let step = 0; step < 1400; step++){
+    let grad;
+    if (method === "flow"){
+      const k1 = gradOf(a, b), nrm = Math.hypot(k1[0], k1[1]) || 1;
+      const dt = lr / Math.max(1, nrm);
+      const k2 = gradOf(a - dt*k1[0]/2, b - dt*k1[1]/2);
+      a -= dt*k2[0]; b -= dt*k2[1];
+      if (Math.hypot(k2[0], k2[1]) < 1e-9) break;
+    } else {
+      hist.unshift(empiricalField(n, kmax));
+      if (hist.length > h.length) hist.pop();
+      const mu = new Array(kmax + 1).fill(0);
+      let w = 0;
+      for (let t = 0; t < hist.length; t++){ w += h[t]; for (let k = 0; k <= kmax; k++) mu[k] += h[t]*hist[t][k]; }
+      for (let k = 0; k <= kmax; k++) mu[k] /= w;
+      const F = fieldFromMoments(mu);
+      const A = evalp(F.A, b), B = evalp(F.B, b);
+      grad = [2*(a*A - B), -2*a*evalp(F.Bp, b) + a*a*evalp(F.Ap, b)];
+      if (method === "sgd"){ a -= lr*grad[0]; b -= lr*grad[1]; }
+      else {
+        const b1 = .9, b2 = .999, t1 = step + 1;
+        for (let i = 0; i < 2; i++){
+          mt[i] = b1*mt[i] + (1-b1)*grad[i];
+          vt[i] = b2*vt[i] + (1-b2)*grad[i]*grad[i];
+        }
+        a -= lr*(mt[0]/(1-Math.pow(b1,t1)))/(Math.sqrt(vt[0]/(1-Math.pow(b2,t1)))+1e-8);
+        b -= lr*(mt[1]/(1-Math.pow(b1,t1)))/(Math.sqrt(vt[1]/(1-Math.pow(b2,t1)))+1e-8);
+      }
+    }
+    if (step % 3 === 0) path.push([a,b]);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 1e4 || Math.abs(b) > 1e4) break;
+  }
+  path.push([a,b]);
+  S.traces.push(path);
+  if (S.traces.length > 8) S.traces.shift();
+}
+
+/* ---------------- interaction ---------------- */
+function toModel(ev){
+  const r = cP.getBoundingClientRect(), v = S.view;
+  return { a: v.a0 + (ev.clientX - r.left)/r.width * (v.a1 - v.a0),
+           b: v.b1 - (ev.clientY - r.top)/r.height * (v.b1 - v.b0) };
+}
+/* MATLAB-style modal tools: one tool active at a time, chosen from the
+   toolbar.  No modifier keys -- option-drag is unreliable on macOS. */
+const CURSOR = { select: "crosshair", pan: "grab", zoom: "crosshair", trace: "pointer" };
+let mode = null, panStart = null;
+
+function setTool(t){
+  S.tool = t;
+  cP.style.cursor = CURSOR[t] || "crosshair";
+  for (const btn of document.querySelectorAll("#tools [data-tool]"))
+    btn.classList.toggle("on", btn.dataset.tool === t);
+}
+for (const btn of document.querySelectorAll("#tools [data-tool]"))
+  btn.onclick = () => setTool(btn.dataset.tool);
+
+function zoomBy(k, about){
+  const v = S.view;
+  const ac = about ? about.a : (v.a0 + v.a1) / 2;
+  const bc = about ? about.b : (v.b0 + v.b1) / 2;
+  S.view = { a0: ac + (v.a0 - ac) * k, a1: ac + (v.a1 - ac) * k,
+             b0: bc + (v.b0 - bc) * k, b1: bc + (v.b1 - bc) * k };
+  draw();
+}
+els("zoomIn").onclick  = () => zoomBy(1 / 1.3);
+els("zoomOut").onclick = () => zoomBy(1.3);
+els("reset").onclick   = () => { S.view = { ...S.home }; draw(); };
+
+cP.addEventListener("pointerdown", e => {
+  cP.focus();
+  const p = toModel(e);
+  cP.setPointerCapture(e.pointerId);
+  if (S.tool === "trace"){ runTrace(p.a, p.b); S.sel = p; draw(); return; }
+  if (S.tool === "pan"){
+    mode = "pan";
+    panStart = { x: e.clientX, y: e.clientY, v: { ...S.view } };
+    cP.style.cursor = "grabbing";
+  } else if (S.tool === "zoom"){
+    mode = "zoom";
+    S.rubber = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+  } else {
+    mode = "select"; S.sel = p; draw();
+  }
+});
+
+cP.addEventListener("pointermove", e => {
+  if (mode === "select"){ S.sel = toModel(e); draw(); return; }
+  if (mode === "pan"){
+    // keep the model point under the cursor fixed
+    const r = cP.getBoundingClientRect(), v0 = panStart.v;
+    const da = (e.clientX - panStart.x) / r.width  * (v0.a1 - v0.a0);
+    const db = (e.clientY - panStart.y) / r.height * (v0.b1 - v0.b0);
+    S.view = { a0: v0.a0 - da, a1: v0.a1 - da,
+               b0: v0.b0 + db, b1: v0.b1 + db };
+    draw();
+    return;
+  }
+  if (mode === "zoom"){ S.rubber.x1 = e.clientX; S.rubber.y1 = e.clientY; draw(); }
+});
+
+const endDrag = e => {
+  if (mode === "zoom" && S.rubber){
+    const r = cP.getBoundingClientRect(), v = S.view;
+    const toA = x => v.a0 + (x - r.left) / r.width  * (v.a1 - v.a0);
+    const toB = y => v.b1 - (y - r.top)  / r.height * (v.b1 - v.b0);
+    const a = [toA(S.rubber.x0), toA(S.rubber.x1)].sort((p, q) => p - q);
+    const b = [toB(S.rubber.y0), toB(S.rubber.y1)].sort((p, q) => p - q);
+    if (Math.abs(S.rubber.x1 - S.rubber.x0) > 6 &&
+        Math.abs(S.rubber.y1 - S.rubber.y0) > 6)
+      S.view = { a0: a[0], a1: a[1], b0: b[0], b1: b[1] };
+    S.rubber = null;
+  }
+  if (mode){ try { cP.releasePointerCapture(e.pointerId); } catch (_) {} }
+  mode = null;
+  cP.style.cursor = CURSOR[S.tool] || "crosshair";
+  draw();
+};
+cP.addEventListener("pointerup", endDrag);
+cP.addEventListener("pointercancel", endDrag);
+
+cP.addEventListener("keydown", e => {
+  const v = S.view, da = .12 * (v.a1 - v.a0), db = .12 * (v.b1 - v.b0);
+  switch (e.key){
+    case "ArrowLeft":  S.view = { ...v, a0: v.a0 - da, a1: v.a1 - da }; break;
+    case "ArrowRight": S.view = { ...v, a0: v.a0 + da, a1: v.a1 + da }; break;
+    case "ArrowUp":    S.view = { ...v, b0: v.b0 + db, b1: v.b1 + db }; break;
+    case "ArrowDown":  S.view = { ...v, b0: v.b0 - db, b1: v.b1 - db }; break;
+    case "+": case "=": e.preventDefault(); return zoomBy(1 / 1.2);
+    case "-": case "_": e.preventDefault(); return zoomBy(1.2);
+    case "0":          e.preventDefault(); S.view = { ...S.home }; break;
+    case "s": e.preventDefault(); return setTool("select");
+    case "p": e.preventDefault(); return setTool("pan");
+    case "z": e.preventDefault(); return setTool("zoom");
+    case "t": e.preventDefault(); return setTool("trace");
+    default: return;
+  }
+  e.preventDefault(); draw();
+});
+cB.addEventListener("pointerdown", e => {
+  if (!S.P) return;
+  const r = cB.getBoundingClientRect(), pad = { l:52, r:52 };
+  const frac = ((e.clientX - r.left)/r.width * cB.width - pad.l) / (cB.width - pad.l - pad.r);
+  const b = S.view.b0 + Math.min(Math.max(frac,0),1) * (S.view.b1 - S.view.b0);
+  S.sel = { b, a: aStar(b) }; draw();
+});
+cP.addEventListener("wheel", e => {
+  e.preventDefault();
+  const p = toModel(e), k = e.deltaY > 0 ? 1.12 : 1/1.12, v = S.view;
+  v.b0 = p.b + (v.b0 - p.b)*k; v.b1 = p.b + (v.b1 - p.b)*k;
+  v.a0 = p.a + (v.a0 - p.a)*k; v.a1 = p.a + (v.a1 - p.a)*k;
+  draw();
+}, { passive:false });
+
+els("clearTr").onclick = () => { S.traces = []; draw(); };
+els("recompute").onclick = () => recompute(true);   // recompute at this view
+els("fit").onclick = () => {
+  if (!S.P || !S.P.critical.length) return;
+  const bs = S.P.critical.map(c => c.b), as = S.P.critical.map(c => c.a);
+  const bp = .35*(Math.max(...bs) - Math.min(...bs) + 1);
+  const ap = .35*(Math.max(...as) - Math.min(...as) + 1);
+  S.view = { b0: Math.min(...bs)-bp, b1: Math.max(...bs)+bp,
+             a0: Math.min(...as)-ap, a1: Math.max(...as)+ap };
+  draw();
+};
+
+// Coefficient edits recompute on commit (blur or Enter), not per keystroke:
+// a degree-11 certified enumeration is far too costly to run on every
+// character of a twelve-coefficient list.  The button forces it any time.
+["fIn","gIn","nsample"].forEach(id => {
+  els(id).addEventListener("input", () => { S.stale = true; draw(); });
+  els(id).addEventListener("change", recompute);
+  els(id).addEventListener("keydown", e => { if (e.key === "Enter") recompute(); });
+});
+els("dist").onchange = () => { S.stale = true; draw(); recompute(); };
+
+const PRESETS = {
+  quad: { f:"1, 1, 1", g:"1, 1, 1" }
+};
+els("preset").onchange = e => {
+  const val = e.target.value;
+  if (!val) return;
+  S.traces = []; S.sel = { a:1, b:1 };
+  if (PRESETS[val]){
+    els("fIn").value = PRESETS[val].f;
+    els("gIn").value = PRESETS[val].g;
+    els("dist").value = "uniform01";
+    recompute();                        // library picks the view
+  } else {
+    recompute(false, val);              // zoo case: name only
+  }
+};
+
+// Populate the preset list from the zoo itself rather than hard-coding cases.
+fetch("/zoo").then(r => r.json()).then(cases => {
+  const sel = els("preset");
+  for (const c of cases){
+    const o = document.createElement("option");
+    o.value = c.name;
+    o.textContent = `${c.name}  (deg ${c.deg_f}/${c.deg_g}, ${c.moment_dist})`;
+    o.title = c.description || "";
+    sel.appendChild(o);
+  }
+}).catch(() => {});
+
+recompute();
+</script>
