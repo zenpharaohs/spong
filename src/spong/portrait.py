@@ -96,8 +96,12 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     gen = _genericity if _genericity is not None else atlas.genericity(m)
 
     branches = []
-    # Stable separatrices are the basin walls, so the portraitist computes
-    # them before asking unstable branches to discover their destinations.
+    # Stable separatrices are computed first for readability of this routine,
+    # NOT because unstable branches consume them: the unstable loop below
+    # reads only (m, e, box, display_view), and discovers destinations through
+    # topology.sublevel_component_minima and capture against e.minima.  Every
+    # branch here is independent of every other, which is what makes the two
+    # loops parallelisable and the contact scan the only barrier.
     span_scale = max(display_view[3] - display_view[2],
                      display_view[1] - display_view[0])
     # Escalation must improve geometric resolution as well as enlarge the

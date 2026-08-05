@@ -164,6 +164,17 @@ class Model:
         object.__setattr__(self, "_fbpp", fl(P.deriv(P.deriv(b))))
         object.__setattr__(self, "_fn", fl(n))
         object.__setattr__(self, "_fnp", fl(P.deriv(n)))
+        self._attach_native_kernel()
+
+    def _attach_native_kernel(self) -> None:
+        """(Re)build the binary64 evaluation memo held by the C core.
+
+        _native.Kernel caches nothing but the ROUNDING: the eight float
+        coefficient arrays A, A', A'', B, B', B'', N, N', copied once out of
+        the exact Fractions so the trace loop never re-rounds them.  It owns no
+        state beyond those buffers, so it is process-local by nature -- dropped
+        when a Model is pickled and rebuilt on arrival, never shipped.
+        """
         try:
             from . import _native
             kernel = _native.Kernel(
@@ -173,6 +184,16 @@ class Model:
         except (ImportError, ValueError):
             kernel = None
         object.__setattr__(self, "_native_kernel", kernel)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_native_kernel", None)
+        return state
+
+    def __setstate__(self, state):
+        for key, value in state.items():
+            object.__setattr__(self, key, value)
+        self._attach_native_kernel()
 
     # ---------------- floating evaluators (NumPy kernels) ---------------- #
 
