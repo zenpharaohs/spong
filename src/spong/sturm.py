@@ -274,6 +274,29 @@ def _isolate_roots_python(
     return out
 
 
+@lru_cache(maxsize=4096)
+def _isolate_cached(integers: tuple[int, ...]) -> tuple[RootInterval, ...]:
+    """Memoized isolation, keyed on the primitive integer polynomial.
+
+    Isolation is a pure function of the polynomial, and the same polynomial
+    recurs constantly during an audit: measured on tricky-d11, 82 isolate
+    calls against roughly a dozen distinct polynomials, at ~89ms each.  The
+    Sturm chain behind them is already cached; the isolation was not.
+    """
+    plan = _native_sturm_plan(integers)
+    result = plan.isolate()
+    if result["status"] != 0:
+        raise ArithmeticError(
+            f"native exact root isolation refused with status "
+            f"{result['status']}")
+    return tuple(
+        RootInterval(
+            Fraction(int(lo_num), int(lo_den)),
+            Fraction(int(hi_num), int(hi_den)),
+            bool(exact))
+        for lo_num, lo_den, hi_num, hi_den, exact in result["intervals"])
+
+
 def isolate_roots(p: Poly, stats: dict | None = None) -> list[RootInterval]:
     """Disjoint exact rational intervals, one distinct real root each.
 
@@ -287,6 +310,11 @@ def isolate_roots(p: Poly, stats: dict | None = None) -> list[RootInterval]:
     plan = _native_sturm_plan(integers)
     if plan is None:
         return _isolate_roots_python(p, stats)
+    if stats is None:
+        # The work counters are only meaningful for the call that actually
+        # did the work, so a stats request bypasses the cache rather than
+        # reporting someone else's bisections as its own.
+        return list(_isolate_cached(integers))
     result = plan.isolate()
     if result["status"] != 0:
         raise ArithmeticError(
@@ -350,6 +378,30 @@ def _refine_python(p: Poly, iv: RootInterval,
     return RootInterval(lo, hi, False)
 
 
+@lru_cache(maxsize=8192)
+def _refine_cached(integers: tuple[int, ...], lo: Fraction, hi: Fraction,
+                   rel: Fraction) -> RootInterval:
+    """Memoized refinement of one isolating interval.
+
+    Refinement is deterministic in (polynomial, interval, target width) and is
+    repeated heavily: 194 calls at ~50ms on tricky-d11, against roughly a
+    dozen roots.  Each call bisects from scratch, so the repetition is pure
+    waste -- the narrowed interval for a given root is the same object every
+    time it is asked for.
+    """
+    plan = _native_sturm_plan(integers)
+    result = plan.refine(lo, hi, rel)
+    if result["status"] != 0:
+        raise ArithmeticError(
+            f"native exact root refinement refused with status "
+            f"{result['status']}")
+    lo_num, lo_den, hi_num, hi_den, exact = result["interval"]
+    return RootInterval(
+        Fraction(int(lo_num), int(lo_den)),
+        Fraction(int(hi_num), int(hi_den)),
+        bool(exact))
+
+
 def refine(p: Poly, iv: RootInterval,
            rel: Fraction = Fraction(1, 2**48),
            stats: dict | None = None) -> RootInterval:
@@ -360,6 +412,8 @@ def refine(p: Poly, iv: RootInterval,
     plan = _native_sturm_plan(integers) if integers else None
     if plan is None:
         return _refine_python(p, iv, rel, stats)
+    if stats is None:
+        return _refine_cached(integers, iv.lo, iv.hi, rel)
     result = plan.refine(iv.lo, iv.hi, rel)
     if result["status"] != 0:
         raise ArithmeticError(
