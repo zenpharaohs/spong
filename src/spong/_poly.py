@@ -57,6 +57,21 @@ def scale(p: Poly, c: Fraction) -> Poly:
 
 
 def mul(p: Poly, q: Poly) -> Poly:
+    """Exact product.
+
+    Accumulates in Fraction deliberately.  Convolving over a common
+    denominator was tried and is much SLOWER here: clearing to the LCM of all
+    denominators inflates every coefficient to the size of the worst one,
+    and the denominators compound through repeated products (A, A^2, A^4 in
+    the far-field funnel reaches degree 136), so the big-int operands grow far
+    beyond what Fraction's per-coefficient reduction keeps them at.  Many
+    small gcds beat a few enormous multiplies.
+
+    If this becomes the bottleneck again, the right form is content-primitive
+    -- carry (rational content, primitive integer coefficients) so the
+    integers stay minimal rather than merely common -- which is what
+    sturm.sturm_chain already does for the PRS.
+    """
     if not p or not q:
         return ZERO
     out = [Fraction(0)] * (len(p) + len(q) - 1)

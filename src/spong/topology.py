@@ -691,16 +691,26 @@ def _unstable_far_field_funnel(m, branch, index=None):
         hN = P.mul(h, m.N)
         outward = P.scale(P.mul(B, m.N), Fraction(-direction))
 
+        # Everything independent of s or of the width is built once.
+        # scaled_radial is called twice per candidate width and the width
+        # ladder runs up to 49 rungs, so these products were being rebuilt
+        # about a hundred times per branch at degrees up to 4*deg A -- 136 at
+        # deg g = 17.  Polynomial multiplication over Q is exact and
+        # associative, so hoisting and reassociating cannot change a value.
+        AB = P.mul(A, B)
+        h3A4 = P.mul(P.mul(P.mul(h, h), h), A4)
+        hD = P.mul(h, D)
+        hN2 = P.mul(hN, hN)
+        BAp2 = P.mul(BAp, BAp)
+
         def scaled_radial(s):
             h_plus_s = P.add(h, (s,))
             shifted = P.add(hN, P.scale(BAp, s))
             first = P.scale(
-                P.mul(P.mul(P.mul(h_plus_s, A), B), shifted),
-                -direction*s)
-            h3 = P.mul(P.mul(h, h), h)
-            second = P.scale(P.mul(h3, A4), -2*s)
+                P.mul(P.mul(h_plus_s, AB), shifted), -direction*s)
+            second = P.scale(h3A4, -2*s)
             third = P.mul(
-                P.mul(P.mul(h, P.mul(h_plus_s, h_plus_s)), D), shifted)
+                P.mul(P.mul(h_plus_s, h_plus_s), hD), shifted)
             return P.add(P.add(first, second), third)
 
         accepted_width = None
@@ -708,9 +718,7 @@ def _unstable_far_field_funnel(m, branch, index=None):
                       for power in range(48, -1, -1)):
             if abs(scaled_ratio) >= width or width >= hq:
                 continue
-            robust = P.sub(
-                P.mul(hN, hN),
-                P.scale(P.mul(BAp, BAp), width*width))
+            robust = P.sub(hN2, P.scale(BAp2, width*width))
             inward_upper = P.scale(
                 scaled_radial(width), Fraction(-1))
             inward_lower = scaled_radial(-width)

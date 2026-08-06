@@ -42,7 +42,17 @@ def _as_poly(ints: tuple[int, ...]) -> Poly:
     return tuple(Fraction(v) for v in ints)
 
 
-@lru_cache(maxsize=512)
+# Cache sizes.  512 was NOT thrashing -- measured on linear-target-d17-thrash,
+# _native_sturm_plan sees 6823 hits against 151 misses with a working set of
+# 151, and raising the bound to 4096 changed the audit by 4s in 718s.  The
+# cost is the 151 misses themselves: constructing a GMP Sturm chain for the
+# degree-98 and degree-136 test polynomials the far-field funnel and the
+# sublevel inventory generate runs to seconds apiece.  The larger bound is
+# kept because it is free and these are pure functions, but it is not a fix.
+_CACHE = 4096
+
+
+@lru_cache(maxsize=_CACHE)
 def sturm_chain(p: Poly) -> tuple[tuple[int, ...], ...]:
     """Sturm chain of p as primitive integer polynomials.
 
@@ -65,7 +75,7 @@ def sturm_chain(p: Poly) -> tuple[tuple[int, ...], ...]:
     return tuple(chain)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=_CACHE)
 def _native_sturm_plan(integers: tuple[int, ...]):
     """Persistent frontend-independent exact plan, or None without C core."""
     try:
@@ -152,7 +162,7 @@ def count_roots(p: Poly, lo: Fraction | None = None,
     return _count_roots_python(p, lo, hi)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=_CACHE)
 def squarefree_part(p: Poly) -> Poly:
     g = P.gcd_poly(p, P.deriv(p))
     if P.degree(g) <= 0:
