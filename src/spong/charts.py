@@ -983,6 +983,84 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
                     cap_r: float = 2e-3, ds0: float | None = None,
                     shallow_gate=None, engine_diag: dict | None = None,
                     centered_local=None):
+    """Dispatch one engine segment to the selected engine.
+
+    SPONG_ENGINE=native runs the C port, which holds no Python objects and
+    releases the GIL for the whole segment -- the property that makes branch
+    tracing concurrent.  It reproduces _continue_curve_python bit for bit on
+    every segment of tests/corpus/continue_curve.json.
+
+    Paths the corpus cannot judge -- the floor-fallback ladder, the
+    normalized-arclength rescue, the centered rescue, the stall trim -- are not
+    reimplemented in C.  The port returns DELEGATE and the WHOLE segment is
+    re-run here, from the original arguments.  Resuming mid-segment would have
+    to carry the chart, the ramped chord, the floor fixed at launch and the
+    stall window across the boundary; re-running is identical by construction
+    and costs nothing in a case that has never yet occurred.
+    """
+    from . import engine
+    if engine.active_name() != "native":
+        return _continue_curve_python(
+            m, b0, w0, flow, targets, box, ds, max_steps=max_steps,
+            cap_r=cap_r, ds0=ds0, shallow_gate=shallow_gate,
+            engine_diag=engine_diag, centered_local=centered_local)
+
+    kernel = getattr(m, "_native_kernel", None)
+    native = None
+    if kernel is not None:
+        try:
+            from . import _native as native
+        except ImportError:
+            native = None
+    if native is None or not hasattr(native, "continue_curve"):
+        return _continue_curve_python(
+            m, b0, w0, flow, targets, box, ds, max_steps=max_steps,
+            cap_r=cap_r, ds0=ds0, shallow_gate=shallow_gate,
+            engine_diag=engine_diag, centered_local=centered_local)
+
+    flat = [float(c) for t in targets for c in t]
+    term_code, reason, switches, b_end, w_end, taken, rejected, blob = \
+        native.continue_curve(
+            kernel, float(m.C), float(b0), float(w0), int(flow),
+            flat, float(cap_r), [float(x) for x in box],
+            float(ds), -1.0 if ds0 is None else float(ds0),
+            None if shallow_gate is None else [float(x) for x in shallow_gate],
+            int(max_steps))
+
+    if term_code == _NATIVE_DELEGATE:
+        if engine_diag is not None:
+            key = f"native_delegate_{_DELEGATE_REASON.get(reason, reason)}"
+            engine_diag[key] = engine_diag.get(key, 0) + 1
+        return _continue_curve_python(
+            m, b0, w0, flow, targets, box, ds, max_steps=max_steps,
+            cap_r=cap_r, ds0=ds0, shallow_gate=shallow_gate,
+            engine_diag=engine_diag, centered_local=centered_local)
+
+    pts = np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()
+    if engine_diag is not None:
+        engine_diag["native_steps"] = (
+            engine_diag.get("native_steps", 0) + int(taken))
+        engine_diag["native_rejected"] = (
+            engine_diag.get("native_rejected", 0) + int(rejected))
+    return pts, _NATIVE_TERM[term_code], int(switches), (b_end, w_end)
+
+
+_NATIVE_TERM = {
+    0: "capture", 1: "box_exit", 2: "enter_shallow",
+    3: "abort_stationary", 4: "abort_switch_limit", 5: "abort_nonfinite",
+    6: "abort_step_failure", 7: "abort_max_steps",
+}
+_NATIVE_DELEGATE = 100
+_DELEGATE_REASON = {
+    1: "floor_ladder", 2: "stall_trim", 3: "centered_chart",
+}
+
+
+def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
+                           targets, box, ds: float, max_steps: int = 200000,
+                           cap_r: float = 2e-3, ds0: float | None = None,
+                           shallow_gate=None, engine_diag: dict | None = None,
+                           centered_local=None):
     """Walk the trajectory through chart pieces.
 
     flow: +1 descent (unstable branches), -1 ascent (separatrices).
