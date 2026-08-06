@@ -2,58 +2,63 @@
   "branches": [
     {
       "angle_energy[RESIDUAL]": 4.878166401936906e-13,
-      "angle_resolved": 201907,
+      "angle_resolved": 238226,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.000540856346340361,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.20122212563645178,
-      "n_points": 202422,
+      "n_points": 238741,
       "saddle_b": -2.738230515199488,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
       "angle_energy[RESIDUAL]": 4.882845835047102e-13,
-      "angle_resolved": 201907,
+      "angle_resolved": 219984,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.0006113607350223839,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.20122212563645178,
-      "n_points": 202422,
+      "n_points": 220499,
       "saddle_b": -2.738230515199488,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 1.1880173665405639e-14,
-      "angle_resolved": 206283,
+      "angle_energy[RESIDUAL]": 1.1880173665418868e-14,
+      "angle_resolved": 234092,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.016888076697918777,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.03911892499393125,
-      "n_points": 206798,
+      "n_points": 234607,
       "saddle_b": 0.10367350683129141,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 8.078510575464858e-15,
-      "angle_resolved": 209555,
+      "angle_energy[RESIDUAL]": 8.078510575469933e-15,
+      "angle_resolved": 220142,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.01508143037269742,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.034958051158013446,
-      "n_points": 210070,
+      "n_points": 220657,
       "saddle_b": 0.10367350683129141,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 3.950114832544442e-14,
-      "angle_resolved": 203333,
+      "angle_energy[RESIDUAL]": 3.950114832544772e-14,
+      "angle_resolved": 239439,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.0005084558595555642,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.11637245838737076,
-      "n_points": 203848,
+      "n_points": 239954,
       "saddle_b": 1.3575561041173387,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
       "angle_energy[RESIDUAL]": 1.5578273714772998e-14,
@@ -69,25 +74,27 @@
     },
     {
       "angle_energy[RESIDUAL]": 2.9903957723228276e-13,
-      "angle_resolved": 200950,
+      "angle_resolved": 237501,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.00034364595036548765,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.13643242549264434,
-      "n_points": 201465,
+      "n_points": 238016,
       "saddle_b": 3.4244530752666313,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
       "angle_energy[RESIDUAL]": 2.9902963842545737e-13,
-      "angle_resolved": 200950,
+      "angle_resolved": 219277,
       "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.0003253391949749001,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.1364305626325383,
-      "n_points": 201465,
+      "n_points": 219792,
       "saddle_b": 3.4244530752666313,
-      "term": "abort_max_steps"
+      "term": "box_exit"
     },
     {
       "angle_energy[RESIDUAL]": 6.776395289946671e-13,
@@ -309,7 +316,7 @@
     "winding": 0
   },
   "summary": {
-    "all_branches_clean": false,
+    "all_branches_clean": true,
     "balanced": true,
     "topology_status": "fp64_unresolved",
     "worst_angle_energy": 1.1596410887603571e-07,
@@ -340,15 +347,15 @@
         "ambiguous": 0,
         "forbidden": 0,
         "geometry_level": 2,
-        "reason": "branch_abort",
+        "reason": "certification_segment_budget",
         "status": "fp64_unresolved",
-        "uncertified_ends": 8,
-        "uncertified_tails": 8
+        "uncertified_ends": 1,
+        "uncertified_tails": 0
       }
     ],
     "forbidden_count": 0,
     "geometry_level": 2,
-    "resolution_reason": "branch_abort",
+    "resolution_reason": "certification_segment_budget",
     "status": "fp64_unresolved"
   }
 }
