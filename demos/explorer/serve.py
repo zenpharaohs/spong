@@ -40,10 +40,10 @@ os.environ.setdefault("SPONG_ENGINE", "native")
 os.environ.setdefault("SPONG_WORKERS", "8")
 
 try:
-    from spong import model, portrait, zoo
+    from spong import atlas, model, portrait, sturm, zoo
 except ImportError:                                  # running from a checkout
     sys.path.insert(0, str(REPO / "src"))
-    from spong import model, portrait, zoo
+    from spong import atlas, model, portrait, sturm, zoo
 
 try:                                                 # exact C core
     from spong import _native
@@ -65,6 +65,13 @@ PORT = 8710
 # tracing is not cheap.  Small LRU on the exact request.
 _CACHE: dict = {}
 _CACHE_MAX = 24
+
+# Enumeration and materialized stubs are shared between the preview and the
+# final stage of the same model: they are upstream of the geometry ladder and
+# cost seconds on the hard cases, so recomputing them per stage would be pure
+# waste.
+_ENUM: dict = {}
+_ENUM_MAX = 8
 
 
 # --------------------------------------------------------------------------
@@ -198,9 +205,17 @@ def compute(payload: dict) -> dict:
             view = tuple(float(x) for x in view)   # (a_lo, a_hi, b_lo, b_hi)
         spec = payload.get("moments", {})
 
+    # Two stages.  'preview' is geometry_level 0 only -- the picture, with no
+    # escalation ladder behind it; 'final' runs certified_compute to a verdict.
+    # On linear-target-d17-thrash level 0 is about 95s of an 808s portrait, and
+    # levels 1 and 2 refine the VERDICT rather than the curves, so blocking the
+    # display on them makes the viewer unusable on exactly the cases it is most
+    # wanted for.
+    stage = payload.get("stage", "final")
+
     key = (tuple(f), tuple(g), view, spec.get("kind", "uniform01"),
            tuple(float(x) for x in spec.get("samples", ())))
-    hit = _CACHE.get(key)
+    hit = _CACHE.get((key, stage))
     if hit is not None:
         return dict(hit, cached=True)
 
@@ -210,9 +225,23 @@ def compute(payload: dict) -> dict:
     t1 = time.perf_counter()
 
     m = model.build(f, g, mu)
+    enumeration = _ENUM.get(key)
+    if enumeration is None:
+        enumeration = sturm.materialize_stubs(
+            m, sturm.enumerate_critical_points(m))
+        _ENUM[key] = enumeration
+        if len(_ENUM) > _ENUM_MAX:
+            _ENUM.pop(next(iter(_ENUM)))
     t2 = time.perf_counter()
 
-    p = portrait.certified_compute(m, view=view)
+    if stage == "preview":
+        display_view = atlas.compute_box(m, enumeration, view=view)
+        p = portrait.compute(
+            m, view=view, geometry_level=0, _enumeration=enumeration,
+            _display_view=display_view, _genericity=atlas.genericity(m))
+    else:
+        p = portrait.certified_compute(m, view=view,
+                                       _enumeration=enumeration)
     t3 = time.perf_counter()
     elapsed = t3 - t0
     timing = {"moments": t1 - t0, "build": t2 - t1, "portrait": t3 - t2}
@@ -225,6 +254,7 @@ def compute(payload: dict) -> dict:
     e = p.enumeration
     out = {
         "f": f, "g": g,
+        "stage": stage,
         "varf": varf if varf > 0 else 1.0,
         "elapsed_sec": elapsed,
         "timing": timing,
@@ -254,7 +284,7 @@ def compute(payload: dict) -> dict:
         "geometry_level": (p.ledger or {}).get(
             "topology", {}).get("geometry_level"),
     }
-    _CACHE[key] = out
+    _CACHE[(key, stage)] = out
     if len(_CACHE) > _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
     return out

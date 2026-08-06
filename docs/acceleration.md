@@ -169,7 +169,20 @@ order-dependent early break, so parallelising it needs per-pair event lists
 merged in submission order with the budget applied during the merge.  It is
 cheap on every case measured so far.
 
-For interactive use the remaining win is architectural, not numerical: the
-level-0 portrait exists after ~95s of the 808s on the worst case, and the
-escalation ladder refines the *verdict*, not the picture.  A viewer should
-show the geometry as soon as it exists.
+## The viewer draws before it certifies
+
+`demos/explorer` requests a portrait in two stages.  `stage="preview"` runs
+`portrait.compute` at geometry level 0 and returns the picture; `stage="final"`
+runs `certified_compute` to a verdict.  The enumeration and materialized stubs
+are cached between them, so only the level-0 geometry is computed twice.
+
+This is not a cosmetic improvement.  Level 0 carries every curve the viewer
+draws, and the escalation ladder above it refines the topology certificate
+rather than the geometry -- on `linear-target-d17-thrash` that is about 95s
+against 808s.  Blocking the display on the verdict made the viewer unusable on
+exactly the cases it is most wanted for, and the browser is a far better
+instrument than the CLI for validating a portrait by eye.
+
+The preview carries its own level-0 topology block, so it does show a status --
+just not the ladder's final one.  On a case that certifies at level 0 the two
+stages agree and the second is served from cache.

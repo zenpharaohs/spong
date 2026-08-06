@@ -229,12 +229,19 @@ function sampleBatch(n, kind){
 }
 
 let seq = 0, inflight = null;
+// `change` on a coefficient field fires on blur even when nothing was edited.
+// That issued a recompute of whatever was in the boxes, which could land
+// AFTER a preset request and set the status and panels from the wrong model
+// while the preset's own request was still running.  Requests are only sent
+// when the text has actually changed since the last one.
+const lastSent = { f: null, g: null, n: null };
+
 async function recompute(_unused, zooName){
   const id = ++seq;
   if (inflight) inflight.abort();      // abandon a superseded request
   inflight = new AbortController();
+  const signal = inflight.signal;
   const st = els("status");
-  st.className = "status busy"; st.textContent = "computing certified portrait…";
   S.stale = true; draw();
 
   const dist = els("dist").value;
@@ -242,6 +249,9 @@ async function recompute(_unused, zooName){
     ? { kind: "empirical", samples: sampleBatch(Math.max(1, +els("nsample").value), "uniform01") }
     : { kind: dist };
   const v = S.view;
+  lastSent.f = els("fIn").value;
+  lastSent.g = els("gIn").value;
+  lastSent.n = els("nsample").value;
   // A zoo request carries only the name: the server takes f, g, the moment
   // distribution and default_view from the zoo entry, exactly as the CLI does.
   // For hand-entered coefficients we ALWAYS send the current view.  Leaving it
@@ -249,70 +259,87 @@ async function recompute(_unused, zooName){
   // and separatrices are chord-traced across the result, so a case whose
   // natural box is large can trace for a very long time.  The view you are
   // looking at is the honest bound.
-  const body = zooName ? { zoo: zooName } : {
+  const base = zooName ? { zoo: zooName } : {
     f: parseCoeffs(els("fIn").value),
     g: parseCoeffs(els("gIn").value),
     moments,
     view: [v.a0, v.a1, v.b0, v.b1]
   };
-  try {
+
+  const send = async stage => {
     const r = await fetch("/portrait", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: inflight.signal
+      body: JSON.stringify({ ...base, stage }), signal
     });
-    const data = await r.json();
+    return r.json();
+  };
+
+  // Two stages: the PICTURE first, the VERDICT after.  Level 0 carries every
+  // curve the viewer draws; the escalation ladder above it only refines the
+  // topology certificate.  On the hard cases that is 95s against 800s, so
+  // waiting for the verdict before painting anything makes the viewer useless
+  // exactly where it is most wanted.
+  try {
+    st.className = "status busy"; st.textContent = "tracing geometry…";
+    const preview = await send("preview");
     if (id !== seq) return;
-    if (data.error){ st.className = "status err"; st.textContent = data.error; return; }
-    S.P = data;
-    S.Ap = dpoly(data.field.A); S.Bp = dpoly(data.field.B);
-    if (zooName){                      // reflect what the zoo entry supplied
-      els("fIn").value = data.f.map(c => +c.toPrecision(15)).join(", ");
-      els("gIn").value = data.g.map(c => +c.toPrecision(15)).join(", ");
-    }
-    if (zooName){                      // adopt the zoo entry's own framing
-      let vv = data.view;
-      if (!vv && data.box){            // no display view: undo _trace_box's 1.35
-        const [A0,A1,B0,B1] = data.box, k = 1/1.35;
-        const ac = (A0+A1)/2, bc = (B0+B1)/2;
-        vv = [ac+(A0-ac)*k, ac+(A1-ac)*k, bc+(B0-bc)*k, bc+(B1-bc)*k];
-      }
-      if (vv){
-        const [a0, a1, b0, b1] = vv;
-        S.view = { a0, a1, b0, b1 };
-        S.home = { a0, a1, b0, b1 };
-      }
-    }
-    S.stale = false;
+    if (preview.error){ st.className = "status err"; st.textContent = preview.error; return; }
+    apply(preview, zooName);
+    st.className = "status busy";
+    st.textContent = `level 0 shown · ${describe(preview)} · certifying…`;
+
+    const final = await send("final");
+    if (id !== seq) return;
+    if (final.error){ st.className = "status err"; st.textContent = final.error; return; }
+    apply(final, zooName);
     st.className = "status";
-    const e = data.enumeration;
-    let t;
-    if (data.cached) t = "cached";
-    else {
-      const lt = data.ledger_timing || {}, at = data.attempts || [];
-      const parts = [`${data.elapsed_sec.toFixed(2)}s`];
-      if (lt.geometry_sec != null)
-        parts.push(`geom ${lt.geometry_sec.toFixed(2)}s`
-                 + `, enum ${(lt.enumeration_sec || 0).toFixed(2)}s`
-                 + `, stubs ${(lt.stub_materialization_sec || 0).toFixed(2)}s`);
-      parts.push(at.length > 1
-        ? `escalated to level ${data.geometry_level} (${at.length} attempts)`
-        : `level ${data.geometry_level ?? "?"}`);
-      parts.push(`${data.n_branches} branches / ${data.n_branch_points} pts`);
-      t = parts.join(" · ")
-        + ((data.native && data.native.loaded) ? "" : " · NO C CORE");
-      // per-level detail on hover
-      st.title = at.map(x =>
-        `level ${x.geometry_level}: ${x.status} (${x.reason || "—"}) `
-        + `${x.elapsed_sec.toFixed(2)}s`).join("\n");
-    }
-    st.textContent = `certified · ${e.n_critical} critical points · ${t}`;
-    draw();
+    st.textContent = `certified · ${describe(final)}`;
   } catch (e){
     if (e && e.name === "AbortError") return;
     if (id !== seq) return;
     st.className = "status err";
     st.textContent = "backend unreachable — start demos/explorer/serve.py";
   }
+}
+
+function describe(data){
+  const e = data.enumeration, at = data.attempts || [];
+  const lt = data.ledger_timing || {};
+  const parts = [`${e.n_critical} critical points`];
+  if (data.cached) parts.push("cached");
+  else {
+    parts.push(`${data.elapsed_sec.toFixed(1)}s`);
+    if (lt.geometry_sec != null) parts.push(`geom ${lt.geometry_sec.toFixed(1)}s`);
+    parts.push(at.length > 1
+      ? `escalated to level ${data.geometry_level} (${at.length} attempts)`
+      : `level ${data.geometry_level ?? 0}`);
+  }
+  if (!(data.native && data.native.loaded)) parts.push("NO C CORE");
+  return parts.join(" · ");
+}
+
+function apply(data, zooName){
+  S.P = data;
+  S.Ap = dpoly(data.field.A); S.Bp = dpoly(data.field.B);
+  if (zooName){                      // reflect what the zoo entry supplied
+    els("fIn").value = data.f.map(c => +c.toPrecision(15)).join(", ");
+    els("gIn").value = data.g.map(c => +c.toPrecision(15)).join(", ");
+    lastSent.f = els("fIn").value;
+    lastSent.g = els("gIn").value;
+    let vv = data.view;
+    if (!vv && data.box){            // no display view: undo _trace_box's 1.35
+      const [A0,A1,B0,B1] = data.box, k = 1/1.35;
+      const ac = (A0+A1)/2, bc = (B0+B1)/2;
+      vv = [ac+(A0-ac)*k, ac+(A1-ac)*k, bc+(B0-bc)*k, bc+(B1-bc)*k];
+    }
+    if (vv){
+      const [a0, a1, b0, b1] = vv;
+      S.view = { a0, a1, b0, b1 };
+      S.home = { a0, a1, b0, b1 };
+    }
+  }
+  S.stale = false;
+  draw();
 }
 
 /* ---------------- portrait ---------------- */
@@ -822,12 +849,14 @@ els("fit").onclick = () => {
   draw();
 };
 
-// Coefficient edits recompute on commit (blur or Enter), not per keystroke:
-// a degree-11 certified enumeration is far too costly to run on every
-// character of a twelve-coefficient list.  The button forces it any time.
+let timer = null;
+const changedSinceSend = () =>
+  els("fIn").value !== lastSent.f || els("gIn").value !== lastSent.g
+  || els("nsample").value !== lastSent.n;
+
 ["fIn","gIn","nsample"].forEach(id => {
   els(id).addEventListener("input", () => { S.stale = true; draw(); });
-  els(id).addEventListener("change", recompute);
+  els(id).addEventListener("change", () => { if (changedSinceSend()) recompute(); });
   els(id).addEventListener("keydown", e => { if (e.key === "Enter") recompute(); });
 });
 els("dist").onchange = () => { S.stale = true; draw(); recompute(); };
