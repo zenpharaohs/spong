@@ -691,16 +691,26 @@ def _unstable_far_field_funnel(m, branch, index=None):
         hN = P.mul(h, m.N)
         outward = P.scale(P.mul(B, m.N), Fraction(-direction))
 
+        # Everything independent of s or of the width is built once.
+        # scaled_radial is called twice per candidate width and the width
+        # ladder runs up to 49 rungs, so these products were being rebuilt
+        # about a hundred times per branch at degrees up to 4*deg A -- 136 at
+        # deg g = 17.  Polynomial multiplication over Q is exact and
+        # associative, so hoisting and reassociating cannot change a value.
+        AB = P.mul(A, B)
+        h3A4 = P.mul(P.mul(P.mul(h, h), h), A4)
+        hD = P.mul(h, D)
+        hN2 = P.mul(hN, hN)
+        BAp2 = P.mul(BAp, BAp)
+
         def scaled_radial(s):
             h_plus_s = P.add(h, (s,))
             shifted = P.add(hN, P.scale(BAp, s))
             first = P.scale(
-                P.mul(P.mul(P.mul(h_plus_s, A), B), shifted),
-                -direction*s)
-            h3 = P.mul(P.mul(h, h), h)
-            second = P.scale(P.mul(h3, A4), -2*s)
+                P.mul(P.mul(h_plus_s, AB), shifted), -direction*s)
+            second = P.scale(h3A4, -2*s)
             third = P.mul(
-                P.mul(P.mul(h, P.mul(h_plus_s, h_plus_s)), D), shifted)
+                P.mul(P.mul(h_plus_s, h_plus_s), hD), shifted)
             return P.add(P.add(first, second), third)
 
         accepted_width = None
@@ -708,9 +718,7 @@ def _unstable_far_field_funnel(m, branch, index=None):
                       for power in range(48, -1, -1)):
             if abs(scaled_ratio) >= width or width >= hq:
                 continue
-            robust = P.sub(
-                P.mul(hN, hN),
-                P.scale(P.mul(BAp, BAp), width*width))
+            robust = P.sub(hN2, P.scale(BAp2, width*width))
             inward_upper = P.scale(
                 scaled_radial(width), Fraction(-1))
             inward_lower = scaled_radial(-width)
@@ -1077,9 +1085,16 @@ def audit(m, enumeration, branches, box) -> dict:
     allowed_radius = max(1024*np.finfo(float).eps*scale, 1e-11)
     basin_radii = _minimum_basin_radii(m, enumeration)
 
-    unstable_end_by_branch = {}
-    stable_tail_by_branch = {}
-    for i, branch in enumerate(branches):
+    # The endpoint certificates are ~97% of an audit (measured on tricky-d11:
+    # capture 16.4s, stable escape 6.6s, unstable escape 0.8s, of 24.6s), and
+    # they are independent per branch -- each writes one dict entry keyed by
+    # its own index.  Their leaves are SturmPlan.refine / isolate /
+    # sign_polynomial_at_root, which hold a const plan and release the GIL, so
+    # this loop is where concurrency actually pays.  Results are assembled in
+    # submission order, so forbidden/ambiguous counts and every certificate
+    # are bit-identical to the serial run whatever the worker count.
+    def _endpoint_certificate(task):
+        i, branch = task
         if branch.kind == "unstable":
             if branch.term == "capture":
                 certificate = _capture_certificate(
@@ -1093,13 +1108,12 @@ def audit(m, enumeration, branches, box) -> dict:
                 certificate = {"certified": False,
                                "reason": "incomplete_unstable_branch"}
                 kind = "incomplete"
-            unstable_end_by_branch[i] = {
-                "branch": i, "kind": kind, **certificate}
-        elif branch.kind == "stable":
+            return i, "unstable", {"branch": i, "kind": kind, **certificate}
+        if branch.kind == "stable":
             certificate = _stable_escape_certificate(
                 m, enumeration, branch, box, 16*predicate_tol)
             asymptote = branch.certs.get("asymptote")
-            stable_tail_by_branch[i] = {
+            return i, "stable", {
                 "branch": i,
                 "box_exit": branch.term == "box_exit",
                 "asymptote_residual": (
@@ -1107,6 +1121,18 @@ def audit(m, enumeration, branches, box) -> dict:
                 "superlevel_start": certificate.get("entry_index"),
                 **certificate,
             }
+        return i, None, None
+
+    from . import engine
+    unstable_end_by_branch = {}
+    stable_tail_by_branch = {}
+    for i, which, entry in engine.map_ordered(
+            _endpoint_certificate, list(enumerate(branches)),
+            workers=engine.workers()):
+        if which == "unstable":
+            unstable_end_by_branch[i] = entry
+        elif which == "stable":
+            stable_tail_by_branch[i] = entry
 
     unstable_ends = list(unstable_end_by_branch.values())
     stable_tails = list(stable_tail_by_branch.values())

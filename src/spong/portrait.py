@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from . import atlas, charts, sturm, topology
+from . import atlas, charts, engine, sturm, topology
 from .model import Model
 
 
@@ -110,114 +110,148 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     # scale lets dense collocation distinguish nearby invariant manifolds
     # before the exact terminal-product completion takes over.
     resolution_divisor = 2.0**geometry_level
-    for s in e.saddles:
-        for sign in (+1, -1):
-            br = charts.trace_stable(
-                m, s.b, sign, box=box,
-                ds=span_scale/(30000.0*resolution_divisor),
-                critical_local=s.local,
-                critical_stub=_stable_stub(s, sign, m))
-            br.diag["saddle_b"] = s.b
-            br.diag["stable_sign"] = sign
-            if br.term == "box_exit" and len(br.Y) > 50:
-                br.certs["asymptote"] = atlas.asymptote_certificate(
-                    m, br.Y)
-            branches.append(br)
+
+    def _stable_branch(task):
+        t0 = time.perf_counter()
+        s, sign = task
+        br = engine.trace_stable(
+            m, s.b, sign, box=box,
+            ds=span_scale/(30000.0*resolution_divisor),
+            critical_local=s.local,
+            critical_stub=_stable_stub(s, sign, m))
+        br.diag["saddle_b"] = s.b
+        br.diag["stable_sign"] = sign
+        if br.term == "box_exit" and len(br.Y) > 50:
+            br.certs["asymptote"] = atlas.asymptote_certificate(m, br.Y)
+        br.diag["branch_sec"] = time.perf_counter() - t0
+        return br
+
+    n_workers = engine.workers()
+    branches.extend(engine.map_ordered(
+        _stable_branch,
+        [(s, sign) for s in e.saddles for sign in (+1, -1)],
+        workers=n_workers))
 
     discovery_ds = max(display_view[3]-display_view[2],
                        display_view[1]-display_view[0]) / (
                            30000.0*resolution_divisor)
-    for s in e.saddles:
+    def _unstable_branch(task):
         # ---- unstable branches: discover capture, never prescribe it --- #
-        for direction in (+1, -1):
-            stub = _unstable_stub(s, direction)
-            feasible = topology.sublevel_component_minima(
-                m, e, stub.curve[-1]) if stub is not None else list(e.minima)
-            same_side = [
-                q for q in feasible if direction*(q.b-s.b) > 0.0]
-            b_exit = box[3] if direction > 0 else box[2]
-            a_exit = float(m.a_star(b_exit))
-            direct = same_side[0] if len(same_side) == 1 else None
-            nominal = ((direct.a, direct.b) if direct is not None
-                       else (a_exit, b_exit))
-            trace_ds = discovery_ds
-            if direct is not None:
-                db_direct = abs(direct.b-s.b)
-                chord_direct = float(np.hypot(
-                    direct.a-s.a, direct.b-s.b))
-                trace_ds = max(
-                    db_direct/(4000.0*resolution_divisor),
-                    chord_direct/(8000.0*resolution_divisor))
-            br = charts.trace_unstable(
-                m, s.b, nominal, box=box,
-                ds=trace_ds,
-                cap_r=_capture_radius(e, trace_ds),
+        t0 = time.perf_counter()
+        s, direction = task
+        stub = _unstable_stub(s, direction)
+        feasible = topology.sublevel_component_minima(
+            m, e, stub.curve[-1]) if stub is not None else list(e.minima)
+        same_side = [
+            q for q in feasible if direction*(q.b-s.b) > 0.0]
+        b_exit = box[3] if direction > 0 else box[2]
+        a_exit = float(m.a_star(b_exit))
+        direct = same_side[0] if len(same_side) == 1 else None
+        nominal = ((direct.a, direct.b) if direct is not None
+                   else (a_exit, b_exit))
+        trace_ds = discovery_ds
+        if direct is not None:
+            db_direct = abs(direct.b-s.b)
+            chord_direct = float(np.hypot(
+                direct.a-s.a, direct.b-s.b))
+            trace_ds = max(
+                db_direct/(4000.0*resolution_divisor),
+                chord_direct/(8000.0*resolution_divisor))
+        br = engine.trace_unstable(
+            m, s.b, nominal, box=box,
+            ds=trace_ds,
+            cap_r=_capture_radius(e, trace_ds),
+            critical_local=s.local,
+            critical_stub=stub,
+            arrival_local=(direct.local if direct is not None else None),
+            candidate_minima=same_side,
+            candidate_enumeration=e,
+            capture_targets=[(q.a, q.b) for q in same_side])
+        br.diag["saddle_b"] = s.b
+        br.diag["unstable_direction"] = direction
+        br.diag["sublevel_candidate_b"] = [
+            float(q.b) for q in same_side]
+        br.diag["sublevel_unique"] = direct is not None
+        if br.term == "capture":
+            destination = min(
+                e.minima,
+                key=lambda q: (br.Y[-1, 0]-q.a)**2
+                + (br.Y[-1, 1]-q.b)**2)
+            # Discovery establishes topology; now retrace at a resolution
+            # scaled to the observed finite connection.  This is a
+            # numerical refinement, not a prior destination assumption.
+            db = abs(destination.b-s.b)
+            chord = float(np.hypot(destination.a-s.a, db))
+            refine_ds = max(db/4000.0, chord/8000.0)
+            refine_cap_r = _capture_radius(e, refine_ds)
+            refined = engine.trace_unstable(
+                m, s.b, (destination.a, destination.b), box=box,
+                ds=refine_ds, cap_r=refine_cap_r,
                 critical_local=s.local,
-                critical_stub=stub,
-                arrival_local=(direct.local if direct is not None else None),
-                candidate_minima=same_side,
-                candidate_enumeration=e,
-                capture_targets=[(q.a, q.b) for q in same_side])
-            br.diag["saddle_b"] = s.b
-            br.diag["unstable_direction"] = direction
-            br.diag["sublevel_candidate_b"] = [
-                float(q.b) for q in same_side]
-            br.diag["sublevel_unique"] = direct is not None
-            if br.term == "capture":
+                critical_stub=_unstable_stub(s, direction),
+                arrival_local=destination.local,
+                # The coarse trace proposes a scale, not a topological
+                # label.  Keep every minimum live during refinement:
+                # otherwise a coarse separatrix crossing can nominate
+                # the wrong basin and the refined integral curve reaches
+                # its true minimum with capture artificially disabled.
+                capture_targets=[(q.a, q.b) for q in e.minima])
+            if refined.term == "capture":
                 destination = min(
                     e.minima,
-                    key=lambda q: (br.Y[-1, 0]-q.a)**2
-                    + (br.Y[-1, 1]-q.b)**2)
-                # Discovery establishes topology; now retrace at a resolution
-                # scaled to the observed finite connection.  This is a
-                # numerical refinement, not a prior destination assumption.
-                db = abs(destination.b-s.b)
-                chord = float(np.hypot(destination.a-s.a, db))
-                refine_ds = max(db/4000.0, chord/8000.0)
-                refine_cap_r = _capture_radius(e, refine_ds)
-                refined = charts.trace_unstable(
-                    m, s.b, (destination.a, destination.b), box=box,
-                    ds=refine_ds, cap_r=refine_cap_r,
-                    critical_local=s.local,
-                    critical_stub=_unstable_stub(s, direction),
-                    arrival_local=destination.local,
-                    # The coarse trace proposes a scale, not a topological
-                    # label.  Keep every minimum live during refinement:
-                    # otherwise a coarse separatrix crossing can nominate
-                    # the wrong basin and the refined integral curve reaches
-                    # its true minimum with capture artificially disabled.
-                    capture_targets=[(q.a, q.b) for q in e.minima])
-                if refined.term == "capture":
-                    destination = min(
-                        e.minima,
-                        key=lambda q: (refined.Y[-1, 0]-q.a)**2
-                        + (refined.Y[-1, 1]-q.b)**2)
-                    br = refined
-                    br.diag["connection_discovered"] = True
-                    br.diag["target"] = (destination.a, destination.b)
-                    br.certs["connection_ok"] = (
-                        abs(br.Y[-1, 0]-destination.a) < 1e-9
-                        and abs(br.Y[-1, 1]-destination.b) < 1e-9)
-                else:
-                    # A coarse discovery capture is only a candidate label.
-                    # Never retain its long straight connector when the
-                    # target-specific retrace cannot reproduce the capture.
-                    br = refined
-                    br.diag["candidate_target"] = (
-                        destination.a, destination.b)
-                    br.diag["target"] = None
-                    br.certs["connection_ok"] = False
+                    key=lambda q: (refined.Y[-1, 0]-q.a)**2
+                    + (refined.Y[-1, 1]-q.b)**2)
+                br = refined
+                br.diag["connection_discovered"] = True
+                br.diag["target"] = (destination.a, destination.b)
+                br.certs["connection_ok"] = (
+                    abs(br.Y[-1, 0]-destination.a) < 1e-9
+                    and abs(br.Y[-1, 1]-destination.b) < 1e-9)
             else:
+                # A coarse discovery capture is only a candidate label.
+                # Never retain its long straight connector when the
+                # target-specific retrace cannot reproduce the capture.
+                br = refined
+                br.diag["candidate_target"] = (
+                    destination.a, destination.b)
                 br.diag["target"] = None
-                br.certs["connection_ok"] = br.term == "box_exit"
-            br.diag["saddle_b"] = s.b
-            br.diag["unstable_direction"] = direction
-            branches.append(br)
+                br.certs["connection_ok"] = False
+        else:
+            br.diag["target"] = None
+            br.certs["connection_ok"] = br.term == "box_exit"
+        br.diag["saddle_b"] = s.b
+        br.diag["unstable_direction"] = direction
+        br.diag["branch_sec"] = time.perf_counter() - t0
+        return br
+
+    branches.extend(engine.map_ordered(
+        _unstable_branch,
+        [(s, direction) for s in e.saddles for direction in (+1, -1)],
+        workers=n_workers))
 
     p = Portrait(m, e, branches, box,
                  view if view is not None else display_view)
+    _t_ledger = time.perf_counter()
     p.ledger = build_ledger(p, gen)
+    _t_audit = time.perf_counter()
     p.ledger["topology"] = topology.audit(m, e, branches, box)
+    _t_done = time.perf_counter()
+    # Branch tracing is a small minority of a portrait: measured on
+    # tricky-d11, 8.2s of branches against 143s of wall.  The certificate
+    # pass and the contact scan both walk every vertex of every branch --
+    # about 1.9M of them -- and the scan is pairwise.  Record the split so
+    # the next optimisation is aimed rather than guessed.
+    #
+    # Under its own key: certified_compute rebuilds ledger["timing"] after
+    # this returns, so anything written there is lost.
+    p.ledger["phase_timing"] = {
+        "branch_sec": sum(float(br.diag.get("branch_sec", 0.0))
+                          for br in branches),
+        "ledger_sec": _t_audit - _t_ledger,
+        "audit_sec": _t_done - _t_audit,
+        "branch_vertices": sum(len(br.Y) for br in branches),
+        "n_branches": len(branches),
+    }
     p.ledger["topology"]["geometry_level"] = geometry_level
     p.ledger["summary"]["topology_status"] = p.ledger["topology"]["status"]
     return p

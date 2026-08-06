@@ -12,6 +12,7 @@
 #include "spong/spong_topology.h"
 #include "spong/spong_geometry.h"
 #include "spong/spong_local.h"
+#include "spong/spong_continue.h"
 
 typedef struct {
     PyObject_HEAD
@@ -1784,9 +1785,16 @@ static PyObject *NativeSturmPlan_sign_polynomial_at_root(
         (uint64_t)max_bisections, (uint64_t)max_endpoint_bits
     };
     spong_algebraic_sign_result result;
-    int evaluated = spong_sturm_plan_sign_polynomial_at_root(
+    /* Exact GMP work on a const plan, touching no Python object: the plan is
+     * read-only for the query, results are allocated per call, and the file
+     * has no mutable statics.  Releasing here is what lets the contact scan
+     * run its pairs concurrently -- it is ~80% of a portrait. */
+    int evaluated;
+    Py_BEGIN_ALLOW_THREADS
+    evaluated = spong_sturm_plan_sign_polynomial_at_root(
         self->plan, text, (size_t)n, lo_num, lo_den, hi_num, hi_den,
         (uint32_t)exact, &policy, &result);
+    Py_END_ALLOW_THREADS
     if (evaluated != 0 && result.status == SPONG_EXACT_INVALID_ARGUMENT) {
         PyErr_SetString(PyExc_ValueError, "invalid isolating interval");
         goto cleanup;
@@ -1853,9 +1861,12 @@ static PyObject *NativeSturmPlan_refine(
     };
     spong_refinement_work work;
     spong_root_interval *interval = NULL;
-    int refined = spong_sturm_plan_refine(
+    int refined;
+    Py_BEGIN_ALLOW_THREADS
+    refined = spong_sturm_plan_refine(
         self->plan, lo_num, lo_den, hi_num, hi_den, rel_num, rel_den,
         &policy, &interval, &work);
+    Py_END_ALLOW_THREADS
     PyObject *item = Py_None;
     Py_INCREF(item);
     if (refined == 0) {
@@ -1924,8 +1935,11 @@ static PyObject *NativeSturmPlan_isolate(
     spong_isolation_work work;
     spong_root_interval *intervals = NULL;
     size_t count = 0;
-    int isolated = spong_sturm_plan_isolate(
+    int isolated;
+    Py_BEGIN_ALLOW_THREADS
+    isolated = spong_sturm_plan_isolate(
         self->plan, &policy, &intervals, &count, &work);
+    Py_END_ALLOW_THREADS
     PyObject *items = PyList_New(isolated == 0 ? (Py_ssize_t)count : 0);
     if (items == NULL) {
         spong_root_intervals_destroy(intervals, count);
@@ -2199,6 +2213,112 @@ cleanup:
     return NULL;
 }
 
+static PyTypeObject KernelType;   /* defined below; needed for the check */
+
+/*
+ * continue_curve(kernel, C, b0, w0, flow, targets, cap_r, box, ds, ds0,
+ *                shallow_gate, max_steps)
+ *
+ * One engine segment, entirely in C, with the GIL released for its duration.
+ * That is the whole point of the entry point: it makes the SEGMENT rather
+ * than the STEP the unit crossing the boundary, so branches can be traced
+ * concurrently.
+ *
+ * targets is a flat sequence of 2N doubles, box is four, shallow_gate is None
+ * or two.  Points come back as bytes -- packed (a, b) doubles -- which the
+ * caller wraps with numpy.frombuffer; that avoids linking the numpy C API
+ * for what is a straight memory handoff.
+ *
+ * A SPONG_CONT_DELEGATE return means the segment reached a path this port
+ * does not own.  The caller discards the points and re-runs the whole segment
+ * in charts._continue_curve_python.
+ */
+static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *kobj, *targets_obj, *box_obj, *gate_obj;
+    double C, b0, w0, cap_r, ds, ds0;
+    int flow;
+    Py_ssize_t max_steps;
+    if (!PyArg_ParseTuple(args, "OdddiOdOddOn",
+                          &kobj, &C, &b0, &w0, &flow, &targets_obj,
+                          &cap_r, &box_obj, &ds, &ds0, &gate_obj,
+                          &max_steps)) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(kobj, &KernelType)) {
+        PyErr_SetString(PyExc_TypeError, "first argument must be a Kernel");
+        return NULL;
+    }
+    Kernel *k = (Kernel *)kobj;
+
+    double *targets = NULL, *box = NULL, *gate = NULL;
+    Py_ssize_t n_targets_flat = 0, n_box = 0, n_gate = 0;
+    if (PySequence_Size(targets_obj) > 0) {
+        if (copy_seq(targets_obj, &targets, &n_targets_flat) < 0) return NULL;
+    }
+    if (copy_seq(box_obj, &box, &n_box) < 0) { PyMem_Free(targets); return NULL; }
+    if (n_box != 4) {
+        PyMem_Free(targets); PyMem_Free(box);
+        PyErr_SetString(PyExc_ValueError, "box must have four entries");
+        return NULL;
+    }
+    if (gate_obj != Py_None) {
+        if (copy_seq(gate_obj, &gate, &n_gate) < 0) {
+            PyMem_Free(targets); PyMem_Free(box);
+            return NULL;
+        }
+    }
+
+    spong_continue_field field = {
+        k->a, k->ap, k->app, k->b, k->bp, k->bpp, k->n, k->np,
+        (size_t)k->na, (size_t)k->nap, (size_t)k->napp,
+        (size_t)k->nb, (size_t)k->nbp, (size_t)k->nbpp,
+        (size_t)k->nn, (size_t)k->nnp,
+        C
+    };
+
+    spong_continue_result res;
+    double *points = NULL;
+    size_t cap = 4096;
+    int term = SPONG_CONT_NEED_CAPACITY;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
+        if (grown == NULL) {
+            PyMem_Free(points); PyMem_Free(targets);
+            PyMem_Free(box); PyMem_Free(gate);
+            return PyErr_NoMemory();
+        }
+        points = grown;
+        Py_BEGIN_ALLOW_THREADS
+        term = spong_continue_curve(
+            &field, b0, w0, flow,
+            targets, (size_t)(n_targets_flat / 2), cap_r,
+            box, ds, ds0, gate, (size_t)max_steps,
+            points, cap, &res);
+        Py_END_ALLOW_THREADS
+        if (term != SPONG_CONT_NEED_CAPACITY) break;
+        cap = res.n_points + 64;
+    }
+    PyMem_Free(targets); PyMem_Free(box); PyMem_Free(gate);
+
+    if (term == SPONG_CONT_NEED_CAPACITY) {
+        PyMem_Free(points);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "continue_curve did not settle on a point capacity");
+        return NULL;
+    }
+    PyObject *blob = PyBytes_FromStringAndSize(
+        (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
+    PyMem_Free(points);
+    if (blob == NULL) return NULL;
+    PyObject *out = Py_BuildValue(
+        "(iiiddKKN)", res.term, res.delegate_reason, res.switches,
+        res.b_end, res.w_end,
+        (unsigned long long)res.steps_taken,
+        (unsigned long long)res.steps_rejected, blob);
+    return out;
+}
+
 static PyMethodDef module_methods[] = {
     {"resolution_preflight", native_resolution_preflight, METH_VARARGS,
      "Apply the shared C resolution policy to exact-Morse measurements."},
@@ -2212,6 +2332,8 @@ static PyMethodDef module_methods[] = {
      "Exact GMP distinct-root count on a rational interval."},
     {"poincare_pullback", native_poincare_pullback, METH_VARARGS,
      "Compose a Poincare chart in high precision and round once."},
+    {"continue_curve", native_continue_curve, METH_VARARGS,
+     "One engine segment of the continuation dispatcher, GIL released."},
     {NULL, NULL, 0, NULL}
 };
 

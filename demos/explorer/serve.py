@@ -21,6 +21,7 @@ which the founding document keeps out of the library.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import traceback
@@ -30,6 +31,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
+
+# Default to the accelerated path.  The explorer is a viewer, not the
+# certifying CLI, and latency is what it trades in; both settings are
+# overridable from the environment.  Must precede the spong import, since
+# engine reads SPONG_ENGINE at import time.
+os.environ.setdefault("SPONG_ENGINE", "native")
+os.environ.setdefault("SPONG_WORKERS", "8")
 
 try:
     from spong import model, portrait, zoo
