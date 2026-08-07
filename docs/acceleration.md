@@ -172,17 +172,92 @@ cheap on every case measured so far.
 ## The viewer draws before it certifies
 
 `demos/explorer` requests a portrait in two stages.  `stage="preview"` runs
-`portrait.compute` at geometry level 0 and returns the picture; `stage="final"`
-runs `certified_compute` to a verdict.  The enumeration and materialized stubs
-are cached between them, so only the level-0 geometry is computed twice.
+`portrait.compute` at geometry level 0 with `_skip_audit=True` and returns the
+geometry; `stage="final"` runs `certified_compute` to a verdict.  The
+enumeration and materialized stubs are cached between them, so only the
+level-0 geometry is computed twice.
 
 This is not a cosmetic improvement.  Level 0 carries every curve the viewer
 draws, and the escalation ladder above it refines the topology certificate
-rather than the geometry -- on `linear-target-d17-thrash` that is about 95s
-against 808s.  Blocking the display on the verdict made the viewer unusable on
-exactly the cases it is most wanted for, and the browser is a far better
-instrument than the CLI for validating a portrait by eye.
+rather than the geometry.  On `linear-target-d17-thrash` the branch tracing is
+about 95s while a full level-0 portrait is 808s -- 714s of it the audit -- so
+blocking the display on the verdict made the viewer unusable on exactly the
+cases it is most wanted for, and the browser is a far better instrument than
+the CLI for validating a portrait by eye.
 
-The preview carries its own level-0 topology block, so it does show a status --
-just not the ladder's final one.  On a case that certifies at level 0 the two
-stages agree and the second is served from cache.
+`_skip_audit` is why the preview is 95s and not 808s: `portrait.compute` runs
+`topology.audit` at the end, so "level 0" without the flag still pays for the
+certificate.  A ledger produced that way reports status `not_audited` and must
+never be presented as a verdict.
+
+## Reporting the three outcomes honestly
+
+The viewer marks certification with a glyph, and the vocabulary matters:
+ψ-positivity and Morse are Sturm-decided and EXACT, so a non-Morse model is
+*certified non-Morse* -- a determination about the model, not a failure to
+reach one, and not something a better method would overturn.  Certification of
+the topology simply does not apply to it.
+
+So the three states are two determinations and one genuine unknown, and they
+are drawn that way: solid glyphs for certified and for certified-non-Morse, a
+question mark for a Morse model whose topology binary64 could not resolve.
+That last is the only state where the answer is open.
+
+The same distinction governs wall families.  A saddle connection is
+codimension one: the chambers either side certify, and the wall itself cannot,
+because binary64 can bracket the crossing but never confirm standing on it.
+That is precisely why `WallFamily` makes `wall_bracket` the citable object and
+warns that tighter coordinates are launch-protocol-dependent -- the machinery
+and the docstring are saying the same thing.
+
+## Traces use the native integrator
+
+The explorer's continuous trace calls `Kernel.normalized_step` at
+`GEOMETRIC_IRK_PRIMARY` order through a `/trace` endpoint, rather than the
+explicit midpoint step it originally used in JavaScript.  An explicit method
+has no business on this field.
+
+More usefully, it parameterizes by ARCLENGTH.  Gradient *time* never arrives
+on a stiff valley -- that stiffness is the whole reason the certified
+machinery exists -- while unit speed travels the same curve and does.  "Where
+does this initial condition end up" only has an answer in the second
+parameterization.
+
+## A new zoo case, and the shallow launch it exposed
+
+`dead-neuron-far-saddle-d3` was found by random search in the explorer.
+Degree 3, psi-nice, Morse, with a far saddle at b = 50.729 whose `a*` is
+-5e-6: a dead neuron, where `A(b) ~ 1e10` and the backbone is flat to machine
+precision.
+
+It refused, and the refusal was an artifact.  `trace_unstable` materializes a
+local stub, and when the stub's certificate reports `global_field_ready` false
+it returned `abort_conditioning_handoff` -- both unstable branches stopped
+after 514 vertices and the portrait went to `branch_abort`.  But the manifold
+is perfectly well behaved there: at a saddle `h11 = 2A` is astronomical, so
+the a-direction is strongly STABLE and the unstable eigenvector is tangent to
+the backbone, which the branch then follows.  That is exactly the regime the
+Hadamard fixed point owns.
+
+The comment in `charts` had said so all along -- "the centered critical chart
+precedes either downstream owner: continuation in deep water or Hadamard graph
+transform in shallow" -- but the stub path was only ever wired to the first.
+`global_field_ready` is a statement about the stiff ODE field at the stub
+endpoint; the slaved graph does not evaluate that field at all, only `a*` and
+`u'`, which are rational functions of the exact coefficients.  So when the
+sounding already says shallow, the refusal now falls through to the zone loop
+instead of returning, and the case certifies.  A MILD saddle whose stub cannot
+condition still refuses: there deep water is the only candidate and it is
+exactly the field that failed.
+
+The case is kept because it is seconds to run and is the only fixture that
+exercises that route.
+
+The explorer found it by drawing the proposal before any engine change: the
+slaved curve a = a*(b) + w1(b) with w1 = a*' u'/(2A), continued from where the
+engine stopped, with a handoff marked at the first b where |a*'| is
+resolvable.  On the backbone grad L = (0, u'), so the level curve is
+HORIZONTAL wherever it meets the backbone and the angle between them is
+exactly arccos(a*'/sqrt(1+a*'^2)) -- pi/2 iff a*' = 0.  That angle is the
+natural handoff criterion: dimensionless, exactly computable, and it says
+precisely when the two curves stop being indistinguishable.

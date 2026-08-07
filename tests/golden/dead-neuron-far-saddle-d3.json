@@ -1,0 +1,202 @@
+{
+  "branches": [
+    {
+      "angle_energy[RESIDUAL]": 6.700531338124385e-09,
+      "angle_resolved": 335,
+      "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.029883333639602033,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 1.630994280601335,
+      "n_points": 850,
+      "saddle_b": -1.3093639957004994,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.7590520148937334e-10,
+      "angle_resolved": 502,
+      "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 0.007595932075274165,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.23310422726440003,
+      "n_points": 1017,
+      "saddle_b": -1.3093639957004994,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 4.7595296753745325e-12,
+      "angle_resolved": 182,
+      "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 14.141617229853532,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.038529854063701595,
+      "n_points": 697,
+      "saddle_b": 50.72904421595301,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 5.030837819526215e-12,
+      "angle_resolved": 271,
+      "angle_unresolved": 0,
+      "asymptote_residual[RESIDUAL]": 9.020443273589338,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.0385298508759235,
+      "n_points": 786,
+      "saddle_b": 50.72904421595301,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 9.55009611344859e-13,
+      "angle_resolved": 24056,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.15324498443147697,
+      "n_points": 24571,
+      "saddle_b": -1.3093639957004994,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 3.4442173944955288e-12,
+      "angle_resolved": 25530,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.04025529000596924,
+      "n_points": 26045,
+      "saddle_b": -1.3093639957004994,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.2751049598045255e-12,
+      "angle_resolved": 4117,
+      "angle_unresolved": 6279,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 1.4787793334710982e-06,
+      "n_points": 10911,
+      "saddle_b": 50.72904421595301,
+      "seam_residual[RESIDUAL]": 4.002215354504746e-24,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 2.6210946829463215e-06,
+      "angle_resolved": 3867,
+      "angle_unresolved": 48,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 2.8788485208167804,
+      "n_points": 4430,
+      "saddle_b": 50.72904421595301,
+      "seam_residual[RESIDUAL]": 9.1464941721842e-24,
+      "term": "capture"
+    }
+  ],
+  "case": {
+    "default_view": [
+      -1.8,
+      0.8,
+      -8.0,
+      56.0
+    ],
+    "f": [
+      -0.866287,
+      0.481148,
+      -0.507756,
+      0.839429
+    ],
+    "g": [
+      0.803763,
+      0.88267,
+      -0.140028,
+      0.896359
+    ],
+    "moment_dist": "uniform01",
+    "name": "dead-neuron-far-saddle-d3"
+  },
+  "critical": [
+    {
+      "a": 0.005324402419658344,
+      "b": -4.907789466280357,
+      "kind": "min",
+      "source": "N",
+      "u2_sign": 1
+    },
+    {
+      "a": -3.7326675920509276e-49,
+      "b": -1.3093639957004994,
+      "kind": "saddle",
+      "source": "B",
+      "u2_sign": -1
+    },
+    {
+      "a": -1.1415847189450221,
+      "b": -0.5468762834167784,
+      "kind": "min",
+      "source": "N",
+      "u2_sign": 1
+    },
+    {
+      "a": -5.100258616427231e-06,
+      "b": 50.72904421595301,
+      "kind": "saddle",
+      "source": "N",
+      "u2_sign": -1
+    }
+  ],
+  "enumeration": {
+    "morse[EXACT]": true,
+    "n_critical": 4,
+    "n_min": 2,
+    "n_saddle": 2,
+    "psi_positive[EXACT]": true,
+    "u2_alternation[EXACT]": true
+  },
+  "genericity": {
+    "alpha_lead_positive": true,
+    "d_eff": 3,
+    "generic": true,
+    "mu_lead_positive": true
+  },
+  "index_balance": {
+    "a_bound": 4.0,
+    "b_bound": 103.0,
+    "balanced": true,
+    "expected": 0,
+    "n_min": 2,
+    "n_saddle": 2,
+    "winding": 0
+  },
+  "summary": {
+    "all_branches_clean": true,
+    "balanced": true,
+    "topology_status": "certified",
+    "worst_angle_energy": 2.6210946829463215e-06,
+    "worst_max_turn_deg": 2.8788485208167804
+  },
+  "topology": {
+    "ambiguous_count": 0,
+    "attempts": [
+      {
+        "ambiguous": 0,
+        "forbidden": 0,
+        "geometry_level": 0,
+        "reason": null,
+        "status": "certified",
+        "uncertified_ends": 0,
+        "uncertified_tails": 0
+      }
+    ],
+    "forbidden_count": 0,
+    "geometry_level": 0,
+    "resolution_reason": null,
+    "status": "certified"
+  }
+}

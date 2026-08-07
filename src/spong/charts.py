@@ -1443,6 +1443,11 @@ def _native_curve_diagnostics(m, Y, digits, start):
     kernel = getattr(m, "_native_kernel", None)
     if kernel is None or not hasattr(kernel, "curve_diagnostics"):
         return None
+    if np.asarray(Y).shape[0] < 2:
+        # No chord, so no angle and no residual to measure.  The native
+        # entry point rejects such an array outright; the Python oracle
+        # returns zeros from an empty loop, which is the right answer.
+        return None
     K = ANGLE_DIGIT_BUDGET if digits is None else digits
     return kernel.curve_diagnostics(
         np.ascontiguousarray(Y, dtype=np.float64), float(K), int(start))
@@ -1660,9 +1665,37 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 "fp64_spectral_resolved":
                     sc.get("fp64_spectral_resolved"),
             }
-            return Branch(
-                "unstable", local_Y, "abort_conditioning_handoff",
-                {"handoff_certified": False}, diag)
+            if saddle_mild or len(local_Y) < 2:
+                # A mild saddle whose stub cannot reach the global field has
+                # no second owner -- the sounding says deep water, where the
+                # continuation engine is the only candidate and it is exactly
+                # the field that failed to condition.  The refusal stands.
+                #
+                # A single-vertex stub is refused for a different reason:
+                # there is no chord, hence no launch scale and nothing for the
+                # fixed point to continue from.  Falling through on one
+                # produced a one-vertex branch whose certificate call then
+                # failed outright (seed 2149547, b* = -16384).
+                return Branch(
+                    "unstable", local_Y, "abort_conditioning_handoff",
+                    {"handoff_certified": False}, diag)
+            # Otherwise the sounding already says SHALLOW, and the Hadamard
+            # fixed point in the zone loop below is the other downstream owner
+            # this chart was always meant to have (see the comment on the
+            # branch immediately following).  global_field_ready is a
+            # statement about the stiff ODE field at the stub endpoint; the
+            # slaved graph does not evaluate that field at all, only a* and
+            # u', which are rational functions of the exact coefficients.
+            #
+            # Refusing here is what made the dead-neuron saddles unreachable:
+            # at b = 50.7 with a* = -5e-6, A(b) ~ 1e10, so the global handoff
+            # cannot condition and BOTH unstable branches aborted at launch
+            # with 514 vertices, taking the whole portrait to branch_abort.
+            # The manifold is perfectly well behaved there -- it is the
+            # backbone to machine precision, which is precisely the regime the
+            # fixed point owns.
+            certs["handoff_certified"] = False
+            diag["shallow_launch"] = True
     elif (saddle_mild and critical_local is not None
             and critical_local.native is not None):
         # The centered critical chart precedes either downstream owner:

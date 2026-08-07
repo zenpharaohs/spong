@@ -86,8 +86,15 @@ def _capture_radius(e: sturm.Enumeration, ds: float) -> float:
 
 def compute(m: Model, view=None, geometry_level: int = 0,
             _enumeration=None, _display_view=None,
-            _genericity=None) -> Portrait:
-    """Compute the certified portrait inside the §8b box contract."""
+            _genericity=None, _skip_audit: bool = False) -> Portrait:
+    """Compute the certified portrait inside the §8b box contract.
+
+    _skip_audit returns the geometry with NO topology certificate.  It exists
+    for viewers: drawing needs the curves, which the branch tracing already
+    produced, while the audit is what costs -- 714s of an 808s level-0
+    portrait on linear-target-d17-thrash.  The resulting ledger reports status
+    ``not_audited`` and must never be presented as a verdict.
+    """
     e = (_enumeration if _enumeration is not None else
          sturm.materialize_stubs(m, sturm.enumerate_critical_points(m)))
     display_view = (_display_view if _display_view is not None else
@@ -234,7 +241,15 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     _t_ledger = time.perf_counter()
     p.ledger = build_ledger(p, gen)
     _t_audit = time.perf_counter()
-    p.ledger["topology"] = topology.audit(m, e, branches, box)
+    if _skip_audit:
+        p.ledger["topology"] = {
+            "status": "not_audited",
+            "resolution_reason": "audit_skipped",
+            "forbidden_count": 0, "ambiguous_count": 0,
+            "branch_inventory": {}, "attempts": [],
+        }
+    else:
+        p.ledger["topology"] = topology.audit(m, e, branches, box)
     _t_done = time.perf_counter()
     # Branch tracing is a small minority of a portrait: measured on
     # tricky-d11, 8.2s of branches against 143s of wall.  The certificate

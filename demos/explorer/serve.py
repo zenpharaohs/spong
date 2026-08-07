@@ -21,6 +21,7 @@ which the founding document keeps out of the library.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import time
@@ -72,6 +73,11 @@ _CACHE_MAX = 24
 # waste.
 _ENUM: dict = {}
 _ENUM_MAX = 8
+
+# Models are cached too, so /trace can integrate against the same object the
+# portrait was built from without rebuilding it.
+_MODELS: dict = {}
+_MODELS_MAX = 8
 
 
 # --------------------------------------------------------------------------
@@ -176,21 +182,55 @@ def _branches(p, max_pts: int = 200000):
         pts = [[float(Y[i][0]), float(Y[i][1])] for i in range(0, n, step)]
         if step > 1 and n:
             pts.append([float(Y[n - 1][0]), float(Y[n - 1][1])])
+        # The asymptote certificate travels with the branch.  Interpolation
+        # between traced vertices is already certified by the angle and turn
+        # residuals, so zooming IN never needs a recompute; extrapolation past
+        # the traced box is the only open case, and under genericity it has a
+        # certificate of its own -- every separatrix leaves along a diagonal
+        # b = +-sqrt(d_eff)*a, and this residual says how close the tail is.
+        cert = br.certs.get("asymptote")
         out.append({"kind": br.kind, "term": br.term,
                     "saddle_b": br.diag.get("saddle_b"),
+                    "direction": br.diag.get("unstable_direction"),
+                    "stable_sign": br.diag.get("stable_sign"),
+                    "target": br.diag.get("target"),
+                    "connection_ok": bool(br.certs.get("connection_ok", False)),
                     "n_traced": n, "stride": step,
                     "chord_max": _max_chord(Y),
+                    "asymptote": (None if cert is None else {
+                        "slope_extrapolated": float(
+                            cert["slope_extrapolated"]),
+                        "target": float(cert["target"]),
+                        "residual": float(cert["residual"]),
+                    }),
                     "points": pts})
     return out
 
 
-def compute(payload: dict) -> dict:
-    # A zoo case supplies its own f, g, moment distribution and default_view.
-    # Using them is not a convenience: default_view is tuned per case, and
-    # _trace_box widens whatever view it is handed, so an invented box costs
-    # real tracing time.  This is the cli.zoo_phase_portrait path.
+def _resolve(payload: dict):
+    """(f, g, view, moment spec, cache key) from a request."""
+    wall = payload.get("wall")
     name = payload.get("zoo")
-    if name:
+    if wall:
+        # A rheostat member of a wall family, at an arbitrary Lambda.
+        # zoo.rheostat_member materializes only the three named members; the
+        # scaling f/sqrt(L), g*sqrt(L) is the same one, opened up so the
+        # viewer can move through the family continuously.
+        #
+        # The wall COORDINATE is not the citable object -- wall_bracket is,
+        # an interval whose endpoints have verified opposite landing fates.
+        # Inside the bracket the fate is launch-protocol-dependent, so the
+        # page must show the bracket rather than imply that any particular
+        # Lambda in it is "the" wall.
+        w = zoo.get_wall_family(wall)
+        base = zoo.get(w.base_case)
+        lam = float(payload.get("lam", w.wall_parameter))
+        root = math.sqrt(lam)
+        f = [float(x) / root for x in base.f]
+        g = [float(x) * root for x in base.g]
+        view = tuple(float(x) for x in w.default_view)
+        spec = {"kind": base.moment_dist}
+    elif name:
         z = zoo.get(name)
         f = [float(x) for x in z.f]
         g = [float(x) for x in z.g]
@@ -204,6 +244,82 @@ def compute(payload: dict) -> dict:
         if view is not None:
             view = tuple(float(x) for x in view)   # (a_lo, a_hi, b_lo, b_hi)
         spec = payload.get("moments", {})
+    key = (tuple(f), tuple(g), view, spec.get("kind", "uniform01"),
+           tuple(float(x) for x in spec.get("samples", ())))
+    return f, g, view, spec, key
+
+
+def _model_for(key, f, g, spec):
+    m = _MODELS.get(key)
+    if m is None:
+        n_moments = 2 * max(len(f), len(g)) - 1
+        m = model.build(f, g, moment_vector(spec, n_moments))
+        _MODELS[key] = m
+        if len(_MODELS) > _MODELS_MAX:
+            _MODELS.pop(next(iter(_MODELS)))
+    return m
+
+
+def trace(payload: dict) -> dict:
+    """Arclength continuation of the gradient field from one point.
+
+    Uses Kernel.normalized_step -- the C core's 2-D normalized-gradient
+    integrator at GEOMETRIC_IRK_PRIMARY order, the same one charts falls back
+    to when both graph parameterizations go singular.  An explicit method has
+    no business on this field: the stiffness that forced the whole certified
+    machinery is exactly what makes a descent trajectory crawl.
+
+    Unit speed is the point.  True gradient time never arrives on a stiff
+    valley; arclength travels the SAME curve at constant speed, so a bounded
+    number of steps answers "where does this initial condition go" instead of
+    "how far does it get before you lose patience".
+    """
+    f, g, _view, spec, key = _resolve(payload)
+    m = _model_for(key, f, g, spec)
+    kernel = getattr(m, "_native_kernel", None)
+    if kernel is None or not hasattr(kernel, "normalized_step"):
+        return {"error": "normalized_step unavailable (no C core)"}
+
+    a = float(payload["a"])
+    b = float(payload["b"])
+    flow = 1 if int(payload.get("flow", 1)) > 0 else -1
+    ds = float(payload.get("ds", 0.01))
+    steps = max(1, min(200000, int(payload.get("steps", 4000))))
+    order = int(payload.get("order", 8))
+    box = payload.get("box")
+    box = [float(x) for x in box] if box else None
+
+    pts = [a, b]
+    term = "steps"
+    for _ in range(steps):
+        try:
+            a_new, b_new = kernel.normalized_step(a, b, -flow * ds, order)
+        except (ArithmeticError, ValueError, OverflowError,
+                ZeroDivisionError):
+            term = "step_failure"
+            break
+        if not (a_new == a_new and b_new == b_new):      # NaN
+            term = "nonfinite"
+            break
+        if abs(a_new - a) + abs(b_new - b) < 1e-14 * ds:
+            a, b = a_new, b_new
+            term = "stationary"
+            break
+        a, b = float(a_new), float(b_new)
+        pts.extend((a, b))
+        if box and not (box[0] <= a <= box[1] and box[2] <= b <= box[3]):
+            term = "box_exit"
+            break
+    return {"points": pts, "term": term, "order": order,
+            "arclength": ds * (len(pts) // 2 - 1)}
+
+
+def compute(payload: dict) -> dict:
+    # A zoo case supplies its own f, g, moment distribution and default_view.
+    # Using them is not a convenience: default_view is tuned per case, and
+    # _trace_box widens whatever view it is handed, so an invented box costs
+    # real tracing time.  This is the cli.zoo_phase_portrait path.
+    f, g, view, spec, key = _resolve(payload)
 
     # Two stages.  'preview' is geometry_level 0 only -- the picture, with no
     # escalation ladder behind it; 'final' runs certified_compute to a verdict.
@@ -213,8 +329,6 @@ def compute(payload: dict) -> dict:
     # wanted for.
     stage = payload.get("stage", "final")
 
-    key = (tuple(f), tuple(g), view, spec.get("kind", "uniform01"),
-           tuple(float(x) for x in spec.get("samples", ())))
     hit = _CACHE.get((key, stage))
     if hit is not None:
         return dict(hit, cached=True)
@@ -224,7 +338,25 @@ def compute(payload: dict) -> dict:
     mu = moment_vector(spec, n_moments)
     t1 = time.perf_counter()
 
-    m = model.build(f, g, mu)
+    m = _model_for(key, f, g, spec)
+    # The box contract is view subset of compute box subset of legal max, and
+    # the repo policy is a compute box as big as is sensible.
+    # atlas.legal_max_b is that bound: past the Cauchy bounds of N and B every
+    # finite critical point is enclosed and the far field owns the dynamics.
+    # But compute_box only CLAMPS to it -- it builds the skeleton's bounding
+    # box plus a margin, unioned with whatever view it is handed -- so an
+    # interactive request sized to the current view gets a box sized to the
+    # view, and stable separatrices are cut off long before their diagonal
+    # asymptotes take hold.
+    #
+    # Taking the legal box costs nothing in steps: ds = span/30000 is derived
+    # from the box, so the count to cross it is fixed whatever its size.  A
+    # larger box buys reach at proportionally coarser chords, and 30000 chords
+    # across the legal box is still thousands across a typical view.  The view
+    # the client asked for travels separately, as frame_view, for framing.
+    bmax = atlas.legal_max_b(m)
+    amax = bmax / max(1.0, math.sqrt(max(1, atlas.effective_degree(m))))
+    trace_view = (-amax, amax, -bmax, bmax)
     enumeration = _ENUM.get(key)
     if enumeration is None:
         enumeration = sturm.materialize_stubs(
@@ -235,12 +367,17 @@ def compute(payload: dict) -> dict:
     t2 = time.perf_counter()
 
     if stage == "preview":
-        display_view = atlas.compute_box(m, enumeration, view=view)
+        # Geometry only, no audit.  The audit is the cost -- 714s of an 808s
+        # level-0 portrait on linear-target-d17-thrash -- and the viewer draws
+        # curves, not certificates.  The status comes back `not_audited` and
+        # the page must say so rather than imply a verdict.
+        display_view = atlas.compute_box(m, enumeration, view=trace_view)
         p = portrait.compute(
-            m, view=view, geometry_level=0, _enumeration=enumeration,
-            _display_view=display_view, _genericity=atlas.genericity(m))
+            m, view=trace_view, geometry_level=0, _enumeration=enumeration,
+            _display_view=display_view, _genericity=atlas.genericity(m),
+            _skip_audit=True)
     else:
-        p = portrait.certified_compute(m, view=view,
+        p = portrait.certified_compute(m, view=trace_view,
                                        _enumeration=enumeration)
     t3 = time.perf_counter()
     elapsed = t3 - t0
@@ -277,6 +414,13 @@ def compute(payload: dict) -> dict:
             "alternates": bool(e.alternates),
         },
         "ledger_summary": (p.ledger or {}).get("summary", {}),
+        "status": (p.ledger or {}).get("topology", {}).get("status"),
+        "d_eff": atlas.effective_degree(m),
+        # What the client asked to LOOK at, distinct from what was traced.
+        "frame_view": (list(view) if view is not None else None),
+        "legal_box": list(trace_view),
+        "reason": (p.ledger or {}).get(
+            "topology", {}).get("resolution_reason"),
         # The library measures itself: enumeration / stub / geometry split,
         # and one entry per geometry escalation with its status and reason.
         "ledger_timing": (p.ledger or {}).get("timing", {}),
@@ -312,6 +456,22 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_GET(self):
+        if self.path == "/walls":
+            out = []
+            for nm in zoo.wall_family_names():
+                w = zoo.get_wall_family(nm)
+                out.append({
+                    "name": nm, "base_case": w.base_case,
+                    "parameter_name": w.parameter_name,
+                    "below": w.below_parameter, "wall": w.wall_parameter,
+                    "above": w.above_parameter,
+                    "bracket": (list(w.wall_bracket) if w.wall_bracket
+                                else None),
+                    "bracket_protocol": w.bracket_protocol,
+                    "description": w.description,
+                })
+            self._send(200, json.dumps(out), "application/json")
+            return
         if self.path == "/zoo":
             cases = []
             for nm in zoo.names():
@@ -331,12 +491,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "not found", "text/plain")
 
     def do_POST(self):
-        if self.path != "/portrait":
+        if self.path not in ("/portrait", "/trace"):
             self._send(404, "not found", "text/plain")
             return
         n = int(self.headers.get("Content-Length", 0))
         try:
-            result = compute(json.loads(self.rfile.read(n) or b"{}"))
+            payload = json.loads(self.rfile.read(n) or b"{}")
+            result = (trace(payload) if self.path == "/trace"
+                      else compute(payload))
             self._send(200, json.dumps(result), "application/json")
         except (BrokenPipeError, ConnectionResetError):
             pass

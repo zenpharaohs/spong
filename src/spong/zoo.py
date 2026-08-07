@@ -241,12 +241,43 @@ NONNEAREST_SADDLE_CONNECTION = WallFamily(
 )
 
 
+DEAD_NEURON_FAR_SADDLE = ZooCase(
+    name="dead-neuron-far-saddle-d3",
+    f=(-0.866287, 0.481148, -0.507756, 0.839429),
+    g=(0.803763, 0.88267, -0.140028, 0.896359),
+    moment_dist="uniform01",
+    # The far saddle at b = 50.729 is the point of this case, so the default
+    # view has to contain it -- framing on the near cluster alone hides what
+    # the entry is for.
+    default_view=(-1.8, 0.8, -8.0, 56.0),
+    description=(
+        "Cheapest fixture for the SHALLOW LAUNCH: a degree-3 case whose far "
+        "saddle is a dead neuron.  Two of its four critical points sit "
+        "essentially on the a=0 axis -- a* is 5.3e-3 at the b=-4.908 "
+        "minimum and -5e-6 at the b=50.729 saddle, with u'' of 4e-4 and ~0 "
+        "-- so the backbone is nearly flat out there and A(b) ~ 1e10.  The "
+        "materialized stub at that saddle cannot condition a handoff to the "
+        "global field, and trace_unstable used to refuse outright: both "
+        "unstable branches returned abort_conditioning_handoff after 514 "
+        "vertices and the portrait went to branch_abort.  The manifold is "
+        "perfectly well behaved there -- it is the backbone to machine "
+        "precision -- so the Hadamard fixed point owns it, and routing the "
+        "launch to that second owner certifies the case.  Keep it: it is "
+        "seconds to run and it is the only fixture that exercises that "
+        "route.  Found by random search in the interactive explorer.  Note "
+        "the near-coincident levels, 0.336849 at b=-4.908 against 0.339436 "
+        "at b=50.729, under 1% apart against a 0.39 range."
+    ),
+)
+
+
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
     MINIMAL_QUARTET.name: MINIMAL_QUARTET,
     TRICKY_D11.name: TRICKY_D11,
     LINEAR_TARGET_D17_THRASH.name: LINEAR_TARGET_D17_THRASH,
     NONNEAREST_ATTACHMENT.name: NONNEAREST_ATTACHMENT,
+    DEAD_NEURON_FAR_SADDLE.name: DEAD_NEURON_FAR_SADDLE,
 }
 
 

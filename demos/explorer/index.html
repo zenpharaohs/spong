@@ -47,10 +47,23 @@
   td.k{color:var(--ink-2);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
   td.v{text-align:right;font-variant-numeric:tabular-nums}
   .swatch{display:inline-block;width:9px;height:9px;margin-right:5px}
+  /* Certification state.  Two of the three outcomes are DETERMINATIONS and
+     one is not, so they should not look like a good/warning/bad ladder.
+     psi_positive and morse are Sturm-decided and EXACT, so "certified
+     non-Morse" is as definite a fact about the model as "certified" is --
+     a different fact, not a lesser one.  Only an unresolved topology is a
+     genuine we-do-not-know, and it is the only state a better method could
+     move.  Solid glyphs for the two determinations, a question mark for the
+     one uncertainty, an ellipsis while work is outstanding. */
+  .cert{font-size:22px;line-height:1;font-weight:700;color:var(--rule);
+        transition:color .2s;vertical-align:-2px;margin-right:2px}
+  .cert.ok{color:#1668c9}        /* certified Morse, topology certified */
+  .cert.nonmorse{color:var(--trace)}   /* certified NON-Morse: also exact */
+  .cert.unresolved{color:var(--response)}  /* the only genuine unknown */
   .legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--ink-2);font-size:11px;margin-top:6px}
   .status{font-size:11px;color:var(--ink-2)}
   .status.busy{color:var(--response)}
-  .status.err{color:var(--saddle)}
+  .status.err{color:var(--stable)}
   .stale{opacity:.35}
 </style>
 
@@ -65,7 +78,7 @@
 <div class="grid">
   <div class="stack">
     <div class="panel">
-      <p class="cap">Phase portrait <span class="rhs" id="portraitInfo"></span></p>
+      <p class="cap">Phase portrait <span class="rhs"><span id="certMark" class="cert" title="not yet certified">✓</span> <span id="portraitInfo"></span></span></p>
       <div class="toolbar" id="tools">
         <button class="tool on" data-tool="select">select</button>
         <button class="tool" data-tool="pan">pan</button>
@@ -75,6 +88,22 @@
         <button class="tool" id="zoomIn">+</button>
         <button class="tool" id="zoomOut">−</button>
         <button class="tool" id="reset">reset</button>
+        <span class="gap"></span>
+        <label for="levels" style="margin:0 4px 0 0;text-transform:none;letter-spacing:0">contours</label>
+        <input id="levels" type="number" value="44" min="4" max="400" step="4"
+               style="width:64px">
+        <select id="levelSpan" style="width:auto">
+          <option value="view">across the view</option>
+          <option value="backbone">across the backbone</option>
+        </select>
+        <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0">
+          <input id="showCross" type="checkbox" checked
+                 style="width:auto;margin-right:4px">crosshair
+        </label>
+        <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0">
+          <input id="showSlaved" type="checkbox" checked
+                 style="width:auto;margin-right:4px">slaved continuation
+        </label>
       </div>
       <canvas id="cPort" width="760" height="470" tabindex="0"></canvas>
     </div>
@@ -101,6 +130,13 @@
     <div class="panel">
       <p class="cap">Readout <span class="rhs" id="certInfo"></span></p>
       <table id="readout"></table>
+    </div>
+
+    <div class="panel">
+      <p class="cap">Skeleton and fates <span class="rhs" id="fatesInfo"></span></p>
+      <div style="max-height:300px;overflow:auto">
+        <table id="fates"></table>
+      </div>
     </div>
 
     <div class="panel">
@@ -137,6 +173,68 @@
           <button id="recompute">recompute portrait</button>
           <button id="fit" class="ghost">fit to skeleton</button>
         </div>
+        <p class="wide" id="caseId" style="margin:2px 0 0;font-size:11px;
+           color:var(--ink-2);word-break:break-all;user-select:all"></p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="cap">Random case <span class="rhs">seeded, so a case is reproducible</span></p>
+      <div class="controls">
+        <div>
+          <label for="degF">deg f</label>
+          <input id="degF" type="number" value="3" min="1" max="17" step="1">
+        </div>
+        <div>
+          <label for="degG">deg g</label>
+          <input id="degG" type="number" value="3" min="1" max="17" step="1">
+        </div>
+        <div>
+          <label for="coefDist">coefficients</label>
+          <select id="coefDist">
+            <option value="uniform">uniform(−1,1)</option>
+            <option value="normal">normal(0,1)</option>
+            <option value="integer">small integers</option>
+          </select>
+        </div>
+        <div>
+          <label for="seed">seed</label>
+          <input id="seed" type="number" value="1" min="0" step="1">
+        </div>
+        <div class="wide row">
+          <label style="margin:0 8px 0 0;text-transform:none;letter-spacing:0">
+            <input id="sameFG" type="checkbox" style="width:auto;margin-right:4px">
+            f = g (common degree)
+          </label>
+        </div>
+        <div class="wide row">
+          <button id="drawRandom">draw random</button>
+          <button id="nextRandom" class="ghost">next seed</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="cap">Wall family <span class="rhs" id="wallInfo"></span></p>
+      <div class="controls">
+        <div class="wide">
+          <label for="wallSel">family</label>
+          <select id="wallSel">
+            <option value="">— none —</option>
+          </select>
+        </div>
+        <div class="wide">
+          <label for="lam" id="lamLabel">parameter</label>
+          <input id="lam" type="range" min="0" max="1000" value="500"
+                 style="width:100%;padding:0">
+        </div>
+        <div class="wide row">
+          <button id="lamReset" class="ghost">back to the wall</button>
+        </div>
+        <p class="wide" id="lamRead" style="margin:0;font-size:11px;
+           color:var(--ink-2);user-select:all"></p>
+        <p class="wide" id="lamWarn" style="margin:2px 0 0;font-size:11px;
+           color:var(--response)"></p>
       </div>
     </div>
 
@@ -152,12 +250,22 @@
           </select>
         </div>
         <div>
-          <label for="lr">step</label>
+          <label for="lr">step (arclength / lr)</label>
           <input id="lr" type="number" value="0.02" step="0.005" min="0.0001">
         </div>
         <div>
           <label for="nbatch">batch n</label>
           <input id="nbatch" type="number" value="32" min="1" step="1">
+        </div>
+        <div>
+          <label for="tracelen">trace length</label>
+          <select id="tracelen">
+            <option value="40">quiver</option>
+            <option value="300">short</option>
+            <option value="1400" selected>normal</option>
+            <option value="12000">long</option>
+            <option value="80000">to the end</option>
+          </select>
         </div>
         <div>
           <label for="filt">moment filter</label>
@@ -169,6 +277,7 @@
           </select>
         </div>
         <div class="wide row">
+          <button id="traceHandoff" class="ghost">trace from handoff</button>
           <button id="clearTr" class="ghost">clear traces</button>
         </div>
       </div>
@@ -202,8 +311,13 @@ const S = {
   home: { a0: -2, a1: 4, b0: -4, b1: 4 },
   sel: { a: 1, b: 1 },
   tool: "select",
+  levels: 44,
+  levelSpan: "view",
+  showCross: true,
+  showSlaved: true,
   rubber: null,
   traces: [],
+  handoffs: [],
   P: null,          // last certified payload
   stale: true,
   Ap: [0], Bp: [0]
@@ -259,12 +373,14 @@ async function recompute(_unused, zooName){
   // and separatrices are chord-traced across the result, so a case whose
   // natural box is large can trace for a very long time.  The view you are
   // looking at is the honest bound.
-  const base = zooName ? { zoo: zooName } : {
+  const base = WALL ? { wall: WALL.name, lam: lamFromSlider() }
+    : zooName ? { zoo: zooName } : {
     f: parseCoeffs(els("fIn").value),
     g: parseCoeffs(els("gIn").value),
     moments,
     view: [v.a0, v.a1, v.b0, v.b1]
   };
+  S.lastBody = base;   // /trace integrates against the same model
 
   const send = async stage => {
     const r = await fetch("/portrait", {
@@ -280,11 +396,23 @@ async function recompute(_unused, zooName){
   // waiting for the verdict before painting anything makes the viewer useless
   // exactly where it is most wanted.
   try {
+    setCert("", "tracing geometry…");
     st.className = "status busy"; st.textContent = "tracing geometry…";
     const preview = await send("preview");
     if (id !== seq) return;
     if (preview.error){ st.className = "status err"; st.textContent = preview.error; return; }
     apply(preview, zooName);
+    // psi and Morse are decided by the enumeration, upstream of the geometry
+    // ladder, so a non-Morse model can be reported at once rather than after
+    // a certification that was never going to apply to it.
+    const [ps, pt] = certStateFor(preview);
+    if (ps === "nonmorse"){
+      setCert(ps, pt);
+      st.className = "status";
+      st.textContent = `${pt} · ${describe(preview)}`;
+      return;
+    }
+    setCert("", "level 0 geometry shown; certification still running");
     st.className = "status busy";
     st.textContent = `level 0 shown · ${describe(preview)} · certifying…`;
 
@@ -292,14 +420,54 @@ async function recompute(_unused, zooName){
     if (id !== seq) return;
     if (final.error){ st.className = "status err"; st.textContent = final.error; return; }
     apply(final, zooName);
+    const [fs, ft] = certStateFor(final);
+    setCert(fs, ft);
     st.className = "status";
-    st.textContent = `certified · ${describe(final)}`;
+    // The reason, not just the status: "fp64_unresolved" says a verdict was
+    // withheld, while the reason says which question could not be answered --
+    // an unresolvable far-field escape and a pair of branches too close to
+    // separate are different findings about the model.
+    st.textContent = `${final.status}`
+      + (final.reason ? ` (${final.reason})` : "")
+      + ` · ${describe(final)}`;
   } catch (e){
     if (e && e.name === "AbortError") return;
     if (id !== seq) return;
     st.className = "status err";
     st.textContent = "backend unreachable — start demos/explorer/serve.py";
   }
+}
+
+/* Three outcomes, and only one of them is uncertain.
+
+   psi_positive and morse come from the exact Sturm enumeration, so a
+   non-Morse model is CERTIFIED non-Morse -- a determination about the model,
+   not a failure to reach one, and not something a better method would
+   overturn.  Certification of the topology simply does not apply to it.
+
+   Uncertified is reserved for a Morse model whose topology the machinery
+   could not resolve in binary64.  That is the only state where the answer is
+   genuinely open. */
+function certStateFor(data){
+  const e = data.enumeration || {};
+  if (e.psi_positive === false)
+    return ["nonmorse", "certified NOT ψ-nice: A(b) vanishes, exactly "
+                      + "determined — the Morse criterion does not apply"];
+  if (e.morse === false)
+    return ["nonmorse", "certified NON-MORSE: the critical skeleton is "
+                      + "degenerate, exactly determined"];
+  if (data.status === "certified")
+    return ["ok", "certified: Morse skeleton and topology both determined"];
+  return ["unresolved", `Morse, topology unresolved: ${data.reason || "refused"}`];
+}
+
+function setCert(state, title){
+  const el = els("certMark");
+  el.className = "cert" + (state ? " " + state : "");
+  el.textContent = state === "ok" ? "✓"
+                 : state === "nonmorse" ? "◆"
+                 : state === "unresolved" ? "?" : "…";
+  el.title = title;
 }
 
 function describe(data){
@@ -321,12 +489,18 @@ function describe(data){
 function apply(data, zooName){
   S.P = data;
   S.Ap = dpoly(data.field.A); S.Bp = dpoly(data.field.B);
-  if (zooName){                      // reflect what the zoo entry supplied
+  // The case as copyable TEXT.  Coefficients live in <input> values, which do
+  // not survive selecting the page and copying it, so a case that misbehaves
+  // cannot otherwise be reported or reproduced.
+  els("caseId").textContent =
+    `f = [${data.f.join(", ")}]   g = [${data.g.join(", ")}]   `
+    + `moments = ${els("dist").value}`;
+  if (zooName || WALL){             // reflect what the entry supplied
     els("fIn").value = data.f.map(c => +c.toPrecision(15)).join(", ");
     els("gIn").value = data.g.map(c => +c.toPrecision(15)).join(", ");
     lastSent.f = els("fIn").value;
     lastSent.g = els("gIn").value;
-    let vv = data.view;
+    let vv = data.frame_view || data.view;
     if (!vv && data.box){            // no display view: undo _trace_box's 1.35
       const [A0,A1,B0,B1] = data.box, k = 1/1.35;
       const ac = (A0+A1)/2, bc = (B0+B1)/2;
@@ -402,9 +576,28 @@ function drawPortrait(){
   const uv = us.filter(Number.isFinite);
   const uMin = uv.length ? Math.min(...uv) : 0;
   let Lmax = uMin;
-  for (const a of [v.a0, v.a1]) for (const b of [v.b0, v.b1])
-    Lmax = Math.max(Lmax, Lof(a, b));
-  const NL = 44, margin = 2 * (v.a1 - v.a0);
+  if (S.levelSpan === "backbone"){
+    // Levels spanning the BACKBONE's range over the visible b, not the whole
+    // view's.  Every critical point lies on the backbone, so this is the
+    // range of loss values the skeleton actually takes.  Spanning the view
+    // instead is dominated by the corners -- at high degree there is a band
+    // around |b| < 1 where the loss barely varies, so almost every level ends
+    // up out on the bluffs and the canyon is left bare.  Level curves are
+    // drawn to be read AGAINST the invariant manifolds and traces, by the
+    // angle those make with them, so the resolution has to be where the
+    // manifolds are.
+    for (const u of uv) Lmax = Math.max(Lmax, u);
+    if (!(Lmax > uMin)) Lmax = uMin + 1e-12;
+  } else {
+    for (const a of [v.a0, v.a1]) for (const b of [v.b0, v.b1])
+      Lmax = Math.max(Lmax, Lof(a, b));
+  }
+  // Level count is a view control, not a property of the model: at high
+  // degree there is a nearly flat band around |b| < 1 where the default
+  // spacing leaves the picture bare, and zooming into it wants more lines
+  // rather than a different portrait.  Contours are closed-form here, so
+  // changing this costs a redraw and never a recompute.
+  const NL = Math.max(4, Math.min(400, S.levels | 0)), margin = 2 * (v.a1 - v.a0);
   xP.strokeStyle = css("--contour"); xP.lineWidth = 1;
   for (let k = 1; k <= NL; k++){
     const c = uMin + (Lmax - uMin) * Math.pow(k / (NL + 1), 2);
@@ -456,6 +649,182 @@ function drawPortrait(){
     xP.stroke();
   }
 
+  // Certified extrapolation beyond the traced box.
+  //
+  // Interpolation between traced vertices is already certified -- that is what
+  // the angle and turn residuals say -- so zooming IN never needs a recompute.
+  // Extrapolation is the only gap, and the flow near infinity closes it.
+  //
+  // With d = d_eff and A ~ alpha b^2d, B ~ beta b^d, the terms aA and a^2 A'
+  // dominate their partners, so grad L ~ 2 alpha a b^(2d-1) (b, d a).  The
+  // flow direction is therefore proportional to (b, d a), and
+  // grad(b^2 - d a^2) = (-2 d a, 2 b) is orthogonal to it: K = b^2 - d a^2 is
+  // CONSERVED by the leading flow.  Separatrices are asymptotically
+  // hyperbolas, meeting the diagonals b = +-sqrt(d) a like
+  // b/a = sqrt(d) + K/(sqrt(d) a^2).
+  //
+  // Extending along the bare diagonal discards that 1/a^2 term, which is why
+  // atlas.asymptote_certificate reports slope residuals of tens of percent at
+  // ordinary view radii -- the leading form only dominates far out.  Keeping K
+  // is strictly better at finite radius, and K supplies its own quality test:
+  // sample it down the tail and see whether it has settled.  A branch leaving
+  // along the degenerate b-axis -- the backbone end, db/dt ~ -C_inf/b^2 -- has
+  // K ~ b^2 still growing, fails that test, and is left alone, correctly,
+  // since the backbone is drawn in closed form anyway.
+  const dEff = S.P.d_eff || 0;
+  let nExt = 0, nAsym = 0, nBone = 0, bestRes = Infinity;
+  const extDiag = [];
+  if (dEff > 0){
+    const reach = 3 * Math.hypot(v.a1 - v.a0, v.b1 - v.b0);
+    xP.save();
+    xP.setLineDash([5, 4]);
+    xP.lineWidth = 1.2;
+    for (const br of S.P.branches){
+      if (br.term !== "box_exit") continue;
+      const pts = br.points, n = pts.length;
+      if (n < 8) continue;
+      const Kof = p => p[1]*p[1] - dEff*p[0]*p[0];
+      const rlast = Math.hypot(pts[n-1][0], pts[n-1][1]);
+      let i1 = 0, i2 = 0, e1 = Infinity, e2 = Infinity;
+      for (let i = 0; i < n; i++){
+        const r = Math.hypot(pts[i][0], pts[i][1]);
+        if (Math.abs(r - rlast/4) < e1){ e1 = Math.abs(r - rlast/4); i1 = i; }
+        if (Math.abs(r - rlast/2) < e2){ e2 = Math.abs(r - rlast/2); i2 = i; }
+      }
+      const K1 = Kof(pts[i1]), K2 = Kof(pts[i2]), K3 = Kof(pts[n-1]);
+      // K is conserved to two orders, not one: the A terms cancel in
+      // dK/dt = -2b g_b + 2da g_a, and the B terms cancel independently
+      // (4ab B' - 4da B ~ 4d beta a b^d - 4d beta a b^d), so drift enters only
+      // through the subleading coefficients of A and B.  So the honest
+      // quality measure is the DRIFT along the tail, not an extrapolation:
+      // Aitken divides by K3 - 2K2 + K1, which is noise exactly when K has
+      // already settled, and the better-converged the tail the more certainly
+      // it gets rejected.
+      const scaleK = Math.max(Math.abs(K3), rlast*rlast, 1e-12);
+      const d21 = K2 - K1, d32 = K3 - K2;
+      const res = Math.abs(d32) / scaleK;
+      let K = K3;
+      // Aitken only where the ratio shows a genuine geometric trend, and only
+      // as a refinement of an already-acceptable K.
+      const ratio = Math.abs(d21) > 1e-300 ? d32 / d21 : 0;
+      if (ratio > 0.02 && ratio < 0.98){
+        const acc = K3 + d32 * ratio / (1 - ratio);
+        if (Number.isFinite(acc) && Math.abs(acc - K3) < 4 * Math.abs(d32))
+          K = acc;
+      }
+      if (!Number.isFinite(K)) continue;
+      // K/r^2 says WHICH end the branch is leaving by.  On a diagonal
+      // b^2 = d a^2, so K -> 0 while r^2 grows: the ratio tends to 0.  On the
+      // degenerate b-axis exit -- the backbone end, db/dt ~ -C_inf/b^2 -- a
+      // stays bounded and K -> b^2 ~ r^2: the ratio tends to 1.  (On the
+      // a-axis it tends to -d.)  Only the diagonal case is a hyperbola; a
+      // backbone end is extended by the backbone itself, which is drawn in
+      // closed form at any zoom, so it is labelled rather than dropped.
+      const kappa = K3 / Math.max(rlast*rlast, 1e-300);
+      extDiag.push(
+        `${br.kind[0]} b*=${(br.saddle_b ?? NaN).toFixed(4)} `
+        + `end=(${pts[n-1][0].toFixed(3)},${pts[n-1][1].toFixed(3)}) `
+        + `r=${rlast.toFixed(2)} K=${K3.toExponential(3)} `
+        + `K/r2=${kappa.toFixed(3)} drift=${res.toExponential(2)}`);
+      if (kappa > 0.5){ nBone++; continue; }
+      nAsym++; bestRes = Math.min(bestRes, res);
+      if (!(res <= 0.02)) continue;
+
+      const last = pts[n-1];
+      const sa = Math.sign(last[0]) || 1, sb = Math.sign(last[1]) || 1;
+      const a0 = Math.abs(last[0]);
+      xP.strokeStyle = br.kind === "unstable" ? css("--unstable") : css("--stable");
+      xP.globalAlpha = .55;
+      xP.beginPath();
+      let started = false;
+      for (let k = 0; k <= 240; k++){
+        const aa = a0 + reach * k / 240;
+        const bb2 = dEff*aa*aa + K;
+        if (bb2 < 0) continue;
+        const x = X(sa*aa), y = Y(sb*Math.sqrt(bb2));
+        started ? xP.lineTo(x, y) : (xP.moveTo(x, y), started = true);
+      }
+      xP.stroke();
+      nExt++;
+    }
+    xP.restore();
+    xP.globalAlpha = 1;
+  }
+
+  // Proposed slaved continuation, anchored on where the ENGINE stopped.
+  //
+  // On the backbone dL/da = 2A(a - a*) = 0, so grad L = (0, u') there and the
+  // level curve is HORIZONTAL wherever it meets the backbone.  The backbone's
+  // tangent is (a*', 1), so the angle between them is
+  // arccos(a*'/sqrt(1+a*'^2)) -- exactly pi/2 iff a*' = 0.  Where a* has
+  // collapsed onto the axis (the dead-neuron regime, a* ~ C b^-d) that angle
+  // is pi/2 to machine precision and the unstable manifold is numerically
+  // indistinguishable from the backbone: h11 = 2A is astronomical, so the
+  // a-direction is strongly STABLE and the unstable eigenvector is tangent to
+  // the backbone.
+  //
+  // This does NOT replace the launch.  It starts at the last vertex of an
+  // unstable branch that stopped without capturing or exiting the box, and
+  // continues along the slaved valley floor a = a*(b) + w1(b), with
+  // w1 = a*' u' / (2A) -- the same first-order offset the shallow-water chart
+  // uses -- in the direction the branch was travelling.  The ring marks the
+  // handoff: the first b where |a*'| is resolvable, so the two curves
+  // separate and ordinary continuation could take over.
+  if (S.showSlaved && S.P.branches.length){
+    S.handoffs = [];
+    const Aof = b => evalp(F.A, b), Bof = b => evalp(F.B, b);
+    const aStarP = b => {
+      const A = Aof(b), B = Bof(b);
+      return evalp(S.Bp, b)/A - B*evalp(S.Ap, b)/(A*A);
+    };
+    const w1of = b => {
+      const A = Aof(b), B = Bof(b);
+      const N = evalp(S.Ap, b)*B - 2*evalp(S.Bp, b)*A;   // N = A'B - 2B'A
+      return aStarP(b) * (B*N/(A*A)) / (2*A);            // u' = B N / A^2
+    };
+    const tol = 1e-3;                      // |a*'| at which pi/2 is resolvable
+    xP.save();
+    xP.setLineDash([2, 3]);
+    xP.lineWidth = 1.6;
+    xP.strokeStyle = css("--unstable");
+    for (const br of S.P.branches){
+      if (br.kind !== "unstable") continue;
+      if (br.term === "capture" || br.term === "box_exit") continue;
+      const pts = br.points, n = pts.length;
+      if (n < 1) continue;
+      const last = pts[n-1];
+      // A branch that failed AT the handoff can have a single vertex, so the
+      // travel direction cannot always be read off the polyline -- take it
+      // from the launch when it is not.
+      const dir = n >= 2 ? (Math.sign(last[1] - pts[n-2][1]) || Math.sign(br.direction) || -1)
+                         : (Math.sign(br.direction) || -1);
+      if (!(Math.abs(aStarP(last[1])) <= tol)) continue;
+      const reachB = 3*Math.abs(v.b1 - v.b0) + Math.abs(last[1]);
+      let handoff = null;
+      xP.beginPath();
+      let started = false;
+      for (let k = 0; k <= 900; k++){
+        const b = last[1] + dir * k * reachB / 900;
+        const A = Aof(b);
+        if (!(A > 1e-300)) break;
+        const a = Bof(b)/A + w1of(b);
+        if (!Number.isFinite(a)) break;
+        const x = X(a), y = Y(b);
+        started ? xP.lineTo(x, y) : (xP.moveTo(x, y), started = true);
+        if (k && Math.abs(aStarP(b)) > tol){ handoff = [a, b]; break; }
+      }
+      xP.stroke();
+      if (handoff){
+        S.handoffs.push(handoff);
+        xP.save(); xP.setLineDash([]);
+        xP.beginPath();
+        xP.arc(X(handoff[0]), Y(handoff[1]), 4, 0, 7);
+        xP.stroke(); xP.restore();
+      }
+    }
+    xP.restore();
+  }
+
   // user traces (demo layer)
   xP.globalAlpha = 1;
   xP.lineWidth = 1.4; xP.strokeStyle = css("--trace");
@@ -476,9 +845,17 @@ function drawPortrait(){
   }
   xP.globalAlpha = 1;
 
+  // Selection marker.  The full-span rules are optional: they cross the whole
+  // plot, and when the point of the picture is reading a trace or an
+  // invariant manifold against the level curves, two more lines through
+  // everything are in the way.  The ring stays regardless -- the Response and
+  // Backbone panels are showing THIS point, so it has to be findable.
   const sx = X(S.sel.a), sy = Y(S.sel.b);
-  xP.strokeStyle = css("--response"); xP.lineWidth = 1; xP.beginPath();
-  xP.moveTo(sx,0); xP.lineTo(sx,H); xP.moveTo(0,sy); xP.lineTo(W,sy); xP.stroke();
+  xP.strokeStyle = css("--response"); xP.lineWidth = 1;
+  if (S.showCross){
+    xP.beginPath();
+    xP.moveTo(sx,0); xP.lineTo(sx,H); xP.moveTo(0,sy); xP.lineTo(W,sy); xP.stroke();
+  }
   xP.beginPath(); xP.arc(sx, sy, 5, 0, 7); xP.stroke();
 
   xP.fillStyle = css("--ink-2"); xP.font = "10px " + css("--mono");
@@ -492,10 +869,87 @@ function drawPortrait(){
   // longer a certified rendering -- say so rather than magnify silently.
   const scale = Math.max(W / (v.a1 - v.a0), H / (v.b1 - v.b0));
   const chordPx = (S.P.chord_max || 0) * scale;
+  // Branches were traced to a box fixed at compute time.  Contours, the
+  // backbone and the critical points are closed-form or view-independent and
+  // stay correct at any zoom, but a separatrix simply stops where the tracing
+  // stopped -- so panning or zooming OUT past that box shows manifolds that
+  // are short, not manifolds that end.
+  const bx = S.P.box;
+  const beyond = bx && (v.a0 < bx[0] || v.a1 > bx[1]
+                        || v.b0 < bx[2] || v.b1 > bx[3]);
   els("portraitInfo").textContent =
     `${en.n_min} minima / ${en.n_saddle} saddles`
     + (S.stale ? "  · stale" : "")
+    + (S.P.d_eff
+        ? `  · d_eff ${S.P.d_eff}, ${nExt}/${nAsym} extended`
+          + (nAsym ? `, best drift ${bestRes.toExponential(2)}` : "")
+          + (nBone ? `, ${nBone} on the backbone end` : "")
+          + (nExt && !beyond ? " (zoom out to see)" : "")
+        : "  · no d_eff in payload — restart the server")
+    + (beyond ? "  · view exceeds the traced box" : "")
     + (chordPx > 2 ? `  · past traced resolution (chord ≈ ${chordPx.toFixed(0)} px)` : "");
+  els("portraitInfo").title =
+    S.P.branches.map((br, i) =>
+      `${i} ${br.kind.padEnd(8)} b*=${(br.saddle_b ?? NaN).toFixed(4)} `
+      + `${String(br.term).padEnd(24)} n=${br.n_traced} `
+      + `end=(${br.points[br.points.length-1][0].toFixed(6)},`
+      + `${br.points[br.points.length-1][1].toFixed(6)}) `
+      + `start=(${br.points[0][0].toFixed(6)},${br.points[0][1].toFixed(6)})`
+    ).join("\n")
+    + (extDiag.length ? "\n\nbox_exit tails:\n" + extDiag.join("\n") : "");
+  drawFates();
+}
+
+/* ---------------- skeleton and fates ---------------- */
+/* What actually happened, per critical point and per branch.  A portrait can
+   refuse for reasons that are invisible in the picture -- a branch that
+   aborted at launch leaves no mark, and `branch_abort` in the status line
+   does not say WHICH.  Every row is clickable: it moves the selection there,
+   so the Response and Backbone panels follow. */
+function drawFates(){
+  const t = els("fates");
+  if (!S.P){ t.innerHTML = ""; return; }
+  const num = (x, n = 6) =>
+    (x === null || x === undefined || !Number.isFinite(x)) ? "—" : x.toFixed(n);
+  const rows = [];
+  rows.push(`<tr><td class="k" colspan="5">critical points</td></tr>`);
+  for (const c of S.P.critical){
+    rows.push(
+      `<tr class="pick" data-a="${c.a}" data-b="${c.b}">`
+      + `<td class="k">${c.kind}${c.global ? " (global)" : ""}</td>`
+      + `<td class="v">b ${num(c.b)}</td><td class="v">a ${num(c.a)}</td>`
+      + `<td class="v">L ${num(c.loss)}</td>`
+      + `<td class="v">src ${c.source} u″${c.u2_sign > 0 ? "+" : "−"}</td></tr>`);
+  }
+  rows.push(`<tr><td class="k" colspan="5">branches</td></tr>`);
+  S.P.branches.forEach((br, i) => {
+    const last = br.points[br.points.length - 1];
+    const dirn = br.kind === "unstable"
+      ? (br.direction > 0 ? "b↑" : "b↓")
+      : (br.stable_sign > 0 ? "+" : "−");
+    const bad = br.term !== "capture" && br.term !== "box_exit";
+    rows.push(
+      `<tr class="pick" data-a="${last[0]}" data-b="${last[1]}"`
+      + `${bad ? ' style="color:var(--stable)"' : ""}>`
+      + `<td class="k">${i} ${br.kind} ${dirn}</td>`
+      + `<td class="v">b* ${num(br.saddle_b, 4)}</td>`
+      + `<td class="v">${br.term}</td>`
+      + `<td class="v">n ${br.n_traced}</td>`
+      + `<td class="v">end (${num(last[0], 4)}, ${num(last[1], 4)})</td></tr>`);
+  });
+  t.innerHTML = rows.join("");
+  for (const tr of t.querySelectorAll("tr.pick")){
+    tr.style.cursor = "pointer";
+    tr.onclick = () => {
+      S.sel = { a: +tr.dataset.a, b: +tr.dataset.b };
+      draw();
+    };
+  }
+  const aborted = S.P.branches.filter(
+    b => b.term !== "capture" && b.term !== "box_exit").length;
+  els("fatesInfo").textContent =
+    `${S.P.branches.length} branches`
+    + (aborted ? `, ${aborted} did not finish` : ", all finished");
 }
 
 /* ---------------- backbone ---------------- */
@@ -673,9 +1127,50 @@ function fieldFromMoments(mu){
   for (let j = 0; j < ng; j++){ let s = 0; for (let i = 0; i < nf; i++) s += f[i]*mu[i+j]; B[j] = g[j]*s; }
   return { A, B, Ap: dpoly(A), Bp: dpoly(B) };
 }
-function runTrace(a0, b0){
+async function runTrace(a0, b0){
   if (!S.P) return;
   const method = els("method").value, lr = +els("lr").value;
+  // Length is a question, not a setting.  Quiver answers "which way does the
+  // flow point here"; the long settings answer "where does this initial
+  // condition go".  For the continuous method the unit is ARCLENGTH, not
+  // time -- see below.
+  const maxSteps = Math.max(10, +els("tracelen").value || 1400);
+
+  if (method === "flow"){
+    // Arclength continuation in the C core's normalized-gradient field, at
+    // GEOMETRIC_IRK_PRIMARY order -- the same integrator charts falls back to
+    // when both graph charts go singular.  An explicit method has no business
+    // on this field: the stiffness that forced the certified machinery is
+    // exactly what makes a gradient trajectory crawl, so true descent TIME
+    // never arrives.  Unit speed travels the same curve and does.
+    const v = S.view;
+    const span = Math.max(v.a1 - v.a0, v.b1 - v.b0);
+    // The step field IS the arclength step for the continuous method -- it was
+    // previously ignored here, which made the control silently inert on the
+    // one method where step size matters most.  Descending a stiff valley
+    // from a slaved handoff needs a chord far below the view scale.
+    const dsIn = +els("lr").value;
+    const ds = Number.isFinite(dsIn) && dsIn > 0 ? dsIn : span / 4000;
+    const body = { ...S.lastBody, a: a0, b: b0, flow: 1,
+                   ds, steps: maxSteps, order: 8,
+                   box: [v.a0 - span, v.a1 + span, v.b0 - span, v.b1 + span] };
+    try {
+      const r = await fetch("/trace", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body) });
+      const d = await r.json();
+      if (d.error) return;
+      const path = [];
+      for (let i = 0; i < d.points.length; i += 2)
+        path.push([d.points[i], d.points[i+1]]);
+      S.traces.push(path);
+      if (S.traces.length > 8) S.traces.shift();
+      draw();
+    } catch (e){ /* backend gone; the portrait is still usable */ }
+    return;
+  }
+
+  const stride = maxSteps > 20000 ? 12 : maxSteps > 4000 ? 6 : maxSteps < 200 ? 1 : 3;
   const n = Math.max(1, Math.round(+els("nbatch").value));
   const filt = els("filt").value;
   const d = filt === "mf3" ? 3 : filt === "mf2" ? 2 : 1;
@@ -683,15 +1178,9 @@ function runTrace(a0, b0){
   const kmax = S.P.field.A.length;
   let a = a0, b = b0, mt = [0,0], vt = [0,0];
   const path = [[a,b]], hist = [];
-  for (let step = 0; step < 1400; step++){
+  for (let step = 0; step < maxSteps; step++){
     let grad;
-    if (method === "flow"){
-      const k1 = gradOf(a, b), nrm = Math.hypot(k1[0], k1[1]) || 1;
-      const dt = lr / Math.max(1, nrm);
-      const k2 = gradOf(a - dt*k1[0]/2, b - dt*k1[1]/2);
-      a -= dt*k2[0]; b -= dt*k2[1];
-      if (Math.hypot(k2[0], k2[1]) < 1e-9) break;
-    } else {
+    {
       hist.unshift(empiricalField(n, kmax));
       if (hist.length > h.length) hist.pop();
       const mu = new Array(kmax + 1).fill(0);
@@ -712,7 +1201,7 @@ function runTrace(a0, b0){
         b -= lr*(mt[1]/(1-Math.pow(b1,t1)))/(Math.sqrt(vt[1]/(1-Math.pow(b2,t1)))+1e-8);
       }
     }
-    if (step % 3 === 0) path.push([a,b]);
+    if (step % stride === 0) path.push([a,b]);
     if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 1e4 || Math.abs(b) > 1e4) break;
   }
   path.push([a,b]);
@@ -838,6 +1327,34 @@ cP.addEventListener("wheel", e => {
 }, { passive:false });
 
 els("clearTr").onclick = () => { S.traces = []; draw(); };
+// A click cannot land on the slaved curve accurately enough to trace from it.
+// Off the floor by even a little, grad L = (2Aw, ...) with A ~ 1e10 here, so
+// the normalized direction is almost purely horizontal and the arclength is
+// spent collapsing back onto the floor instead of descending along it.
+// Starting from the computed handoff removes the cursor from the question.
+els("traceHandoff").onclick = () => {
+  for (const [a, b] of S.handoffs) runTrace(a, b);
+};
+els("levels").addEventListener("input", () => {
+  S.levels = Math.max(4, Math.min(400, +els("levels").value || 44));
+  draw();
+});
+els("levelSpan").addEventListener("change", () => {
+  S.levelSpan = els("levelSpan").value; draw();
+});
+els("showCross").addEventListener("change", () => {
+  S.showCross = els("showCross").checked; draw();
+});
+els("showSlaved").addEventListener("change", () => {
+  S.showSlaved = els("showSlaved").checked; draw();
+});
+els("lamReset").onclick = () => {
+  if (!WALL) return;
+  const t = (WALL.wall - WALL.below) / (WALL.above - WALL.below);
+  els("lam").value = Math.round(1000 * t);
+  updateWallReadout();
+  recompute();
+};
 els("recompute").onclick = () => recompute(true);   // recompute at this view
 els("fit").onclick = () => {
   if (!S.P || !S.P.critical.length) return;
@@ -848,6 +1365,130 @@ els("fit").onclick = () => {
              a0: Math.min(...as)-ap, a1: Math.max(...as)+ap };
   draw();
 };
+
+// Reproducible pseudo-random coefficients.  Seeded in the page rather than
+// on the server so a case is identified by (seed, degrees, distribution) and
+// can be typed back in or shared -- the same property the CLI's --random
+// gives, and the reason it is worth having here at all.
+function mulberry32(seed){
+  let t = seed >>> 0;
+  return function(){
+    t += 0x6D2B79F5;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomCoeffs(rnd, deg, dist){
+  const draw = () => {
+    if (dist === "normal"){
+      const u = Math.max(rnd(), 1e-12), v = rnd();
+      return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+    }
+    if (dist === "integer") return Math.round(rnd()*8) - 4;
+    return 2*rnd() - 1;
+  };
+  const c = [];
+  for (let k = 0; k <= deg; k++) c.push(draw());
+  // A vanishing leading coefficient silently lowers the degree, which is not
+  // what was asked for.
+  if (Math.abs(c[deg]) < 0.05) c[deg] = c[deg] < 0 ? -1 : 1;
+  const round = x => dist === "integer" ? x : +x.toFixed(6);
+  return c.map(round);
+}
+
+function drawRandom(){
+  const seed = Math.max(0, +els("seed").value | 0);
+  const dist = els("coefDist").value;
+  const same = els("sameFG").checked;
+  const dg = Math.max(1, Math.min(17, +els("degG").value | 0));
+  const df = same ? dg : Math.max(1, Math.min(17, +els("degF").value | 0));
+  const rnd = mulberry32(seed * 2654435761 + df * 1000003 + dg * 10007
+                         + dist.length);
+  const g = randomCoeffs(rnd, dg, dist);
+  // g(0) = 0 makes A(0) = E[g(0)^2] = 0, so psi-positivity fails at the
+  // origin for EVERY distribution and the case can never be certified: at
+  // b = 0 the network outputs a*g(0) = 0 whatever a is, so it is not a
+  // two-parameter family there.  A legitimate object, but not one to hand
+  // somebody who pressed "draw random" -- the integer distribution alone
+  // produces it about one time in nine.
+  if (Math.abs(g[0]) < 0.05) g[0] = dist === "integer" ? 1 : 0.5;
+  const f = same ? g.slice() : randomCoeffs(rnd, df, dist);
+  els("gIn").value = g.join(", ");
+  els("fIn").value = f.join(", ");
+  if (same) els("degF").value = dg;
+  els("preset").value = "";
+  clearWall();
+  S.traces = [];
+  recompute();
+}
+
+els("drawRandom").onclick = drawRandom;
+els("nextRandom").onclick = () => {
+  els("seed").value = (+els("seed").value | 0) + 1;
+  drawRandom();
+};
+els("sameFG").onchange = () => {
+  els("degF").disabled = els("sameFG").checked;
+};
+
+// ---- wall families -------------------------------------------------------
+// A rheostat family is the one object in the zoo that is a PATH rather than a
+// point, so a slider is the natural instrument and the CLI cannot really
+// offer it.  Sliding through Lambda shows the saddle connection form and
+// break.
+//
+// The wall coordinate is deliberately not presented as the answer.  What is
+// citable is wall_bracket -- an interval whose endpoints have verified
+// OPPOSITE landing fates under a recorded protocol; inside it the fate is
+// launch-protocol-dependent, so the readout says so rather than implying that
+// some particular Lambda is the wall.
+let WALL = null;
+
+function updateWallReadout(){
+  if (!WALL){ els("lamRead").textContent = ""; els("lamWarn").textContent = ""; return; }
+  const lam = lamFromSlider();
+  const br = WALL.bracket;
+  const inside = br && lam > br[0] && lam < br[1];
+  els("lamRead").textContent =
+    `${WALL.parameter_name} = ${lam.toPrecision(10)}`
+    + (br ? `   bracket [${br[0].toPrecision(8)}, ${br[1].toPrecision(8)}]` : "");
+  els("lamWarn").textContent = inside
+    ? "inside the bracket: the landing fate is launch-protocol-dependent "
+      + "here, so this coordinate is not a citable wall location"
+    : "";
+}
+
+function lamFromSlider(){
+  if (!WALL) return null;
+  const t = +els("lam").value / 1000;
+  return WALL.below + t * (WALL.above - WALL.below);
+}
+
+fetch("/walls").then(r => r.json()).then(list => {
+  const sel = els("wallSel");
+  for (const w of list){
+    const o = document.createElement("option");
+    o.value = w.name; o.textContent = w.name; o.title = w.description;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => {
+    WALL = list.find(w => w.name === sel.value) || null;
+    els("lamLabel").textContent = WALL ? WALL.parameter_name : "parameter";
+    els("wallInfo").textContent = WALL ? `base ${WALL.base_case}` : "";
+    if (!WALL){ updateWallReadout(); return; }
+    // start at the wall itself
+    const t = (WALL.wall - WALL.below) / (WALL.above - WALL.below);
+    els("lam").value = Math.round(1000 * t);
+    updateWallReadout();
+    S.traces = []; els("preset").value = "";
+    recompute();
+  };
+  els("lam").addEventListener("input", updateWallReadout);
+  els("lam").addEventListener("change", () => { if (WALL) recompute(); });
+}).catch(() => {});
 
 let timer = null;
 const changedSinceSend = () =>
@@ -864,9 +1505,17 @@ els("dist").onchange = () => { S.stale = true; draw(); recompute(); };
 const PRESETS = {
   quad: { f:"1, 1, 1", g:"1, 1, 1" }
 };
+function clearWall(){
+  WALL = null;
+  const sel = els("wallSel");
+  if (sel) sel.value = "";
+  updateWallReadout();
+}
+
 els("preset").onchange = e => {
   const val = e.target.value;
   if (!val) return;
+  clearWall();
   S.traces = []; S.sel = { a:1, b:1 };
   if (PRESETS[val]){
     els("fIn").value = PRESETS[val].f;
