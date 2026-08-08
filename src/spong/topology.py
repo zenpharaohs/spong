@@ -488,6 +488,91 @@ def _earliest_monotone_certificate(last_index, certificate_at):
     return best
 
 
+def _ends_uphill_outward(m, inventory, point) -> bool:
+    """NOT USED, and retained only to record why.
+
+    The idea: boundedness looks sufficient rather than necessary for the
+    sublevel trap.  Descent cannot leave a sublevel set, so an orbit inside a
+    component holding one minimum and no saddle should reach that minimum
+    unless it escapes along an unbounded end -- and it cannot escape an end it
+    would have to climb.  Along the backbone the loss is u(b), so the test is a
+    sign on u' = B N / A^2, hence on B*N since A > 0, at degree 2 deg B + deg N
+    rather than the far-field corridor's 4 deg A.
+
+    It measured beautifully: on all 9 capture refusals in a directed
+    qualification sample the unbounded end is provably uphill, 8 of them with
+    exactly one minimum and no saddle in the component.
+
+    IT IS STILL UNSOUND.  u' > 0 outward gives db/dt = -u' < 0 -- inward --
+    only ON THE BACKBONE.  Off it db/dt is -dL/db at (a, b), not -u'.  The
+    orbit is merely close to the backbone, and closeness is not a certificate.
+    An unbounded component means u stays below the level all the way out, so an
+    orbit descending toward the backbone while drifting outward is excluded by
+    nothing this function tests.
+
+    Two tests in tests/test_portrait.py encode the deliberate opposite
+    decision -- a capture into a minimum below FP64 local spectral resolution
+    is reported unresolved rather than trusted -- and enabling this predicate
+    turned both from fp64_unresolved to certified.  That is the refusal
+    working.
+
+    A sound version would have to certify the sign of dL/db on a CORRIDOR
+    around the backbone rather than on the backbone itself, which is what
+    _unstable_far_field_funnel already does for escapes and is why it carries
+    the degree it does.
+    """
+    left_open = inventory.get("left_boundary") is None
+    right_open = inventory.get("right_boundary") is None
+    if not (left_open or right_open):
+        # Unbounded for some reason other than a b-end; this argument has
+        # nothing to say about it.
+        return False
+    BN = P.trim(P.mul(m.beta, m.N))
+    if not BN:
+        return False
+    # The ray must start past every real root of B*N, where its sign is
+    # constant.  atlas.legal_max_b is 1.5x the Cauchy bound of N and B, so it
+    # is such a point.  Starting at the orbit's own b looks tighter and is
+    # wrong: the prescribed dead-neuron critical point IS a root of B*N -- that
+    # is how the inverse construction places it -- and the orbit sits a couple
+    # of units inside, so the ray crosses a root and no constant sign exists.
+    # Any finite start suffices for the argument: escape to infinity must cross
+    # every larger |b|, and cannot cross outward where the loss rises.
+    from . import atlas
+    b0 = P.as_fraction(float(atlas.legal_max_b(m))) + 1
+    if right_open and not _strictly_positive_on_ray(BN, b0, 1):
+        return False
+    if left_open and not _strictly_positive_on_ray(
+            P.scale(BN, Fraction(-1)), -b0, -1):
+        return False
+    return True
+
+
+def _backbone_level_at_infinity(m):
+    """The exact limit of u(b) = C - B(b)^2/A(b) as |b| -> infinity.
+
+    deg A = 2 deg g and deg B = deg g, so B^2/A tends to beta^2/alpha on
+    leading coefficients when 2 deg B = deg A, and to 0 when B is of lower
+    degree.  The same limit holds in both directions.  Rational throughout.
+
+    This is a CEILING for the sublevel trap, and the one the certificate was
+    missing.  Either the target minimum is the last critical point on the
+    backbone in that direction, in which case u rises monotonically to
+    u_infinity and every level below it gives a bounded component; or u falls
+    below u_infinity further out, which forces a maximum of u in between --
+    a saddle -- whose level is already among the ceilings considered.  So a
+    ceiling always exists, and only the first case was unhandled.
+    """
+    A, B = P.trim(m.alpha), P.trim(m.beta)
+    if not A:
+        return None
+    if 2 * P.degree(B) < P.degree(A):
+        return float(m.C)
+    if 2 * P.degree(B) > P.degree(A):
+        return None                      # u -> -infinity; no ceiling here
+    return float(m.C - Fraction(B[-1] * B[-1], 1) / A[-1])
+
+
 def _capture_certificate(m, enumeration, branch, allowed_radius,
                          basin_radii):
     """Find a pre-connector point in a one-minimum bounded sublevel tube."""
@@ -563,9 +648,18 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
             return result
 
         minimum_level = float(m.L(minimum.a, minimum.b))
+        # Ceilings for the sublevel trap: any saddle above the minimum, and
+        # the backbone's own limit at infinity.  The latter was missing, and
+        # is the ceiling that applies precisely when the minimum is the last
+        # critical point on the backbone in that direction -- exactly the
+        # dead-neuron case, where every level at or above u_infinity gives an
+        # unbounded component and no tube can close.
         saddle_levels = sorted(
             float(m.L(q.a, q.b)) for q in enumeration.saddles
             if float(m.L(q.a, q.b)) > minimum_level)
+        u_infinity = _backbone_level_at_infinity(m)
+        if u_infinity is not None and u_infinity > minimum_level:
+            saddle_levels = sorted(saddle_levels + [u_infinity])
         if saddle_levels:
             threshold = np.nextafter(saddle_levels[0], -np.inf)
 
