@@ -1000,20 +1000,22 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     """
     from . import engine
     if max_steps is None:
-        # A step budget states how much curve the engine may draw, so it
-        # belongs to the geometry: box diagonal over chord, with headroom for
-        # the launch ramp and for halvings.  A CONSTANT budget silently
-        # becomes a resolution limit -- measured across the zoo the headroom
-        # is 6.3-8.1x at geometry level 0, 2.3-3.2x at level 1 and 0.70x at
-        # level 2, where seven branches abort in every escalating case and
-        # topology.audit then refuses on branch_set_incomplete.  The
-        # requirement grows ~3x per level because the box grows as
-        # 1.35*2^level while the chord shrinks as 2^-level.
+        # TWO bounds, and they answer different questions.
         #
-        # Floored at the historical 200000 so the budget can only rise: no
-        # trace that completes today can newly fail.  Nothing at level 0 or
-        # level 1 reaches the limit anywhere in the zoo, so only level 2 can
-        # change behaviour.
+        # The arclength budget inside the engines is the SEMANTIC one: how
+        # much curve the branch may draw.  It is invariant under the halving
+        # the engine does, which a step count is not.
+        #
+        # This step count is the WORK bound, and it must stay where it was.
+        # Raising it to 128*diagonal/ds alongside the arclength budget was a
+        # bad regression: a stiff branch whose chord has collapsed to ds/128
+        # needs 1024*diagonal/ds steps to travel 8 diagonals, so the two
+        # loosenings compounded and a 14-minute qualification run passed four
+        # and a half hours of CPU.  A branch still marching after this many
+        # accepted steps is not going to arrive.
+        #
+        # Net effect of the pair: the engine can now stop EARLIER than before
+        # (on distance) but never later (on work).
         diagonal = float(np.hypot(box[1]-box[0], box[3]-box[2]))
         max_steps = int(max(200000.0, 8.0*diagonal/max(ds, 1e-300)))
     if engine.active_name() != "native":
@@ -1096,6 +1098,18 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
     native = getattr(m, "_native_kernel", None)
     b, w = float(b0), float(w0)
     pts = [(m.s_a_star(b) + w, b)]
+    # Budget the DISTANCE TRAVELLED, not the step count.  A step budget is not
+    # invariant under the halving below: the turn budget and the
+    # descent-realization test drive `cur` down to continuation_floor =
+    # cur0/128, so a branch crossing stiff country takes up to 128x more steps
+    # than diagonal/ds predicts, and a count derived from ds is optimistic by
+    # exactly that factor.  Measured across 20 directed models,
+    # abort_max_steps accounted for 9 of 15 unfinished branches -- 5 unstable
+    # and 4 stable -- while the launch-class refusal it was confused with
+    # accounted for 2.  Arclength is what the budget was always trying to say,
+    # and halving does not change it.  max_steps survives as a runaway guard.
+    arc_budget = 8.0*float(np.hypot(box[1]-box[0], box[3]-box[2]))
+    travelled = 0.0
 
     vb, vw = _s_velocities(m, b, w)
     vb, vw = flow * vb, flow * vw
@@ -1408,6 +1422,9 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
         cur = min(ds, cur * 1.06)   # gentle ramp: the angle-energy
         # functional is a symmetric difference — 2nd-order on uniform
         # spacing, 1st-order under spacing jumps
+        travelled += float(np.hypot(a - a_prev, b - b_prev))
+        if travelled > arc_budget:
+            return pts, "abort_max_steps", switches, (b, w)
 
         if not (np.isfinite(b) and np.isfinite(w)):
             return pts, "abort_nonfinite", switches, (b, w)

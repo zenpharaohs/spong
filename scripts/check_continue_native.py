@@ -32,7 +32,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-SRC = REPO / "src" / "spong_continue.c"
+SRC = REPO / "src" / "c" / "spong_continue.c"
 INC = REPO / "include"
 CORPUS = REPO / "tests" / "corpus" / "continue_curve.json"
 
@@ -129,17 +129,25 @@ def run(lib, entry):
 
     res = Result()
     cap = 0
-    for _attempt in range(3):
+    # max_steps is DERIVED in charts._continue_curve -- a runaway guard at
+    # max(200000, 128*diagonal/ds), now that the operative limit is the
+    # arclength budget inside the engine.  Hard-coding 200000 here made the C
+    # abort where the reference did not, which reads as a parity failure and
+    # is not one.
+    diagonal = ((i["box"][1] - i["box"][0]) ** 2
+                + (i["box"][3] - i["box"][2]) ** 2) ** 0.5
+    max_steps = int(max(200000.0, 128.0 * diagonal / max(i["ds"], 1e-300)))
+    for _attempt in range(4):
         pts = (ctypes.c_double * max(2 * cap, 2))()
         lib.spong_continue_curve(
             ctypes.byref(f), i["b"], i["w"], i["flow"],
             tgt_buf, len(i["targets"]),
             0.0 if i["cap_r"] is None else i["cap_r"],
             box_buf, i["ds"], -1.0 if i["ds0"] is None else i["ds0"],
-            gate_buf, 200000, pts, cap, ctypes.byref(res))
+            gate_buf, max_steps, pts, cap, ctypes.byref(res))
         if res.term != 101:
             break
-        cap = res.n_points
+        cap = res.n_points + 64
     arr = np.ctypeslib.as_array(pts, shape=(max(cap, 1) * 2,))[:res.n_points * 2]
     arr = arr.reshape(-1, 2).copy()
     return res, arr

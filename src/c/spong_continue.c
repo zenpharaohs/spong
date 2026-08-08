@@ -359,11 +359,19 @@ static int segment_capture(double a0, double b0, double a1, double b1,
  * the segment                                                         *
  * ------------------------------------------------------------------ */
 
+/* The last two ACCEPTED vertices are kept in locals, not read back out of
+ * the output buffer.  The turn budget needs them, and reading them from the
+ * buffer made the check silently inoperative whenever point_capacity was too
+ * small -- so the capacity-probing pass computed a DIFFERENT, shorter curve
+ * than the real one (270 vertices against 279 on dead-neuron-far-saddle-d3).
+ * A sizing pass must not change the answer. */
 #define EMIT(A_, B_)                                                      \
     do {                                                                  \
         if (n_pts < point_capacity) {                                     \
             points[2 * n_pts] = (A_); points[2 * n_pts + 1] = (B_);       \
         } else { overflow = 1; }                                          \
+        prev0_a = prev1_a; prev0_b = prev1_b;                             \
+        prev1_a = (A_);    prev1_b = (B_);                                \
         n_pts++;                                                          \
     } while (0)
 
@@ -390,9 +398,21 @@ SPONG_API int spong_continue_curve(
     SPONG_FP_EXACT
     const double TMAX = turn_max();
     const double eps = DBL_EPSILON;
+    // Budget the DISTANCE TRAVELLED, not the step count.  A step budget is
+    // not invariant under the halving this loop does: the turn budget and the
+    // descent-realization test drive `cur` down to continuation_floor =
+    // cur0/128, so a branch crossing stiff country takes up to 128x more
+    // steps than diagonal/ds predicts and a count derived from ds is
+    // optimistic by exactly that factor.  Measured on 20 directed models,
+    // abort_max_steps was 9 of 15 unfinished branches.  Arclength is what the
+    // budget was always trying to express, and halving does not change it.
+    const double arc_budget =
+        8.0 * hypot(box[1] - box[0], box[3] - box[2]);
+    double travelled = 0.0;
 
     double b = b0, w = w0;
     double b_end = b0, w_end = w0;
+    double prev0_a = 0.0, prev0_b = 0.0, prev1_a = 0.0, prev1_b = 0.0;
     size_t n_pts = 0;
     int overflow = 0, switches = 0;
     uint64_t taken = 0, rejected = 0;
@@ -494,12 +514,10 @@ SPONG_API int spong_continue_curve(
                 FINISH(SPONG_CONT_DELEGATE, SPONG_DELEGATE_FLOOR_LADDER);
             }
 
-            if (n_pts >= 2 && n_pts <= point_capacity) {
+            if (n_pts >= 2) {
                 double a_new = a_star(f, b_new) + w_new;
-                double p1a = points[2 * (n_pts - 1)], p1b = points[2 * (n_pts - 1) + 1];
-                double p0a = points[2 * (n_pts - 2)], p0b = points[2 * (n_pts - 2) + 1];
-                double d1a = p1a - p0a, d1b = p1b - p0b;
-                double d2a = a_new - p1a, d2b = b_new - p1b;
+                double d1a = prev1_a - prev0_a, d1b = prev1_b - prev0_b;
+                double d2a = a_new - prev1_a, d2b = b_new - prev1_b;
                 double nn1 = sqrt(d1a * d1a + d1b * d1b);
                 double nn2 = sqrt(d2a * d2a + d2b * d2b);
                 if (nn1 > 1e-14 && nn2 > 1e-14
@@ -520,6 +538,9 @@ SPONG_API int spong_continue_curve(
         double a = a_star(f, b) + w;
         cur = fmin(ds, cur * 1.06);
         taken++;
+        travelled += hypot(a - a_prev, b - b_prev);
+        if (travelled > arc_budget){ b_end = b; w_end = w;
+            FINISH(SPONG_CONT_ABORT_MAX_STEPS, SPONG_DELEGATE_NONE); }
 
         if (!(isfinite(b) && isfinite(w))) { b_end = b; w_end = w;
             FINISH(SPONG_CONT_ABORT_NONFINITE, SPONG_DELEGATE_NONE); }

@@ -234,6 +234,19 @@ def main() -> int:
 
     tally = {"ok": 0, "invariant": 0, "determinism": 0, "reference": 0,
              "error": 0, "certified": 0, "refused": 0}
+    # Why the refusals refuse.  The classes need different work and are worth
+    # separating: branch_abort is a LAUNCH failure and yields to routing (the
+    # dead-neuron stub going to the fixed point instead of refusing);
+    # unstable_endpoint_unresolved and topology_contact are CERTIFICATE
+    # limits, which no amount of launch work touches; certification_segment
+    # _budget is a resource constant.
+    reasons: dict = {}
+    # branch_abort fires for ANY branch terminating outside capture/box_exit,
+    # so the reason alone does not say what to fix.  The terminations do:
+    # abort_conditioning_handoff is a launch that found no downstream owner,
+    # abort_zone_limit is the dispatcher thrashing between charts,
+    # abort_max_steps is a budget, abort_not_graph a degenerate frame.
+    terms: dict = {}
     ref_checked = det_checked = 0
     t_native = t_reference = 0.0
 
@@ -266,6 +279,14 @@ def main() -> int:
 
         status = p.ledger["topology"]["status"]
         tally["certified" if status == "certified" else "refused"] += 1
+        if status != "certified":
+            why = p.ledger["topology"].get("resolution_reason") or "unstated"
+            reasons[why] = reasons.get(why, 0) + 1
+            for br in p.branches:
+                if br.term in ("capture", "box_exit"):
+                    continue
+                tag = f"{br.kind}/{br.term}"
+                terms[tag] = terms.get(tag, 0) + 1
 
         bad = invariants(p)
         if bad:
@@ -317,6 +338,14 @@ def main() -> int:
     print(f"  engine disagreement {tally['reference']}  "
           f"({ref_checked} checked)")
     print(f"  errors              {tally['error']}")
+    if reasons:
+        print("  refusal reasons:")
+        for why, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            print(f"     {n:4d}  {why}")
+    if terms:
+        print("  unfinished branch terminations:")
+        for tag, n in sorted(terms.items(), key=lambda kv: -kv[1]):
+            print(f"     {n:4d}  {tag}")
     print(f"  native {t_native:.1f}s total"
           + (f", reference {t_reference:.1f}s on {ref_checked} cases"
              if ref_checked else ""))
