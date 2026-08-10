@@ -99,6 +99,22 @@ def one_case(m, spec, seed, case):
     return record
 
 
+def _run_case(task):
+    """Build and run one case in a worker process.
+
+    Takes the SEED, not the model: spong models carry Fractions and the
+    generators are deterministic, so shipping four ints and rebuilding is
+    cheaper and safer than pickling a model across a process boundary.
+    """
+    mode, max_degree, seed, case = task
+    generate = directed_model if mode == "directed" else random_model
+    built = generate(random.Random(seed), max_degree)
+    if built is None or built[0] is None:
+        return None
+    m, spec = built
+    return one_case(m, spec, seed, case)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", type=int, default=200)
@@ -114,7 +130,19 @@ def main() -> int:
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an existing results file")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="run this many cases in parallel processes; "
+                         "cases are independent, so this scales far better "
+                         "than spong's per-portrait threading")
     args = ap.parse_args()
+
+    if args.jobs > 1:
+        # Do NOT stack process parallelism on top of thread parallelism:
+        # jobs x SPONG_WORKERS threads on a machine with fewer cores thrashes
+        # and the exact arithmetic is already the bottleneck.  Across cases
+        # the work is embarrassingly parallel and load-balances itself, which
+        # per-portrait threading cannot do (one dominant branch caps it).
+        os.environ["SPONG_WORKERS"] = "1"
 
     generate = directed_model if args.mode == "directed" else random_model
 
@@ -150,16 +178,15 @@ def main() -> int:
     rng = random.Random(args.seed)
     started = time.perf_counter()
     records = []
+    tasks = []
     for case in range(args.cases):
         seed = rng.randrange(2 ** 31)
-        if case in done:
-            continue
-        sub = random.Random(seed)
-        built = generate(sub, args.max_degree)
-        if built is None or built[0] is None:
-            continue
-        m, spec = built
-        record = one_case(m, spec, seed, case)
+        if case not in done:
+            tasks.append((args.mode, args.max_degree, seed, case))
+
+    def emit(record):
+        if record is None:
+            return
         records.append(record)
         with out.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")
@@ -170,10 +197,25 @@ def main() -> int:
             flag = "   <-- ERROR"
         reason = record.get("reason") or (
             "" if record["status"] == "certified" else "(no reason given)")
-        print(f"[{case:4d}] {record['status']:<16s} "
+        print(f"[{record['case']:4d}] {record['status']:<16s} "
               f"{reason:<32s} "
-              f"{record['seconds']:7.1f}s  {spec}{flag}",
+              f"{record['seconds']:7.1f}s  {record['spec']}{flag}",
               flush=True)
+
+    if args.jobs > 1:
+        import concurrent.futures as cf
+        # submit + as_completed, NOT pool.map: map yields in SUBMISSION
+        # order, so one slow case blocks the display and the JSONL write
+        # for every case behind it -- the workers stay busy but nothing is
+        # visible or recoverable until the straggler lands.  Records carry
+        # their own case index and seed, so completion order is fine.
+        with cf.ProcessPoolExecutor(max_workers=args.jobs) as pool:
+            futures = [pool.submit(_run_case, task) for task in tasks]
+            for future in cf.as_completed(futures):
+                emit(future.result())
+    else:
+        for task in tasks:
+            emit(_run_case(task))
 
     print(f"\n=== {len(records)} cases in "
           f"{time.perf_counter() - started:.0f}s   ->  {out}")

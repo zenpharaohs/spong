@@ -213,18 +213,36 @@ def test_asymptote_residual_alone_does_not_certify_stable_escape(d2):
 
 
 def test_asymptote_residual_does_not_suppress_tail_contact(d2):
+    """A clean asymptote residual must not switch off the tail scan.
+
+    What the scan is for is a NUMERICALLY TRANSVERSE crossing: one that no
+    small relative perturbation of either curve removes.  Two stable
+    separatrices cannot cross in the continuous flow, so an attested
+    crossing between them means these polylines are not faithful
+    representatives of that flow -- and the audit must say so however good
+    the asymptote residual looks.
+
+    This case used to be two parallel tails 16 eps apart, asserting an
+    ambiguous contact.  That configuration now reports nothing, and the
+    silence is correct rather than a regression: such a contact is
+    TANGENTIAL, creatable and removable by a perturbation smaller than the
+    curves' own representation error, so it attests nothing in either
+    direction.  It was only ever reported because the floating orientation
+    determinant cancels on near-collinear input; the exact predicate
+    decides it instead of calling it unresolvable.
+    """
     m, e = d2
-    tiny = 16*np.finfo(float).eps
     asymptote = {"residual": 0.0, "radii": [1.0, 2.0, 4.0]}
     branches = [
-        Branch("stable", np.array([[-1., 0.], [1., 0.]]), "box_exit",
+        Branch("stable", np.array([[-1., -1.], [1., 1.]]), "box_exit",
                certs={"asymptote": asymptote}),
-        Branch("stable", np.array([[-1., tiny], [1., tiny]]), "box_exit",
+        Branch("stable", np.array([[-1., 1.], [1., -1.]]), "box_exit",
                certs={"asymptote": asymptote}),
     ]
     result = topology.audit(m, e, branches, (-2., 2., -2., 2.))
     assert result["status"] == "fp64_unresolved"
-    assert result["ambiguous_contacts"]
+    assert result["forbidden_count"] >= 1
+    assert result["forbidden_intersections"]
 
 
 def test_audit_refuses_incomplete_branch_without_intersection_scan():

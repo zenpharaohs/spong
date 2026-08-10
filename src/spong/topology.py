@@ -75,29 +75,83 @@ def _point_segment_distance(p, a, b):
     return hypot(px-t*dx, py-t*dy)
 
 
-def _segment_event(a, b, c, d, tol):
+def _sagitta_bounds(Y):
+    """Per-segment deviation of the polyline from the curve it represents.
+
+    A chord of length h across an arc that turns by theta departs from that
+    arc by about h*theta/8.  Both quantities are read off the polyline
+    itself, so the bound is LOCAL: large where the curve turns sharply, and
+    vanishingly small in the asymptotically flat tails where two branches
+    converging on one minimum run adjacent for thousands of samples.
+
+    This is the scale at which a crossing is REMOVABLE.  Two sampled curves
+    whose penetration depth is under their combined sagitta can be pulled
+    apart inside their own representation error, so their apparent crossing
+    attests nothing about the flow.  A crossing DEEPER than that cannot be
+    perturbed away and is a genuine violation of uniqueness -- wherever it
+    occurs, including inside a certified basin.
+    """
+    points = np.asarray(Y, dtype=float)
+    steps = np.diff(points, axis=0)
+    count = len(steps)
+    if count == 0:
+        return np.zeros(0)
+    chord = np.hypot(steps[:, 0], steps[:, 1])
+    turn = np.zeros(count)
+    if count >= 2:
+        first, second = steps[:-1], steps[1:]
+        cross = first[:, 0]*second[:, 1] - first[:, 1]*second[:, 0]
+        dot = first[:, 0]*second[:, 0] + first[:, 1]*second[:, 1]
+        angle = np.abs(np.arctan2(cross, dot))
+        # Segment k borders the turns at its two endpoints; take the worse.
+        turn[:-1] = np.maximum(turn[:-1], angle)
+        turn[1:] = np.maximum(turn[1:], angle)
+    return chord*turn/8.0
+
+
+def _crossing_depth(Y1, i, Y2, j):
+    """How far the shallower curve reaches past the other."""
+    a, b = Y1[i], Y1[i+1]
+    c, d = Y2[j], Y2[j+1]
+    return min(_point_segment_distance(a, c, d),
+               _point_segment_distance(b, c, d),
+               _point_segment_distance(c, a, b),
+               _point_segment_distance(d, a, b))
+
+
+def _segment_event(a, b, c, d, tol, removable=0.0):
     scale = max(hypot(b[0]-a[0], b[1]-a[1]),
                 hypot(d[0]-c[0], d[1]-c[1]), 1.0)
     floor = tol*scale
     o1, o2 = _orient(a, b, c), _orient(a, b, d)
     o3, o4 = _orient(c, d, a), _orient(c, d, b)
-    if o1*o2 < 0 and o3*o4 < 0:
-        den = (b[0]-a[0])*(d[1]-c[1])-(b[1]-a[1])*(d[0]-c[0])
-        t = ((c[0]-a[0])*(d[1]-c[1])
-             - (c[1]-a[1])*(d[0]-c[0]))/den
-        return "cross", a+t*(b-a)
     distance = min(_point_segment_distance(a, c, d),
                    _point_segment_distance(b, c, d),
                    _point_segment_distance(c, a, b),
                    _point_segment_distance(d, a, b))
+    if o1*o2 < 0 and o3*o4 < 0:
+        if distance <= removable:
+            # The signs alternate, but the penetration is inside the two
+            # polylines' own sagitta: an arbitrarily small perturbation of
+            # either curve, within the error of the representation that
+            # produced it, removes this crossing.  It attests nothing.
+            return None
+        den = (b[0]-a[0])*(d[1]-c[1])-(b[1]-a[1])*(d[0]-c[0])
+        t = ((c[0]-a[0])*(d[1]-c[1])
+             - (c[1]-a[1])*(d[0]-c[0]))/den
+        return "cross", a+t*(b-a)
     if (min(abs(o1), abs(o2), abs(o3), abs(o4)) <= floor
-            and distance <= tol):
+            and removable < distance <= tol):
         # A predicate at its FP64 resolution floor cannot certify ordering.
+        # Below the combined sagitta there is nothing to certify: the two
+        # curves are indistinguishable at the scale at which they are
+        # defined, so an unorderable contact there attests even less than
+        # a removable crossing does.
         return "ambiguous", 0.25*(a+b+c+d)
     return None
 
 
-def _leaf_events(Y1, n1, Y2, n2, tol):
+def _leaf_events(Y1, n1, Y2, n2, tol, sag1=None, sag2=None):
     for i in range(n1.lo, n1.hi):
         a, b = Y1[i], Y1[i+1]
         ab = (min(a[0], b[0]), max(a[0], b[0]),
@@ -108,34 +162,39 @@ def _leaf_events(Y1, n1, Y2, n2, tol):
                   min(c[1], d[1]), max(c[1], d[1]))
             if not _boxes_overlap(ab, cd, tol):
                 continue
-            event = _segment_event(a, b, c, d, tol)
+            removable = ((0.0 if sag1 is None else sag1[i])
+                         + (0.0 if sag2 is None else sag2[j]))
+            event = _segment_event(a, b, c, d, tol, removable)
             if event is not None:
                 yield (i, j, event[0], tuple(map(float, event[1])))
 
 
-def _pair_events(Y1, root1, Y2, root2, tol):
+def _pair_events(Y1, root1, Y2, root2, tol, sag1=None, sag2=None):
     stack = [(root1, root2)]
     while stack:
         a, b = stack.pop()
         if not _boxes_overlap(a.box, b.box, tol):
             continue
         if a.left is None and b.left is None:
-            yield from _leaf_events(Y1, a, Y2, b, tol)
+            yield from _leaf_events(Y1, a, Y2, b, tol, sag1, sag2)
         elif b.left is None or (
                 a.left is not None and a.hi-a.lo >= b.hi-b.lo):
             stack.extend(((a.left, b), (a.right, b)))
         else:
             stack.extend(((a, b.left), (a, b.right)))
-def _self_events(Y, root, tol):
+
+
+def _self_events(Y, root, tol, sag=None):
     def visit(node):
         if node.left is None:
-            yield from (x for x in _leaf_events(Y, node, Y, node, tol)
+            yield from (x for x in _leaf_events(
+                Y, node, Y, node, tol, sag, sag)
                         if x[0] < x[1] and abs(x[0]-x[1]) > 1)
             return
         yield from visit(node.left)
         yield from visit(node.right)
         yield from (x for x in _pair_events(
-            Y, node.left, Y, node.right, tol)
+            Y, node.left, Y, node.right, tol, sag, sag)
                     if abs(x[0]-x[1]) > 1)
     yield from visit(root)
 
@@ -200,29 +259,103 @@ def _topology_decision(*values):
     }
 
 
-def _pair_contact_events(Y1, root1, Y2, root2, tol):
-    """Production contact stream, with the Python BVH retained as oracle."""
+def _pair_contact_events(Y1, root1, Y2, root2, tol, sag1=None, sag2=None):
+    """Production contact stream, with the Python BVH retained as oracle.
+
+    The C scanner does not know about sagittae, so removable crossings are
+    filtered here instead.  Both paths therefore apply the SAME rule, and
+    the filter costs one distance evaluation per reported event rather
+    than per segment pair.
+    """
     try:
         from . import _native
         scanner = _native.ContactScan(
             np.ascontiguousarray(Y1, dtype=np.float64),
             np.ascontiguousarray(Y2, dtype=np.float64), tol, False)
     except (ImportError, AttributeError):
-        yield from _pair_events(Y1, root1, Y2, root2, tol)
+        yield from _pair_events(Y1, root1, Y2, root2, tol, sag1, sag2)
         return
-    yield from scanner
+    yield from _drop_removable(scanner, Y1, Y2, sag1, sag2)
 
 
-def _self_contact_events(Y, root, tol):
+def _self_contact_events(Y, root, tol, sag=None):
     """Production self-contact stream, with the Python BVH as oracle."""
     try:
         from . import _native
         scanner = _native.ContactScan(
             np.ascontiguousarray(Y, dtype=np.float64), None, tol, True)
     except (ImportError, AttributeError):
-        yield from _self_events(Y, root, tol)
+        yield from _self_events(Y, root, tol, sag)
         return
-    yield from scanner
+    yield from _drop_removable(scanner, Y, Y, sag, sag)
+
+
+def _exact_orientation(a, b, c):
+    """Exact sign of the orientation determinant at binary64 points.
+
+    The coordinates are dyadic rationals, so this 2x2 determinant of
+    differences is a finite exact computation.  The floating version
+    cancels catastrophically on NEARLY COLLINEAR input -- which is exactly
+    the configuration two unstable branches present as they enter a
+    minimum along its slow eigendirection from the same side: both
+    straighten out, so the determinant loses every significant bit while
+    the curves may still be far apart relative to their own accuracy.
+    Calling that ambiguous is a statement about the predicate, not about
+    the flow.
+    """
+    ax, ay = Fraction(float(a[0])), Fraction(float(a[1]))
+    bx, by = Fraction(float(b[0])), Fraction(float(b[1]))
+    cx, cy = Fraction(float(c[0])), Fraction(float(c[1]))
+    value = (bx-ax)*(cy-ay) - (by-ay)*(cx-ax)
+    return (value > 0) - (value < 0)
+
+
+def _exact_crossing(Y1, i, Y2, j):
+    """True/False if the two segments provably do/don't cross; None if
+    a determinant vanishes exactly (a real degeneracy, measure zero)."""
+    a, b = Y1[i], Y1[i+1]
+    c, d = Y2[j], Y2[j+1]
+    o1 = _exact_orientation(a, b, c)
+    o2 = _exact_orientation(a, b, d)
+    o3 = _exact_orientation(c, d, a)
+    o4 = _exact_orientation(c, d, b)
+    if 0 in (o1, o2, o3, o4):
+        return None
+    return o1 != o2 and o3 != o4
+
+
+def _drop_removable(events, Y1, Y2, sag1, sag2):
+    """Discard contacts that lie inside the two curves' own sagittae.
+
+    A crossing removable by a perturbation smaller than the polylines'
+    deviation from the curves they represent is not evidence about the
+    flow.  One that is NOT removable violates uniqueness of the gradient
+    flow and stays forbidden wherever it occurs -- this filter is about
+    what is attested, never about where the contact sits.
+
+    The same applies to an AMBIGUOUS contact, and more strongly: it says
+    only that the predicate cannot order the two curves, and below their
+    combined sagitta there is no ordering to establish.
+    """
+    if sag1 is None or sag2 is None:
+        yield from events
+        return
+    for i, j, kind, point in events:
+        if _crossing_depth(Y1, i, Y2, j) <= sag1[i] + sag2[j]:
+            continue
+        if kind == "ambiguous":
+            # The cheap predicate could not order these, but they are
+            # farther apart than their own representation error, so there
+            # IS something to decide.  Decide it exactly.  Only events that
+            # already survived both filters reach this, so the exact work
+            # is bounded by the reported-event count, not the segment-pair
+            # count.
+            decided = _exact_crossing(Y1, i, Y2, j)
+            if decided is False:
+                continue
+            if decided is True:
+                kind = "cross"
+        yield i, j, kind, point
 
 
 def _strictly_monotone_subarc(Y, first_segment, second_segment):
@@ -1241,6 +1374,10 @@ def audit(m, enumeration, branches, box) -> dict:
     critical = np.asarray([(p.a, p.b) for p in enumeration.points])
     allowed_radius = max(1024*np.finfo(float).eps*scale, 1e-11)
     basin_radii = _minimum_basin_radii(m, enumeration)
+    # Per-segment sagitta for every branch: the scale below which a
+    # crossing is removable within the polyline's own representation
+    # error.  Computed once per branch, consulted per reported event.
+    sagittae = [_sagitta_bounds(br.Y) for br in branches]
     # ONE merge tree per portrait, shared by every branch.  Its levels are
     # rational and derived from the enumeration alone, so nothing in it
     # depends on which branch asks; building it per branch would repeat
@@ -1355,7 +1492,7 @@ def audit(m, enumeration, branches, box) -> dict:
     for i, br in enumerate(branches if not budget_exceeded else ()):
         root = None if native_contacts else trees[i]
         for si, sj, kind, point in _self_contact_events(
-                np.asarray(br.Y), root, predicate_tol):
+                np.asarray(br.Y), root, predicate_tol, sagittae[i]):
             suffix = terminal_suffixes[i]
             completed_stable_tail = (
                 suffix["kind"] == "stable_infinity"
@@ -1401,7 +1538,8 @@ def audit(m, enumeration, branches, box) -> dict:
                 np.asarray(branches[i].Y),
                 None if native_contacts else trees[i],
                 np.asarray(branches[j].Y),
-                None if native_contacts else trees[j], predicate_tol)
+                None if native_contacts else trees[j], predicate_tol,
+                sagittae[i], sagittae[j])
             for si, sj, kind, point in events:
                 same_source_stub_germ = (
                     branches[i].diag.get("saddle_b") is not None

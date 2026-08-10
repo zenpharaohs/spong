@@ -50,6 +50,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+import math
 
 from . import _poly as P
 from . import sturm
@@ -159,16 +160,35 @@ def separating_levels(m, e, attempts: int = 40) -> LevelSequence:
         # level in a gap gives the SAME component structure, so this does
         # not change any topology -- but a higher level is crossed EARLIER
         # by a descending orbit, so the certified sublevel suffix starts
-        # sooner.  Measured: the midpoint left a 24583-sample branch's
-        # suffix starting at 24219, four segments after the contact events
-        # it had to discharge, and the portrait refused on 120 contacts
-        # that the per-index level of the old ladder had discharged.
-        # Verification is what makes any of these sound: a proposed level
-        # is accepted only when every critical sign against it is decided
-        # and nonzero, so a level too close to the upper critical value is
-        # rejected rather than trusted.
-        for fraction in (0.99, 0.9, 0.75, 0.5, 0.25):
-            c = Fraction(lo + fraction*(hi - lo))
+        # sooner, and the top of the gap is exactly the ceiling at which
+        # the target's component merges.
+        #
+        # Candidates step DOWN FROM THE TOP IN ULPS before falling back to
+        # fractions, because fractions are the wrong instrument here.  In a
+        # flat dead-neuron valley the loss approaches its ceiling
+        # exponentially in arclength, so the entry index moves only
+        # LOGARITHMICALLY in the distance to the ceiling: measured on seed
+        # 499170635, going from 0.99 to 0.9999 of the gap -- a hundredfold
+        # -- moved two suffix starts by ten samples each, against the ~30
+        # they needed.  Ulp steps reach the float64 resolution floor, which
+        # at that gap is about four orders finer than 0.9999.
+        #
+        # Verification is what keeps any of this sound: a level so close to
+        # the upper critical value that a critical sign cannot be decided is
+        # REJECTED, not trusted, and a step that lands ABOVE the mark simply
+        # induces the next gap's signature and is dropped by the dedup.
+        candidates = []
+        step = hi
+        for _ in range(8):
+            step = math.nextafter(step, float("-inf"))
+            candidates.append(step)
+        candidates.extend(lo + fraction*(hi - lo) for fraction in
+                          (0.9999, 0.999, 0.99, 0.9, 0.75, 0.5, 0.25))
+
+        for candidate in candidates:
+            if not lo < candidate < hi:
+                continue
+            c = Fraction(candidate)
             if u_inf is not None and c == u_inf:
                 continue
             signs = [value_sign(m, p, c) for p in points]
