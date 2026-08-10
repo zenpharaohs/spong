@@ -333,12 +333,18 @@ def exact_loss(m, a: float, b: float) -> Fraction:
     return Fraction(m.C) - 2 * aq * B + aq * aq * A
 
 
-def locate(m, e, c: Fraction, a: float, b: float):
+def locate(m, e, c: Fraction, a: float, b: float, components=None):
     """The component of {L < c} containing the binary64 point, or None.
 
     Two exact tests and nothing else.  L(p) < c already places the point
     transversally, because L(p) = u(b) + A(a - a*)^2 >= u(b): a point below
     the level is inside the tube over its own b-gap.
+
+    ``components`` lets a caller pass the already-computed components at
+    this level -- ``MergeTree`` stores them all -- so that placing a point
+    costs one root count instead of a full re-isolation.  Without it a
+    per-branch scan over the levels repeats a complete component inventory
+    per level that the tree already holds.
     """
     if exact_loss(m, a, b) >= c:
         return None
@@ -347,7 +353,8 @@ def locate(m, e, c: Fraction, a: float, b: float):
     if P.eval_at(R, bq) == 0:
         return None                      # exactly on a boundary: undecided
     k = sturm.count_roots(R, None, bq)
-    for comp in components_at(m, e, c):
+    for comp in (components_at(m, e, c) if components is None
+                 else components):
         if comp.gap == k:
             return comp
     return None
@@ -420,13 +427,41 @@ def widest_forcing_component(m, e, tree, a: float, b: float):
     events into a topology_contact refusal.
     """
     best = None
-    for c in tree.levels:
-        comp = locate(m, e, c, a, b)
+    for c, comps in zip(tree.levels, tree.components):
+        comp = locate(m, e, c, a, b, components=comps)
         if comp is None:
             continue
         forcing = (comp.bounded and not comp.saddles
                    and len(comp.minima) == 1)
         if forcing and (best is None or comp.minima == best[1].minima):
+            best = (c, comp)
+        elif best is not None:
+            break
+    return best
+
+
+def widest_escape_component(m, e, tree, a: float, b: float):
+    """Highest level whose component through the point forces ESCAPE.
+
+    Returns ``(level, component)`` or None.  The condition is an unbounded
+    component with NO critical point and EXACTLY ONE open end: the orbit
+    descends, cannot leave the component, and has nowhere inside it to
+    converge, so it must run out that end.  (Two open ends is the whole
+    line and names no end; zero open ends with no minimum cannot occur, by
+    the Euler equality.)
+
+    Widest rather than tightest, for the same reason as the capture case:
+    a higher level is crossed earlier, so the certified suffix -- the part
+    drawn as an asymptotic continuation -- starts sooner.
+    """
+    best = None
+    for c, comps in zip(tree.levels, tree.components):
+        comp = locate(m, e, c, a, b, components=comps)
+        if comp is None:
+            continue
+        open_ends = (comp.lo is None) + (comp.hi is None)
+        forcing = (open_ends == 1 and not comp.minima and not comp.saddles)
+        if forcing:
             best = (c, comp)
         elif best is not None:
             break
@@ -442,8 +477,8 @@ def fate_from_tree(m, e, tree: MergeTree, a: float, b: float):
     saddle in a bounded component (capture), or no critical point at all in
     a component with a single open end (escape).
     """
-    for k, c in enumerate(tree.levels):
-        comp = locate(m, e, c, a, b)
+    for k, (c, comps) in enumerate(zip(tree.levels, tree.components)):
+        comp = locate(m, e, c, a, b, components=comps)
         if comp is None:
             continue
         forced_capture = (comp.bounded and not comp.saddles

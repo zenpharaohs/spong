@@ -279,7 +279,8 @@ def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
     # worth investigating rather than silently absorbing.
     assert any(x["method"] == "exact_merge_tree" for x in captures)
     assert all(x["method"] in (
-                   "exact_sublevel_tube", "exact_backbone_funnel")
+                   "exact_merge_tree_escape", "exact_sublevel_tube",
+                   "exact_backbone_funnel")
                for x in topology["unstable_ends"]
                if x["kind"] == "infinity_escape")
     assert set(p.ledger["timing"]) == {
@@ -327,7 +328,8 @@ def test_stiff_stub_extends_before_global_handoff():
     assert not captures or any(
         x["method"] == "exact_merge_tree" for x in captures)
     assert all(x["certified"] and x["method"] in (
-                   "exact_sublevel_tube", "exact_backbone_funnel")
+                   "exact_merge_tree_escape", "exact_sublevel_tube",
+                   "exact_backbone_funnel")
                for x in topology["unstable_ends"]
                if x["kind"] == "infinity_escape")
     saddle = max(p.enumeration.saddles, key=lambda q: q.b)
