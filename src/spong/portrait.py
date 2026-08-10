@@ -306,9 +306,25 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
                 not x["certified"] for x in top["stable_tails"]),
             "elapsed_sec": time.perf_counter()-geometry_started,
         })
+        # Escalate ONLY for a resolution-sensitive refusal.  Finer chords
+        # can genuinely repair `topology_contact`: an attested crossing
+        # means these polylines are not faithful representatives of the
+        # flow, which is a sampling failure and exactly what resolution
+        # addresses.  Nothing else here is resolution-limited, so retrying
+        # spends two more traces to reach the same verdict.
+        #
+        # `branch_abort` and `branch_inventory_incomplete` were already
+        # excluded -- a partial manifold is not repaired by resolution.
+        # The exact endpoint certificates (`unstable_endpoint_unresolved`,
+        # `stable_escape_unresolved`) decide on the EXACT loss at the
+        # traced terminal sample, and refining the chord does not move
+        # where a trace captures or leaves the box.  And escalating a
+        # budget refusal actively HURTS: level 2 carries about four times
+        # the vertices, and it is the vertex count that breaches
+        # `certification_segment_budget` and `certification_event_budget`
+        # in the first place, so the retry is guaranteed to fail worse.
         if (top["status"] == "certified"
-                or top["resolution_reason"] in (
-                    "branch_abort", "branch_inventory_incomplete")):
+                or top["resolution_reason"] != "topology_contact"):
             break
     result.ledger["topology"]["attempts"] = attempts
     result.ledger["timing"] = {
