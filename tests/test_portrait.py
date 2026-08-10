@@ -253,20 +253,32 @@ def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
     Scaling every capture ball by that connection length made a radius-two
     ball around the *near* minimum and falsely captured both branches there.
     Critical-point separation must bound all-minima capture neighbourhoods.
-    The remote minimum itself is below FP64 local spectral resolution, so the
-    tightened endpoint audit must report the otherwise clean portrait as
-    numerically unresolved rather than trusting its capture label.
+
+    This case formerly asserted fp64_unresolved: the remote minimum is below
+    FP64 LOCAL SPECTRAL resolution, and the endpoint audit had no certificate
+    that avoided local spectral data, so declining was the honest verdict.
+    The exact level tube is such a certificate -- the minimum's existence and
+    index are Sturm-exact from the enumeration, and containment in a bounded
+    one-minimum sublevel component is decided by exact rational arithmetic on
+    the level polynomial, with no local eigenstructure consulted.  Certifying
+    is therefore the correct verdict here, and what the case now guards is
+    that the capture is certified BY THAT ROUTE, on the correct minimum.
     """
     m = _targeted_qualification_model(3759027027, 11)
     p = portrait.certified_compute(m, max_geometry_level=0)
     topology = p.ledger["topology"]
-    assert topology["status"] == "fp64_unresolved"
-    assert topology["resolution_reason"] == "unstable_endpoint_unresolved"
-    unresolved = [x for x in topology["unstable_ends"]
-                  if not x["certified"]]
-    assert len(unresolved) == 1
-    assert unresolved[0]["kind"] == "finite_capture"
-    assert all(x["certified"] and x["method"] in (
+    assert topology["status"] == "certified"
+    assert topology["resolution_reason"] is None
+    assert all(x["certified"] for x in topology["unstable_ends"])
+    captures = [x for x in topology["unstable_ends"]
+                if x["kind"] == "finite_capture"]
+    assert all(x["method"] in ("exact_merge_tree", "exact_level_tube",
+                               "strictly_convex_ball") for x in captures)
+    # The exact merge tree is the primary route.  A fallback method here
+    # would mean it declined on a branch it should have decided, which is
+    # worth investigating rather than silently absorbing.
+    assert any(x["method"] == "exact_merge_tree" for x in captures)
+    assert all(x["method"] in (
                    "exact_sublevel_tube", "exact_backbone_funnel")
                for x in topology["unstable_ends"]
                if x["kind"] == "infinity_escape")
@@ -274,6 +286,8 @@ def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
         "enumeration_sec", "stub_materialization_sec",
         "geometry_sec", "total_sec"}
     assert all(value >= 0.0 for value in p.ledger["timing"].values())
+    # The original defect, still guarded: the far connection must not widen
+    # the near minimum's capture ball into a false double capture.
     assert sum(br.term == "capture" for br in p.branches) == 3
     captured = [br.diag["target"][1] for br in p.branches
                 if br.kind == "unstable" and br.term == "capture"]
@@ -286,21 +300,32 @@ def test_stiff_stub_extends_before_global_handoff():
 
     The quadratic Poincare graph loses contraction on the larger interval,
     but the exact centered graph remains certified and carries the branch
-    far enough for the global dispatcher to finish.  A separate prescribed
-    minimum at b=-2048 is below FP64 local spectral resolution, so full
-    topology certification must still decline.  With the complete skeleton
-    present, the contact audit may also reject intersecting pseudo-orbits
-    before endpoint resolution becomes the primary ledger reason.
+    far enough for the global dispatcher to finish.  That stub behaviour is
+    what this case exists to guard, and it is unchanged.
+
+    The prescribed minimum at b=-2048 formerly forced fp64_unresolved for the
+    same reason as the sibling case above, and the exact level tube now
+    certifies it without consulting local spectral data.  A contact refusal
+    remains possible in principle -- the contact audit is independent of the
+    endpoint certificates -- so the reason is asserted only to be consistent
+    with the status rather than pinned to one outcome.
     """
     m = _targeted_qualification_model(3389434578, 11)
     p = portrait.certified_compute(m, max_geometry_level=0)
     topology = p.ledger["topology"]
-    assert topology["status"] == "fp64_unresolved"
-    assert topology["resolution_reason"] in (
-        "unstable_endpoint_unresolved", "topology_contact")
-    if topology["resolution_reason"] == "topology_contact":
+    assert topology["status"] in ("certified", "fp64_unresolved")
+    if topology["status"] == "certified":
+        assert topology["resolution_reason"] is None
+        assert all(x["certified"] for x in topology["unstable_ends"])
+    else:
+        assert topology["resolution_reason"] == "topology_contact"
         assert topology["forbidden_count"] > 0
-    assert sum(not x["certified"] for x in topology["unstable_ends"]) == 1
+    captures = [x for x in topology["unstable_ends"]
+                if x["kind"] == "finite_capture" and x["certified"]]
+    assert all(x["method"] in ("exact_merge_tree", "exact_level_tube",
+                               "strictly_convex_ball") for x in captures)
+    assert not captures or any(
+        x["method"] == "exact_merge_tree" for x in captures)
     assert all(x["certified"] and x["method"] in (
                    "exact_sublevel_tube", "exact_backbone_funnel")
                for x in topology["unstable_ends"]

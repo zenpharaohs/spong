@@ -271,8 +271,46 @@ DEAD_NEURON_FAR_SADDLE = ZooCase(
 )
 
 
+NEAR_SLIDE_D2 = ZooCase(
+    name="near-slide-d2",
+    f=(-0.891598, -0.077792, 0.101212),
+    g=(0.199189, 0.515701, -0.228274),
+    moment_dist="uniform01",
+    default_view=None,
+    expected_connections=((-0.651232686, 1.953667699),),
+    description=(
+        "Degree-2/degree-2 nonadjacent attachment sitting CLOSE TO ITS "
+        "SLIDE.  Six critical points alternating m S m S m S along the "
+        "backbone: minima b = -5.120861, -0.009938, 1.953668 and saddles "
+        "b = -0.651233, 0.984296, 4.053796.  The two outer saddles are "
+        "B-saddles -- roots of B, so a* = 0 and u = C exactly at both, and "
+        "the level set at c = C contains the whole line a = 0 together "
+        "with the curve a = 2a*(b).  The +b branch of the B-saddle "
+        "b = -0.651233 skips the adjacent minimum b = -0.009938 and lands "
+        "at b = 1.953668, passing the N-saddle b = 0.984296 at a distance "
+        "of about 0.11: the same B-to-N slide as the nonnearest-saddle-"
+        "connection family, at degree 2 in BOTH f and g.  What earns it a "
+        "slot is the margin.  Under the Lambda rheostat (f/sqrt(L), "
+        "sqrt(L)g) -- which leaves every critical b and the whole backbone "
+        "topology fixed, since A -> L*A, B -> B, C -> C/L and a* -> a*/L, "
+        "and moves only the planar geometry the flow sees -- the landing "
+        "flips at Lambda* in [1.0798784758546, 1.0798784758605].  The "
+        "stored case is Lambda = 1, i.e. EIGHT PERCENT from its wall, "
+        "against 118% for nonnearest-saddle-connection and 665% for "
+        "minimal-quartet.  That makes it the closest-to-wall stored case "
+        "and the natural fixture for a reported Morse-Smale margin.  "
+        "Bracket grade: endpoints verified to have opposite landings by "
+        "Radau (rtol 1e-12) and DOP853 (rtol 1e-13) on an INDEPENDENT "
+        "reconstruction of the model, not by spong's own certified "
+        "machinery -- reconfirm before promoting this to a WallFamily.  "
+        "Found by random search in the interactive explorer."
+    ),
+)
+
+
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
+    NEAR_SLIDE_D2.name: NEAR_SLIDE_D2,
     MINIMAL_QUARTET.name: MINIMAL_QUARTET,
     TRICKY_D11.name: TRICKY_D11,
     LINEAR_TARGET_D17_THRASH.name: LINEAR_TARGET_D17_THRASH,

@@ -42,6 +42,42 @@ from contextlib import contextmanager
 from . import charts
 
 
+# ------------------------------------------------------------------ #
+# native core availability
+# ------------------------------------------------------------------ #
+# The C core is imported lazily by charts, which falls back to the
+# reference implementation if the import fails (interpreter or ABI skew).
+# That fallback must never be silent -- it costs far more than speed --
+# so the probe is done once here, the reason is kept for banners, and a
+# request for the native engine that cannot be honoured says so on stderr.
+
+def _probe_native():
+    try:
+        from . import _native
+    except ImportError as exc:
+        return f"import failed: {exc}"
+    if not hasattr(_native, "continue_curve"):
+        return ("loaded, but continue_curve is missing -- stale build; "
+                "run pip install -e . --no-build-isolation")
+    return None
+
+
+_NATIVE_ERROR = _probe_native()
+
+
+def native_error():
+    """None if the C core is importable and complete, else the reason."""
+    return _NATIVE_ERROR
+
+
+def _warn_if_unhonoured(name):
+    if name == "native" and _NATIVE_ERROR is not None:
+        import sys
+        print("spong.engine: native engine requested but the C core is "
+              f"unavailable ({_NATIVE_ERROR}); traces will run on the "
+              "python reference implementation", file=sys.stderr)
+
+
 class PythonEngine:
     """The reference continuation engine: charts + gauss, pure Python."""
 
@@ -73,6 +109,7 @@ class NativeEngine(PythonEngine):
 
 _ENGINES = {e.name: e for e in (PythonEngine, NativeEngine)}
 _active = _ENGINES.get(os.environ.get("SPONG_ENGINE", "python"), PythonEngine)
+_warn_if_unhonoured(_active.name)
 
 
 def current():
@@ -94,6 +131,7 @@ def use(name: str):
     if name not in _ENGINES:
         raise ValueError(
             f"unknown engine {name!r}; have {', '.join(available())}")
+    _warn_if_unhonoured(name)
     _active = _ENGINES[name]
     return _active
 

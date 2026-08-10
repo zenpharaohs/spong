@@ -33,8 +33,18 @@ they mean different things.  Drift on a rewrite is expected; a break is not.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
+
+# The reference (python) engine is the skeptic's tool, not the routine
+# configuration: a check asserts what portraits claim, and the two engines
+# are pinned to agree at every tier (step parity, segment corpus, portrait
+# goldens, sampling qualification).  Default to the fast configuration; an
+# explicit SPONG_ENGINE=python still selects the oracle, and the engine
+# line printed at startup reports which one actually ran.
+os.environ.setdefault("SPONG_ENGINE", "native")
+os.environ.setdefault("SPONG_WORKERS", str(os.cpu_count() or 1))
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -198,21 +208,26 @@ def names(argv) -> list[str]:
 
 
 def do_freeze(argv) -> int:
+    import time
     GOLDEN.mkdir(parents=True, exist_ok=True)
     for name in names(argv):
+        print(f"{name:<38s} computing…", flush=True)
+        t0 = time.perf_counter()
         data = capture(name)
+        elapsed = time.perf_counter() - t0
         path = GOLDEN / f"{name}.json"
         path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
         en = data["enumeration"]
         print(f"froze {name:<38s} {en['n_critical']} crit "
               f"({en['n_min']}m/{en['n_saddle']}s), "
               f"{len(data['branches'])} branches, "
-              f"topology={data['topology']['status']}")
+              f"topology={data['topology']['status']}  ({elapsed:.1f}s)")
     print(f"\n{len(names(argv))} goldens in {GOLDEN}")
     return 0
 
 
 def do_check(argv) -> int:
+    import time
     bad = 0
     for name in names(argv):
         path = GOLDEN / f"{name}.json"
@@ -220,15 +235,22 @@ def do_check(argv) -> int:
             print(f"{name:<38s} NO GOLDEN — run freeze first")
             bad += 1
             continue
+        print(f"{name:<38s} computing…", flush=True)
+        t0 = time.perf_counter()
         deltas = diff(json.loads(path.read_text()), capture(name))
+        elapsed = time.perf_counter() - t0
         breaks = [d for d in deltas if d[0] == "BREAK"]
         drifts = [d for d in deltas if d[0] == "DRIFT"]
         if not deltas:
-            print(f"{name:<38s} ok")
+            print(f"{name:<38s} ok  ({elapsed:.1f}s)")
             continue
         bad += bool(breaks)
-        print(f"{name:<38s} {len(breaks)} break, {len(drifts)} drift")
-        for kind, where, a, b in deltas[:40]:
+        print(f"{name:<38s} {len(breaks)} break, {len(drifts)} drift"
+              f"  ({elapsed:.1f}s)")
+        # BREAKs first: the verdict-bearing lines (.topology.status,
+        # resolution_reason, geometry_level) sort after .branches and were
+        # being pushed past the display cap by branch-level drift.
+        for kind, where, a, b in (breaks + drifts)[:40]:
             print(f"    {kind:<5s} {where}\n          was {a}\n          now {b}")
         if len(deltas) > 40:
             print(f"    … {len(deltas) - 40} more")
@@ -242,8 +264,13 @@ def main() -> int:
         return 2
     try:
         from spong import engine
-        print(f"engine: {engine.active_name()}"
-              f"{'' if engine.current().is_native else '  (python implementation)'}")
+        reason = engine.native_error()
+        if engine.active_name() == "native":
+            print("engine: native (C core)" if reason is None else
+                  "engine: native requested, C core UNAVAILABLE — "
+                  f"python fallback ({reason})")
+        else:
+            print("engine: python (reference implementation)")
     except ImportError:
         pass
     return (do_freeze if sys.argv[1] == "freeze" else do_check)(sys.argv[2:])

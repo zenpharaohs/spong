@@ -12,10 +12,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from math import comb, hypot
+import os
+import sys
+import threading
 
 import numpy as np
 
 from . import _poly as P
+from . import merge_tree
 from . import sturm
 
 
@@ -350,8 +354,34 @@ def sublevel_component_minima(m, enumeration, point):
             if inventory["certified"] else list(enumeration.minima))
 
 
-def _strict_level_at_float_point(m, point, above):
-    """Exact level just above/below the loss at a binary64 point."""
+_TUBE_LOG_LOCK = threading.Lock()
+
+
+def _tube_log(line):
+    """Append one line to the exact_tube_at instrumentation log.
+
+    Enabled by SPONG_TUBE_LOG: a file path to append to, or "stderr".  Read
+    at call time so a probe script can set it after import.  Whole lines are
+    written under a lock so concurrent audit workers cannot interleave
+    within a line.  Logging only: no certified value depends on this.
+    """
+    path = os.environ.get("SPONG_TUBE_LOG")
+    if not path:
+        return
+    with _TUBE_LOG_LOCK:
+        if path == "stderr":
+            print(line, file=sys.stderr, flush=True)
+        else:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+
+
+def _strict_level_terms(m, point, shift=48):
+    """The exact loss at a binary64 point, and the strictness slack.
+
+    ``shift`` sets the slack to scale/2**shift; the default reproduces the
+    historical strict level bit for bit.
+    """
     a, b = (Fraction.from_float(float(x)) for x in point)
     A = P.eval_at(m.alpha, b)
     B = P.eval_at(m.beta, b)
@@ -359,7 +389,12 @@ def _strict_level_at_float_point(m, point, above):
     # The scale excludes the additive loss constant: level-set geometry and
     # every admission decision must be invariant under L -> L+constant.
     scale = abs(A)*(1+a*a)+2*abs(a*B)+abs(B)
-    slack = scale/2**48
+    return level, scale/2**shift
+
+
+def _strict_level_at_float_point(m, point, above, shift=48):
+    """Exact level just above/below the loss at a binary64 point."""
+    level, slack = _strict_level_terms(m, point, shift)
     return level+slack if above else level-slack
 
 
@@ -371,7 +406,7 @@ def _finite_float_or_none(value):
     return result if np.isfinite(result) else None
 
 
-def _sublevel_component_inventory(m, enumeration, point):
+def _sublevel_component_inventory(m, enumeration, point, slack_shift=48):
     """Exact inventory of the strict sublevel component containing ``point``.
 
     The measured binary64 point is treated as an exact dyadic point.  We use
@@ -385,10 +420,18 @@ def _sublevel_component_inventory(m, enumeration, point):
     exactly one end names a unique finite-plane end.  Critical isolating
     intervals must lie wholly inside or outside the component; an overlap
     makes the certificate decline rather than guess.
+
+    ``slack_shift`` sets the strictness slack to scale/2**slack_shift; 48 is
+    the historical default.  Near an asymptotically flat valley the default
+    slack can exceed the whole window between the orbit's loss and the
+    backbone ceiling u_infinity, inflating the level past every merging
+    saddle.  Any positive slack keeps membership strict, so every shift is
+    sound; a caller may pass a larger shift to test a tighter level.
     """
     try:
         bq = Fraction.from_float(float(point[1]))
-        c = _strict_level_at_float_point(m, point, above=True)
+        c = _strict_level_at_float_point(
+            m, point, above=True, shift=slack_shift)
         level_poly = P.sub(
             P.scale(m.alpha, m.C-c), P.mul(m.beta, m.beta))
         roots = [
@@ -573,9 +616,65 @@ def _backbone_level_at_infinity(m):
     return float(m.C - Fraction(B[-1] * B[-1], 1) / A[-1])
 
 
+# Slack ladder for the capture tube.  Measured on the directed dead-neuron
+# refusals (tube_probe, 2026-08-09): the admissible window between the
+# orbit's exact loss and the u_infinity ceiling was ~5.6e-10 while the
+# default slack scale/2^48 reached 1.5e16 at b = -10240 -- the tested level
+# cleared every merging ceiling at every index, so the bounded-component
+# precondition was unsatisfiable however far the bisection searched.
+# Descending the ladder only shrinks the component, and each rung's level is
+# independently verified downstream, so deeper rungs are sound.  The first
+# rung is the historical default, so every portrait that certifies today is
+# reproduced bit for bit at unchanged cost.
+_TUBE_SLACK_SHIFTS = (48, 80, 112, 144, 176, 208)
+
+
+def _first_index_below(m, branch, level, last):
+    """Earliest sample whose EXACT loss is below the level.
+
+    L decreases along a descent orbit, so this is where the certified
+    sublevel suffix begins.  Each probe is one Fraction comparison and no
+    Sturm work at all, which is why the merge-tree route can afford the
+    same bisection the slack ladder had to pay a component inventory for.
+    """
+    def below(index):
+        return merge_tree.exact_loss(
+            m, float(branch.Y[index, 0]), float(branch.Y[index, 1])) < level
+
+    if not below(last):
+        return last
+    lo, hi = 0, last
+    while lo < hi:
+        mid = (lo+hi)//2
+        if below(mid):
+            hi = mid
+        else:
+            lo = mid+1
+    return lo
+
+
 def _capture_certificate(m, enumeration, branch, allowed_radius,
-                         basin_radii):
-    """Find a pre-connector point in a one-minimum bounded sublevel tube."""
+                         basin_radii, tree=None):
+    """Certify capture into the target minimum.
+
+    PRIMARY ROUTE: the exact merge tree of the backbone loss.  Its levels
+    are RATIONAL and chosen once per portrait from the enumeration alone,
+    so the orbit is only ever COMPARED against them -- no strictness slack
+    is manufactured from a floating sample, and the flat-valley failure
+    that made every level clear its merging saddle cannot arise.  Once the
+    terminal sample lies in a bounded component holding one minimum and no
+    saddle, forward invariance decides the fate outright.
+
+    The slack ladder below is retained for now only as a fallback, and is
+    expected to be dead: separating levels sit between consecutive distinct
+    critical values, so any point that has descended below its target's
+    merging saddle already lies in a component holding that minimum alone.
+    It is kept until a run measures that it never fires -- this repo
+    removes code on measurements, not on arguments.  The same applies to
+    the strictly-convex ball, which is probably but not provably dominated
+    (its radius comes from critical-point separation and is not tied to the
+    level gaps).
+    """
     target = branch.diag.get("target")
     if branch.term != "capture" or target is None or len(branch.Y) < 2:
         return {"certified": False, "reason": "missing_capture_target"}
@@ -589,6 +688,34 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
         (float(minimum.a), float(minimum.b)), 0.0))
     last = len(branch.Y)-2
 
+    if minimum is not None and tree is not None:
+        # The WIDEST forcing level, not the tightest.  Both certify the same
+        # fate; only the widest gives an early enough entry index for the
+        # contact scan to discharge the approach (measured: the tightest
+        # level put the suffix start within a few samples of the end of a
+        # 24000-sample branch and left 120 undischarged contacts).
+        widest = merge_tree.widest_forcing_component(
+            m, enumeration, tree,
+            float(branch.Y[last, 0]), float(branch.Y[last, 1]))
+        if widest is not None:
+            level, component = widest
+            contained = enumeration.points[component.minima[0]]
+            if _target_matches((contained.a, contained.b), target,
+                               allowed_radius):
+                low, high = component.lo, component.hi
+                return {
+                    "certified": True,
+                    "reason": None,
+                    "method": "exact_merge_tree",
+                    "entry_index": _first_index_below(
+                        m, branch, level, last),
+                    "minimum": (float(contained.a), float(contained.b)),
+                    "level_upper": _finite_float_or_none(level),
+                    "b_interval": (
+                        None if low is None else _finite_float_or_none(low),
+                        None if high is None else _finite_float_or_none(high)),
+                }
+
     def first_true(predicate):
         if not predicate(last):
             return None
@@ -601,25 +728,91 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
                 lo = mid+1
         return lo
 
-    def exact_tube_at(index):
+    tube_tag = (f"target=({float(target[0]):.6g},{float(target[1]):.6g})"
+                f" saddle_b={branch.diag.get('saddle_b')}")
+
+    def _tube_rung(index, shift):
+        """One rung: 'success'|'hopeless'|'mismatch'|'declined' (+ cert)."""
         inventory = _sublevel_component_inventory(
-            m, enumeration, branch.Y[index])
-        if (inventory["certified"] and inventory["bounded"]
-                and not inventory["saddles"]
-                and len(inventory["minima"]) == 1):
-            contained = inventory["minima"][0]
-            if _target_matches(
-                    (contained.a, contained.b), target, allowed_radius):
-                return {
-                    "certified": True,
-                    "reason": None,
-                    "method": "exact_level_tube",
-                    "entry_index": index,
-                    "minimum": (float(contained.a), float(contained.b)),
-                    "level_upper": inventory["level_upper"],
-                    "b_interval": (inventory["left_boundary"],
-                                   inventory["right_boundary"]),
-                }
+            m, enumeration, branch.Y[index], slack_shift=shift)
+        tube_certified = bool(inventory["certified"])
+        tube_bounded = bool(inventory.get("bounded", False))
+        saddle_count = len(inventory.get("saddles", ()))
+        minima_count = len(inventory.get("minima", ()))
+        if os.environ.get("SPONG_TUBE_LOG"):
+            point = branch.Y[index]
+            level, slack = _strict_level_terms(m, point, shift)
+            _tube_log(
+                f"exact_tube_at {tube_tag} index={index} shift={shift}"
+                f" a={float(point[0])!r} b={float(point[1])!r}"
+                f" L_fp64={float(m.L(float(point[0]), float(point[1])))!r}"
+                f" L_exact={_finite_float_or_none(level)!r}"
+                f" slack={_finite_float_or_none(slack)!r}"
+                f" level_upper={inventory.get('level_upper')!r}"
+                f" certified={tube_certified}"
+                f" reason={inventory.get('reason')!r}"
+                f" bounded={tube_bounded}"
+                f" saddles={saddle_count} minima={minima_count}")
+        if not tube_certified:
+            return "declined", None
+        if not (tube_bounded and saddle_count == 0 and minima_count == 1):
+            return "hopeless", None
+        contained = inventory["minima"][0]
+        matched = _target_matches(
+            (contained.a, contained.b), target, allowed_radius)
+        if not matched:
+            if os.environ.get("SPONG_TUBE_LOG"):
+                _tube_log(
+                    f"exact_tube_at {tube_tag} index={index}"
+                    f" shift={shift} all_four_hold_but_target_mismatch"
+                    f" minimum=({float(contained.a)!r},"
+                    f"{float(contained.b)!r})")
+            return "mismatch", None
+        certificate = {
+            "certified": True,
+            "reason": None,
+            "method": "exact_level_tube",
+            "entry_index": index,
+            "minimum": (float(contained.a), float(contained.b)),
+            "level_upper": inventory["level_upper"],
+            "b_interval": (inventory["left_boundary"],
+                           inventory["right_boundary"]),
+        }
+        if shift != _TUBE_SLACK_SHIFTS[0]:
+            # Recorded only off the first rung so that portraits which
+            # already certified are ledger-identical.
+            certificate["slack_shift"] = shift
+        return "success", certificate
+
+    def exact_tube_at(index):
+        # Rung 48 first: an index that certified before the ladder takes
+        # exactly the same single inventory and returns the same
+        # certificate.  A mismatch is final at any rung: a deeper
+        # component is a subset holding the same single wrong minimum,
+        # and a shallower one can only add minima.
+        kind, certificate = _tube_rung(index, _TUBE_SLACK_SHIFTS[0])
+        if kind == "success":
+            return certificate
+        if kind == "mismatch":
+            return None
+        # Then walk from the DEEPEST rung upward to the first certified
+        # inventory; component monotonicity (smaller slack => the
+        # component shrinks, so boundedness can only improve and the
+        # critical counts can only fall) makes its verdict total:
+        # hopeless there means every shallower rung is at least as
+        # obstructed, and every deeper rung already declined.  Measured
+        # motive: the shallow-to-deep ladder spent six expensive
+        # inventories at every monotonically hopeless bisection index --
+        # ruinous where one inventory is ~18 thread-seconds (d17) -- and
+        # this bounds a hopeless index at two.  level_root_overlap at
+        # deep rungs is real (measured), which is why the walk continues
+        # upward through declined rungs instead of concluding from one.
+        for shift in reversed(_TUBE_SLACK_SHIFTS[1:]):
+            kind, certificate = _tube_rung(index, shift)
+            if kind == "success":
+                return certificate
+            if kind in ("hopeless", "mismatch"):
+                return None
         return None
 
     # Find the earliest measured point, after the independently certified
@@ -668,7 +861,16 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
                     float(branch.Y[index, 0]),
                     float(branch.Y[index, 1]))) < threshold
 
-            if below_merging_level(last):
+            gate = below_merging_level(last)
+            if os.environ.get("SPONG_TUBE_LOG"):
+                _tube_log(
+                    f"capture_search {tube_tag} last={last} lower={lower}"
+                    f" L_minimum={minimum_level!r}"
+                    f" threshold={float(threshold)!r}"
+                    f" u_infinity={u_infinity!r}"
+                    f" ceilings={len(saddle_levels)}"
+                    f" gate_below_merging_at_last={gate}")
+            if gate:
                 lo, hi = lower, last
                 while lo < hi:
                     mid = (lo+hi)//2
@@ -851,25 +1053,57 @@ def _unstable_escape_certificate(m, enumeration, branch, box,
         return {"certified": False, "reason": "no_box_boundary_crossing"}
     last = len(branch.Y)-1
 
-    def certificate_at(index):
+    def _escape_rung(index, shift):
+        """One rung: 'success'|'hopeless'|'declined' for the one-end tube."""
         inventory = _sublevel_component_inventory(
-            m, enumeration, branch.Y[index])
+            m, enumeration, branch.Y[index], slack_shift=shift)
         if not inventory["certified"]:
-            return None
+            return "declined", None
         if inventory["minima"] or inventory["saddles"]:
-            return None
-        if len(inventory["unbounded_sides"]) != 1:
-            return None
-        return {
+            # Critical counts only fall with depth, so any critical point
+            # at the first certified rung of a deep-first walk is present
+            # at every shallower rung too.
+            return "hopeless", None
+        sides = inventory["unbounded_sides"]
+        if len(sides) != 1:
+            # An end open at a smaller level is open at every larger one,
+            # so two open ends here persist at every shallower rung; zero
+            # open ends with zero minima cannot certify (it would violate
+            # #min = #saddle + 1 on a bounded component).
+            return "hopeless", None
+        certificate = {
             "certified": True,
             "reason": None,
             "method": "exact_sublevel_tube",
             "entry_index": index,
-            "end": inventory["unbounded_sides"][0],
+            "end": sides[0],
             "level_upper": inventory["level_upper"],
             "b_interval": (inventory["left_boundary"],
                            inventory["right_boundary"]),
         }
+        if shift != _TUBE_SLACK_SHIFTS[0]:
+            # Recorded only off the first rung so pre-ladder certificates
+            # are ledger-identical.
+            certificate["slack_shift"] = shift
+        return "success", certificate
+
+    def certificate_at(index):
+        # Same rung discipline as the capture tube: the historical rung
+        # first, then deep-first to the first certified inventory, whose
+        # verdict is total by component monotonicity.  Measured motive
+        # (fate_probe on tricky-d11 and the directed models): clean
+        # one-end zero-minimum components EXIST at the escape points at
+        # rungs 112-208 while rung 48's slack swallows the landscape --
+        # and each rung success here replaces a degree-4*degA far-field
+        # funnel construction with a degree-2*degg inventory.
+        kind, certificate = _escape_rung(index, _TUBE_SLACK_SHIFTS[0])
+        if kind == "success":
+            return certificate
+        for shift in reversed(_TUBE_SLACK_SHIFTS[1:]):
+            kind, certificate = _escape_rung(index, shift)
+            if kind != "declined":
+                return certificate       # success cert, or None on hopeless
+        return None
 
     # Begin no earlier than the separately certified local graph.  A global
     # ``below every critical value`` locator is too conservative here: an
@@ -1178,6 +1412,16 @@ def audit(m, enumeration, branches, box) -> dict:
     critical = np.asarray([(p.a, p.b) for p in enumeration.points])
     allowed_radius = max(1024*np.finfo(float).eps*scale, 1e-11)
     basin_radii = _minimum_basin_radii(m, enumeration)
+    # ONE merge tree per portrait, shared by every branch.  Its levels are
+    # rational and derived from the enumeration alone, so nothing in it
+    # depends on which branch asks; building it per branch would repeat
+    # about a second of exact work sixteen times on tricky-d11.  A failure
+    # here is not fatal -- the endpoint certificates fall back to their own
+    # search -- so it must not take the audit down with it.
+    try:
+        level_tree = merge_tree.build(m, enumeration)
+    except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError):
+        level_tree = None
 
     # The endpoint certificates are ~97% of an audit (measured on tricky-d11:
     # capture 16.4s, stable escape 6.6s, unstable escape 0.8s, of 24.6s), and
@@ -1192,7 +1436,8 @@ def audit(m, enumeration, branches, box) -> dict:
         if branch.kind == "unstable":
             if branch.term == "capture":
                 certificate = _capture_certificate(
-                    m, enumeration, branch, allowed_radius, basin_radii)
+                    m, enumeration, branch, allowed_radius, basin_radii,
+                    level_tree)
                 kind = "finite_capture"
             elif branch.term == "box_exit":
                 certificate = _unstable_escape_certificate(
