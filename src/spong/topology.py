@@ -207,6 +207,27 @@ def _native_contact_available():
     return hasattr(_native, "ContactScan")
 
 
+# A branch that ran out of STEP BUDGET is not a failed branch: its sampled
+# points are as good as any others, the continuation simply stopped early.
+# That matters for STABLE branches in particular, because their escape
+# witness is INTERIOR -- an exact loss above every finite critical value
+# already proves the ascent orbit can never reach a critical point, hence is
+# unbounded -- so a truncated stable trace supports the certificate exactly as
+# a complete one does.  A genuinely broken continuation (nonfinite, step
+# failure, chart failure) is different: those curves are not trustworthy
+# representations at all and keep aborting the audit as before.  Unstable
+# branches also keep aborting, since a truncated descent genuinely does not
+# know its fate.
+_STEP_BUDGET_TERMS = ("abort_max_steps",)
+
+
+def _representable(branch):
+    """Whether this branch is a usable representation of its manifold."""
+    if branch.term in ("capture", "box_exit"):
+        return True
+    return branch.term in _STEP_BUDGET_TERMS
+
+
 def _topology_decision_python(
         saddle_count, branch_count, stable_count, unstable_count,
         segment_count, segment_budget, raw_event_count, raw_event_budget,
@@ -811,15 +832,19 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
     and is no longer read here.
     """
     target = branch.diag.get("target")
-    if branch.term != "capture" or target is None or len(branch.Y) < 2:
+    if len(branch.Y) < 2 or not (
+            branch.term == "capture"
+            or branch.term in _STEP_BUDGET_TERMS):
         return {"certified": False, "reason": "missing_capture_target"}
     # Y[-1] is the exact critical endpoint appended after event detection.
     # It is useful for drawing but cannot prove that continuation entered the
-    # basin.  Search only measured points preceding that connector.
+    # basin.  Search only measured points preceding that connector.  A branch
+    # that merely ran out of budget has no such connector, so its last sample
+    # is a measured one and must not be discarded.
     matching = [q for q in enumeration.minima if _target_matches(
-        (q.a, q.b), target, allowed_radius)]
+        (q.a, q.b), target, allowed_radius)] if target is not None else []
     minimum = matching[0] if len(matching) == 1 else None
-    last = len(branch.Y)-2
+    last = len(branch.Y)-2 if branch.term == "capture" else len(branch.Y)-1
     if tree is None:
         # Direct callers (tests, probes) need not thread a tree through.
         # Building it here costs one portrait's worth of exact work and
@@ -830,20 +855,28 @@ def _capture_certificate(m, enumeration, branch, allowed_radius,
                 ZeroDivisionError):
             return {"certified": False, "reason": "merge_tree_unavailable"}
 
-    if minimum is not None:
+    if minimum is not None or target is None:
         # The WIDEST forcing level, not the tightest.  Both certify the same
         # fate; only the widest gives an early enough entry index for the
         # contact scan to discharge the approach (measured: the tightest
         # level put the suffix start within a few samples of the end of a
         # 24000-sample branch and left 120 undischarged contacts).
+        #
+        # When the trace carries no target of its own, the merge tree SUPPLIES
+        # one rather than the certificate declining.  `target` was only ever a
+        # cross-check on the tracer's claim about where it landed; the
+        # component is what actually decides the fate, and it needs the orbit
+        # to be INSIDE it, not to have arrived anywhere.  Nearest-minimum
+        # proximity is the weakest thing in this file and should not gate the
+        # strongest.
         widest = merge_tree.widest_forcing_component(
             m, enumeration, tree,
             float(branch.Y[last, 0]), float(branch.Y[last, 1]))
         if widest is not None:
             level, component = widest
             contained = enumeration.points[component.minima[0]]
-            if _target_matches((contained.a, contained.b), target,
-                               allowed_radius):
+            if target is None or _target_matches(
+                    (contained.a, contained.b), target, allowed_radius):
                 low, high = component.lo, component.hi
                 return {
                     "certified": True,
@@ -1205,9 +1238,14 @@ def _sign_at_critical_point(m, point, polynomial):
 def _stable_escape_certificate(m, enumeration, branch, box,
                                boundary_tolerance):
     """Certify ascent beyond every finite critical level and out of the box."""
-    if branch.kind != "stable" or branch.term != "box_exit":
-        return {"certified": False, "reason": "not_stable_box_exit"}
-    if not _box_exit_crossing(branch.Y, box, boundary_tolerance):
+    if branch.kind != "stable" or not _representable(branch):
+        return {"certified": False, "reason": "not_stable_representable"}
+    # The box plays no part in the witness below: the level bar is decided by
+    # the EXACT loss at a traced point, not by where the curve stopped.  Demand
+    # a genuine crossing only when the branch claims to have made one, so that
+    # a step-budget truncation is judged on the evidence it does have.
+    if (branch.term == "box_exit"
+            and not _box_exit_crossing(branch.Y, box, boundary_tolerance)):
         return {"certified": False, "reason": "no_box_boundary_crossing"}
     cache = {}
 
@@ -1232,7 +1270,8 @@ def _stable_escape_certificate(m, enumeration, branch, box,
                 "method": "exact_superlevel_product",
                 "entry_index": index,
                 "level_lower": _finite_float_or_none(lower),
-                "exit_side": _exit_side(branch.Y[-1], box),
+                "exit_side": (_exit_side(branch.Y[-1], box)
+                              if branch.term == "box_exit" else None),
             }
         else:
             result = None
@@ -1303,8 +1342,19 @@ def _box_exit_crossing(curve, box, tolerance):
     return False
 
 
-def audit(m, enumeration, branches, box) -> dict:
-    """Return an independent topology/FP64 certificate for a portrait."""
+def audit(m, enumeration, branches, box,
+          pair_contact_policy: str = "order_sweep") -> dict:
+    """Return an independent topology/FP64 certificate for a portrait.
+
+    ``order_sweep`` is the production pair classifier.  ``chord`` preserves
+    the former sampled-chord verdict, while ``order_sweep_shadow`` records
+    order evidence without changing that chord verdict.  Self-contacts and
+    all endpoint certificates retain their established rules in every mode.
+    """
+    policies = {"chord", "order_sweep_shadow", "order_sweep"}
+    if pair_contact_policy not in policies:
+        raise ValueError(
+            f"unknown pair contact policy {pair_contact_policy!r}")
     scale = max(1.0, *(abs(x) for x in box))
     predicate_tol = 128*np.finfo(float).eps*scale
     segment_count = sum(max(0, len(br.Y)-1) for br in branches)
@@ -1313,7 +1363,7 @@ def audit(m, enumeration, branches, box) -> dict:
     observed_stable = sum(br.kind == "stable" for br in branches)
     observed_unstable = sum(br.kind == "unstable" for br in branches)
     aborted = [i for i, br in enumerate(branches)
-               if br.term not in ("capture", "box_exit")]
+               if not _representable(br)]
     initial_decision = _topology_decision(
         len(enumeration.saddles), len(branches),
         observed_stable, observed_unstable,
@@ -1344,7 +1394,7 @@ def audit(m, enumeration, branches, box) -> dict:
             "branch": i, "kind": "incomplete", "certified": False,
             "reason": "branch_set_incomplete",
         } for i, br in enumerate(branches) if br.kind == "unstable"]
-        return {
+        result = {
             "status": "fp64_unresolved",
             "audit_complete": initial_decision["audit_complete"],
             "resolution_reason": initial_decision["reason"],
@@ -1355,6 +1405,7 @@ def audit(m, enumeration, branches, box) -> dict:
             "raw_event_count": 0,
             "raw_event_budget": raw_event_budget,
             "event_sample_limit": 256,
+            "pair_contact_policy": pair_contact_policy,
             "forbidden_count": 0,
             "ambiguous_count": 0,
             "predicate_tolerance": float(predicate_tol),
@@ -1367,6 +1418,17 @@ def audit(m, enumeration, branches, box) -> dict:
             "unstable_ends": unstable_ends,
             "stable_tails": stable_tails,
         }
+        if pair_contact_policy != "chord":
+            result["pair_order_sweep"] = {
+                "method": "loss_level_order_sweep",
+                "policy": pair_contact_policy,
+                "decision": "not_run",
+                "reason": "branch_set_incomplete",
+                "candidates": 0, "roots": 0, "same_order": 0,
+                "terminal": 0, "critical_transition": 0,
+                "unresolved": 0, "pairs": [],
+            }
+        return result
     budget_exceeded = segment_count > segment_budget
     native_contacts = _native_contact_available()
     trees = ([] if budget_exceeded or native_contacts else
@@ -1410,6 +1472,19 @@ def audit(m, enumeration, branches, box) -> dict:
                     m, enumeration, branch, box, 16*predicate_tol,
                     level_tree)
                 kind = "infinity_escape"
+            elif branch.term in _STEP_BUDGET_TERMS:
+                # branch.term must not SELECT the certificate.  A branch that
+                # merely ran out of step budget was heading somewhere, and the
+                # merge-tree capture witness is INTERIOR -- it decides from a
+                # traced sample below a separating level, not from arrival at
+                # the minimum -- so offer that witness rather than refusing on
+                # the trace's own bookkeeping.  If the truncated trace never
+                # reached a deciding level the certificate declines on its own
+                # evidence, which is the honest outcome.
+                certificate = _capture_certificate(
+                    m, enumeration, branch, allowed_radius, basin_radii,
+                    level_tree)
+                kind = "finite_capture"
             else:
                 certificate = {"certified": False,
                                "reason": "incomplete_unstable_branch"}
@@ -1478,6 +1553,7 @@ def audit(m, enumeration, branches, box) -> dict:
     event_budget_exceeded = False
     forbidden, ambiguous = [], []
     forbidden_count = ambiguous_count = 0
+    sweep_reports = []
 
     def record(item, kind):
         nonlocal forbidden_count, ambiguous_count
@@ -1534,6 +1610,7 @@ def audit(m, enumeration, branches, box) -> dict:
     for i in range(0 if budget_exceeded or event_budget_exceeded
                    else len(branches)):
         for j in range(i+1, len(branches)):
+            pair_items = []
             events = _pair_contact_events(
                 np.asarray(branches[i].Y),
                 None if native_contacts else trees[i],
@@ -1576,6 +1653,11 @@ def audit(m, enumeration, branches, box) -> dict:
                 same_completed_stable_exterior = (
                     ti["kind"] == tj["kind"] == "stable_infinity"
                     and ti["start"] is not None and tj["start"] is not None
+                    # A truncated stable branch has no exit side.  Two of them
+                    # would both carry None and compare equal, which would
+                    # silently discharge their mutual contacts on evidence
+                    # neither one has.  Require a real, matching side.
+                    and ti["side"] is not None
                     and ti["side"] == tj["side"]
                     and si >= ti["start"] and sj >= tj["start"])
                 same_completed_unstable_exterior = (
@@ -1605,7 +1687,52 @@ def audit(m, enumeration, branches, box) -> dict:
                     break
                 item = {"branches": (i, j), "segments": (si, sj),
                         "kind": kind, "point": point}
-                record(item, kind)
+                if pair_contact_policy == "chord":
+                    record(item, kind)
+                else:
+                    pair_items.append(item)
+            if pair_items:
+                from . import order_sweep
+                try:
+                    pair_result = order_sweep.classify_contacts(
+                        m, enumeration, branches, pair_items,
+                        predicate_tol,
+                        terminal_suffixes=terminal_suffixes)
+                except (ArithmeticError, FloatingPointError, OverflowError,
+                        TypeError, ValueError) as exc:
+                    pair_result = {
+                        "method": "loss_level_order_sweep",
+                        "decision": "unresolved",
+                        "threshold": 4.0,
+                        "candidates": len(pair_items), "roots": 0,
+                        "same_order": 0, "terminal": 0,
+                        "critical_transition": 0,
+                        "unresolved": len(pair_items),
+                        "pairs": [{
+                            "branches": (i, j),
+                            "candidate_count": len(pair_items),
+                            "root_count": 0, "roots": [],
+                            "same_order_count": 0,
+                            "terminal_count": 0,
+                            "critical_transition_count": 0,
+                            "unresolved_count": len(pair_items),
+                            "event_classes": (
+                                ["unresolved"]*len(pair_items)),
+                        }],
+                        "error": type(exc).__name__,
+                    }
+                sweep_reports.append(pair_result)
+                classes = pair_result["pairs"][0]["event_classes"]
+                if pair_contact_policy == "order_sweep_shadow":
+                    for item in pair_items:
+                        record(item, item["kind"])
+                else:
+                    for item, classification in zip(pair_items, classes):
+                        if classification == "resolved_root":
+                            record(item, "cross")
+                        elif classification in (
+                                "unresolved", "critical_transition"):
+                            record(item, item["kind"])
             if event_budget_exceeded:
                 break
         if event_budget_exceeded:
@@ -1640,7 +1767,7 @@ def audit(m, enumeration, branches, box) -> dict:
     # The inventory in the returned ledger is the same native decision used
     # for the terminal status, not a separately reimplemented frontend rule.
     branch_inventory["certified"] = decision["branch_inventory_certified"]
-    return {
+    result = {
         "status": ("certified" if decision["certified"]
                    else "fp64_unresolved"),
         "audit_complete": decision["audit_complete"],
@@ -1651,6 +1778,7 @@ def audit(m, enumeration, branches, box) -> dict:
         "raw_event_count": raw_event_count,
         "raw_event_budget": raw_event_budget,
         "event_sample_limit": event_sample_limit,
+        "pair_contact_policy": pair_contact_policy,
         "forbidden_count": forbidden_count,
         "ambiguous_count": ambiguous_count,
         "predicate_tolerance": float(predicate_tol),
@@ -1665,3 +1793,30 @@ def audit(m, enumeration, branches, box) -> dict:
         "unstable_ends": unstable_ends,
         "stable_tails": stable_tails,
     }
+    if pair_contact_policy != "chord":
+        sweep_totals = {
+            key: sum(report[key] for report in sweep_reports)
+            for key in ("candidates", "roots", "same_order", "terminal",
+                        "critical_transition", "unresolved")}
+        sweep_complete = not budget_exceeded and not event_budget_exceeded
+        sweep_decision = (
+            "unresolved" if not sweep_complete else
+            "fault" if sweep_totals["roots"] else
+            "unresolved" if (sweep_totals["unresolved"]
+                             or sweep_totals["critical_transition"])
+            else "accepted")
+        result["pair_order_sweep"] = {
+            "method": "loss_level_order_sweep",
+            "policy": pair_contact_policy,
+            "decision": sweep_decision,
+            "complete": sweep_complete,
+            "incomplete_reason": (
+                "segment_budget" if budget_exceeded else
+                "event_budget" if event_budget_exceeded else None),
+            **sweep_totals,
+            "pairs": [pair for report in sweep_reports
+                      for pair in report["pairs"]],
+            "errors": [report["error"] for report in sweep_reports
+                       if "error" in report],
+        }
+    return result

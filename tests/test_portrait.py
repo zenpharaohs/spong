@@ -82,6 +82,45 @@ def test_render_svg(tricky_portrait, tmp_path):
     assert (tmp_path / "p.svg").stat().st_size > 10000
 
 
+def test_critical_glyphs_use_equal_size_circle_and_diamond_pairs(
+        tricky_portrait, monkeypatch):
+    circles, diamonds, triangles = [], [], []
+    original_circle = render._SVG.circle
+    original_diamond = render._SVG.diamond
+    original_triangle = render._SVG.triangle
+
+    def circle(self, x, y, r, fill, stroke="white", sw=1.2):
+        circles.append((r, fill, stroke))
+        return original_circle(self, x, y, r, fill, stroke, sw)
+
+    def diamond(self, x, y, r, stroke, sw=1.6, fill="white"):
+        diamonds.append((r, fill, stroke))
+        return original_diamond(self, x, y, r, stroke, sw, fill)
+
+    def triangle(self, x, y, r, fill, stroke="white", sw=1.2):
+        triangles.append((r, fill, stroke))
+        return original_triangle(self, x, y, r, fill, stroke, sw)
+
+    monkeypatch.setattr(render._SVG, "circle", circle)
+    monkeypatch.setattr(render._SVG, "diamond", diamond)
+    monkeypatch.setattr(render._SVG, "triangle", triangle)
+    render.plane_view(tricky_portrait)
+
+    view = tuple(tricky_portrait.view or tricky_portrait.box)
+    visible = [
+        q for q in tricky_portrait.enumeration.points
+        if view[0] <= q.a <= view[1] and view[2] <= q.b <= view[3]]
+    n_min = sum(q.kind == "min" for q in visible)
+    n_saddle = sum(q.kind == "saddle" for q in visible)
+    assert len(circles) == n_min
+    assert len(diamonds) == n_saddle
+    assert not triangles
+    assert {r for r, _, _ in circles} == {6}
+    assert {r for r, _, _ in diamonds} == {6}
+    assert {fill for _, fill, _ in circles} == {"white", "#111111"}
+    assert {fill for _, fill, _ in diamonds} == {"white", "#111111"}
+
+
 def test_close_unstable_zooms(tricky_portrait):
     zooms = render.close_unstable_zooms(tricky_portrait, n=1, samples=400)
     assert len(zooms) == 1

@@ -7,6 +7,7 @@ import argparse
 import gc
 import json
 import os
+import random
 import resource
 import signal
 import sys
@@ -17,17 +18,22 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "scripts"))
 
 from spong import charts, inverse, model, portrait, qualification, zoo
+from qualify import directed_model
 
 
 MAX_GEOMETRY_LEVEL = 2
+PAIR_CONTACT_POLICY = "order_sweep"
 
 
 def _certified(m):
     return portrait.certified_compute(
-        m, max_geometry_level=MAX_GEOMETRY_LEVEL)
+        m, max_geometry_level=MAX_GEOMETRY_LEVEL,
+        pair_contact_policy=PAIR_CONTACT_POLICY)
 
 
 def _summary(kind, seed, metadata, m, p, elapsed):
@@ -63,6 +69,8 @@ def _summary(kind, seed, metadata, m, p, elapsed):
             "step_failure": br.diag.get("step_failure"),
             "conditioning_refusal": br.diag.get("conditioning_refusal"),
         })
+    top = p.ledger.get("topology", {})
+    sweep = top.get("pair_order_sweep")
     return {
         "kind": kind,
         "seed": seed,
@@ -113,17 +121,18 @@ def _summary(kind, seed, metadata, m, p, elapsed):
         "worst_angle_energy": p.ledger["summary"]["worst_angle_energy"],
         "worst_seam": max(seams, default=0.0),
         "worst_backbone": max(backbones, default=0.0),
-        "topology_status": p.ledger.get("topology", {}).get("status"),
-        "topology_audit_complete": p.ledger.get(
-            "topology", {}).get("audit_complete"),
-        "topology_resolution_reason": p.ledger.get(
-            "topology", {}).get("resolution_reason"),
-        "geometry_attempts": p.ledger.get(
-            "topology", {}).get("attempts", []),
-        "forbidden_intersections": p.ledger.get(
-            "topology", {}).get("forbidden_count", 0),
-        "ambiguous_contacts": p.ledger.get(
-            "topology", {}).get("ambiguous_count", 0),
+        "topology_status": top.get("status"),
+        "topology_audit_complete": top.get("audit_complete"),
+        "topology_resolution_reason": top.get("resolution_reason"),
+        "geometry_attempts": top.get("attempts", []),
+        "forbidden_intersections": top.get("forbidden_count", 0),
+        "ambiguous_contacts": top.get("ambiguous_count", 0),
+        "pair_contact_policy": top.get("pair_contact_policy", "order_sweep"),
+        "pair_order_sweep": (None if sweep is None else {
+            key: sweep.get(key) for key in (
+                "decision", "complete", "candidates", "roots",
+                "same_order", "terminal", "critical_transition",
+                "unresolved", "errors")}),
         "aborts": aborts,
     }
 
@@ -143,6 +152,17 @@ def _untargeted(seed):
         "f_degree": df, "g_degree": dg, "moments": moments_name,
         "same": bool(np.array_equal(f, g)),
     }, m, p, time.perf_counter() - t0)
+
+
+def _directed(seed, max_degree):
+    m, description = directed_model(random.Random(seed), max_degree)
+    if m is None:
+        raise RuntimeError("directed generator did not produce a model")
+    t0 = time.perf_counter()
+    p = _certified(m)
+    return _summary("directed", seed, {
+        "max_degree": max_degree, "description": description,
+    }, m, p, time.perf_counter()-t0)
 
 
 def _targeted(seed, exponent):
@@ -239,6 +259,8 @@ def _run(spec):
     try:
         if kind == "untargeted":
             return _untargeted(seed)
+        if kind == "directed":
+            return _directed(seed, parameter)
         if kind == "targeted":
             return _targeted(seed, parameter)
         if kind == "near_morse":
@@ -263,6 +285,8 @@ def _rss_bytes():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--untargeted", type=int, default=400)
+    ap.add_argument("--directed", type=int, default=0)
+    ap.add_argument("--directed-max-degree", type=int, default=5)
     ap.add_argument("--targeted-per-radius", type=int, default=40)
     ap.add_argument("--near-morse-per-separation", type=int, default=0)
     ap.add_argument("--near-morse-exponents", type=int, nargs="+",
@@ -273,6 +297,11 @@ def main():
                     help="omit the named deterministic regression zoo")
     ap.add_argument("--max-geometry-level", type=int, default=2,
                     help="trace-box escalations allowed for certification")
+    ap.add_argument(
+        "--pair-contact-policy",
+        choices=("chord", "order_sweep_shadow", "order_sweep"),
+        default="order_sweep",
+        help="pair-contact classifier used by every worker audit")
     ap.add_argument("--seed", type=int, default=20260727)
     ap.add_argument(
         "--selection-shards", type=int, default=1,
@@ -298,15 +327,17 @@ def main():
         help="wall-time ceiling per case; 0 disables the ceiling")
     ap.add_argument("--output", type=Path, required=True)
     args = ap.parse_args()
-    global MAX_GEOMETRY_LEVEL
+    global MAX_GEOMETRY_LEVEL, PAIR_CONTACT_POLICY
     MAX_GEOMETRY_LEVEL = args.max_geometry_level
+    PAIR_CONTACT_POLICY = args.pair_contact_policy
     charts.UNSTABLE_LAUNCH_REL = args.unstable_launch_rel
     charts.STABLE_LAUNCH_DELTA = args.stable_launch_delta
     rng = np.random.default_rng(args.seed)
     if args.spec_file:
         raw_specs = json.loads(args.spec_file.read_text())
         specs = [(x["kind"], int(x.get("seed", 0)),
-                  x.get("name", x.get("exponent")))
+                  x.get("name", x.get(
+                      "max_degree", x.get("exponent"))))
                  for x in raw_specs]
     elif args.seed_file:
         case_seeds = json.loads(args.seed_file.read_text())
@@ -314,6 +345,9 @@ def main():
     else:
         case_seeds = [int(rng.integers(2**32)) for _ in range(args.untargeted)]
         specs = [("untargeted", int(seed), None) for seed in case_seeds]
+        specs.extend(("directed", int(rng.integers(2**32)),
+                      args.directed_max_degree)
+                     for _ in range(args.directed))
         for exponent in args.exponents:
             specs.extend(("targeted", int(rng.integers(2**32)), exponent)
                          for _ in range(args.targeted_per_radius))

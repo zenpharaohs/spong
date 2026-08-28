@@ -100,6 +100,11 @@ common-resolution tangent/gradient angle defects.  Open the result on macOS
 with `open out/comparisons/quadratic-stiff_comparison.html`.
 `--critical-method grid-newton` also replaces exact Morse enumeration with an
 explicitly uncertified multistart finite-difference Newton scan.
+The report additionally runs the production loss-level order diagnostic on
+each proposed manifold set, separating resolved pair roots, unresolved or
+critical-level contacts, and self-crossings.  Comparison methods receive no
+terminal certificates, so this diagnostic can find topology faults but cannot
+certify an otherwise casual portrait.
 See [docs/comparisons.md](docs/comparisons.md).
 
 Public resolution calls have a total three-outcome contract:

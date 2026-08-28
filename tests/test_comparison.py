@@ -1,10 +1,13 @@
+import json
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from spong import (
     atlas, comparison, comparison_cli, model, portrait, render, sturm, zoo)
+from spong.charts import Branch
 
 
 class _LinearModel:
@@ -28,6 +31,19 @@ class _LinearModel:
 
     def Bp(self, b):
         return 0.0
+
+
+class _SectionModel:
+    """L(a,b)=a, with vertical oriented regular sections."""
+
+    @staticmethod
+    def L(a, b):
+        return np.asarray(a)
+
+    @staticmethod
+    def gradL(a, b):
+        shape = np.broadcast(np.asarray(a), np.asarray(b)).shape
+        return np.stack((np.ones(shape), np.zeros(shape)))
 
 
 @pytest.mark.parametrize("method, factor", [
@@ -98,6 +114,58 @@ def test_common_resolution_angle_diagnostic_is_zero_on_straight_flow():
     detail = comparison.integral_curve_diagnostics(m, Y, spacing=0.01)
     assert detail["angle_energy_common"] < 1e-28
     assert detail["angle_rms_deg"] < 1e-12
+
+
+def test_arc_forward_euler_keeps_arc_budget_but_drops_certificates():
+    m = _LinearModel(1.0)
+    reference = Branch(
+        "unstable",
+        np.column_stack((np.arange(3.0, -1.0, -1.0), np.zeros(4))),
+        "capture", certs={"terminal": "reference-only"},
+        diag={"critical_steps": 99})
+    actual = comparison.arc_forward_euler(
+        m, [reference], (-4.0, 4.0, -1.0, 1.0), stride=2)[0]
+    np.testing.assert_allclose(
+        actual.Y, np.array([[3.0, 0.0], [1.0, 0.0], [0.0, 0.0]]))
+    assert actual.term == "arc_budget"
+    assert actual.certs == {}
+    assert actual.diag["uncertified"]
+    assert actual.diag["arc_forward_euler_stride"] == 2
+    assert actual.diag["critical_steps"] == 1
+    with pytest.raises(ValueError, match="positive"):
+        comparison.arc_forward_euler(
+            m, [reference], (-4.0, 4.0, -1.0, 1.0), stride=0)
+
+
+def test_comparison_contact_diagnostic_reports_pair_root_and_self_crossing():
+    m = _SectionModel()
+    enumeration = SimpleNamespace(points=[])
+    x = np.linspace(-1.0, 1.0, 100)
+    first = Branch(
+        "unstable", np.column_stack((x, x)), "time_horizon")
+    second = Branch(
+        "stable", np.column_stack((x, -x)), "time_horizon")
+    pair = comparison.manifold_contact_diagnostics(
+        m, enumeration, [first, second], (-2.0, 2.0, -2.0, 2.0))
+    assert pair["decision"] == "fault"
+    assert pair["complete"]
+    assert pair["pair_order_sweep"]["roots"] == 1
+    assert pair["self_contacts"]["crosses"] == 0
+
+    parameter = np.linspace(
+        -np.pi/2+0.013, 3*np.pi/2+0.013, 100)
+    loop = Branch("unstable", np.column_stack((
+        np.sin(parameter), np.sin(2*parameter))), "time_horizon")
+    self_contact = comparison.manifold_contact_diagnostics(
+        m, enumeration, [loop], (-2.0, 2.0, -2.0, 2.0))
+    assert self_contact["decision"] == "fault"
+    assert self_contact["pair_order_sweep"]["candidates"] == 0
+    assert self_contact["self_contacts"]["crosses"] == 1
+
+    with pytest.raises(ValueError, match="positive"):
+        comparison.manifold_contact_diagnostics(
+            m, enumeration, [], (-2.0, 2.0, -2.0, 2.0),
+            candidate_limit=0)
 
 
 def test_minimum_only_capture_exposes_numerical_passage_by_a_saddle():
@@ -190,3 +258,11 @@ def test_installed_comparison_command_writes_gallery(monkeypatch, tmp_path):
     assert (tmp_path/"quadratic-stiff_comparison.json").exists()
     assert (tmp_path/"quadratic-stiff_certified.svg").exists()
     assert (tmp_path/"quadratic-stiff_grid-newton_forward-euler.svg").exists()
+    report = json.loads(
+        (tmp_path/"quadratic-stiff_comparison.json").read_text())
+    assert report["format"] == "spong-portrait-comparison-v2"
+    contact = report["comparisons"][0]["contact_diagnostics"]
+    assert contact["method"] == "loss_level_order_sweep"
+    assert contact["decision"] in ("accepted", "fault", "unresolved")
+    assert "pair_order_sweep" in contact
+    assert "self_contacts" in contact

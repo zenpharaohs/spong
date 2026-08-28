@@ -72,6 +72,23 @@ def test_bvh_audit_finds_a_forbidden_transverse_crossing(d2):
     assert len(result["forbidden_intersections"]) == 1
     np.testing.assert_allclose(
         result["forbidden_intersections"][0]["point"], (0., 0.))
+    shadow = topology.audit(
+        m, e, branches, (-2., 2., -2., 2.),
+        pair_contact_policy="order_sweep_shadow")
+    for key in ("status", "resolution_reason", "raw_event_count",
+                "forbidden_count", "ambiguous_count",
+                "forbidden_intersections", "ambiguous_contacts"):
+        assert shadow[key] == result[key]
+    assert shadow["pair_order_sweep"]["decision"] == "unresolved"
+    assert shadow["pair_order_sweep"]["candidates"] == 1
+
+
+def test_unknown_pair_contact_policy_is_rejected(d2):
+    m, e = d2
+    with pytest.raises(ValueError, match="unknown pair contact policy"):
+        topology.audit(
+            m, e, [], (-2., 2., -2., 2.),
+            pair_contact_policy="wishful_thinking")
 
 
 def test_same_minimum_unstable_contacts_are_trimmed_but_separatrix_is_not(d2):

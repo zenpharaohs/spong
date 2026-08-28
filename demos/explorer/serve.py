@@ -9,6 +9,10 @@ analysis: it evaluates L(a,b) = C - 2a*B(b) + a^2*A(b) for the heatmap and
 draws what this endpoint sends.  Critical points, their classification, the
 separatrices and the ledger all come from portrait.certified_compute.
 
+The demo endpoints share that exact cached model: /trace continues one
+normalized-gradient orbit, while /allocator creates equal-versus-Thompson
+optimizer traces from a common design in the visible window.
+
 Nothing here re-implements spong.  Model.alpha, Model.beta and Model.C are
 the exact A, B and C; Model.backbone_num / backbone_den are the reduced
 B^2/A the constructor already forms; each CriticalPoint carries b, a, kind,
@@ -23,12 +27,15 @@ from __future__ import annotations
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 import traceback
 from fractions import Fraction
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import numpy as np
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -45,6 +52,16 @@ try:
 except ImportError:                                  # running from a checkout
     sys.path.insert(0, str(REPO / "src"))
     from spong import atlas, model, portrait, sturm, zoo
+
+# The allocator experiment remains demo code, but the viewer needs to run it
+# against the exact model behind the active portrait.  A script launched as
+# ``python demos/explorer/serve.py`` does not otherwise put the repository
+# root (and hence the ``demos`` package) on sys.path.
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+from demos import optimizer_moustaches as optimizer_gallery
+from demos import saddle_connection_triptych as saddle_wall
+from demos import thompson_moustaches as allocator_demo
 
 try:                                                 # exact C core
     from spong import _native
@@ -130,7 +147,8 @@ def _critical_points(e, m):
     saddles by the identity det H = -4 B'^2.
 
     'global' follows render.py's convention: minima within a relative
-    tolerance of the least loss get the open-circle glyph.
+    tolerance of the least loss get an open circle; other minima get the
+    equal-size filled version.
     """
     pts = sorted(e.points, key=lambda p: p.b)
     losses = {id(p): float(m.L(p.a, p.b)) for p in pts}
@@ -224,7 +242,14 @@ def _resolve(payload: dict):
         # Lambda in it is "the" wall.
         w = zoo.get_wall_family(wall)
         base = zoo.get(w.base_case)
-        lam = float(payload.get("lam", w.wall_parameter))
+        # ``wall_limit`` names the representative geometric wall model, not
+        # merely a nearby slider coordinate.  The browser's range control
+        # round-trips the JSON number a few ulps away from the stored value;
+        # snapping here ensures the model really is the registered wall
+        # member.  Ordinary slider positions continue to use their literal
+        # Lambda below.
+        lam = (w.wall_parameter if payload.get("wall_limit") else
+               float(payload.get("lam", w.wall_parameter)))
         root = math.sqrt(lam)
         f = [float(x) / root for x in base.f]
         g = [float(x) * root for x in base.g]
@@ -247,6 +272,71 @@ def _resolve(payload: dict):
     key = (tuple(f), tuple(g), view, spec.get("kind", "uniform01"),
            tuple(float(x) for x in spec.get("samples", ())))
     return f, g, view, spec, key
+
+
+def _geometric_wall_limit(payload: dict, p):
+    """Dedicated display geometry for the selected saddle-connection wall.
+
+    An ordinary portrait at a non-Morse-Smale wall must refuse: its unstable
+    and stable numerical continuations are not independently meaningful once
+    they coincide.  Use the same construction as the citable triptych instead:
+    remove those two continuations and insert their independently integrated
+    common geometric limit.
+    """
+    name = payload.get("wall")
+    if not name or not payload.get("wall_limit"):
+        return p, [], None
+
+    family = zoo.get_wall_family(name)
+    source = saddle_wall.critical_near(p, family.source_b)
+    target = saddle_wall.critical_near(p, family.target_b)
+    source_unstable = next(
+        branch for branch in p.branches
+        if branch.kind == "unstable"
+        and abs(branch.diag.get("saddle_b", math.inf)-source.b) < 1e-7
+        and branch.diag.get("unstable_direction") ==
+        family.unstable_direction)
+    distance_to_target = ((source_unstable.Y[:, 0]-target.a)**2
+                          + (source_unstable.Y[:, 1]-target.b)**2)
+    target_index = int(distance_to_target.argmin())
+    closest_target = math.sqrt(float(distance_to_target[target_index]))
+    connection = source_unstable.Y[:target_index+1].copy()
+    # The house continuation gets within its event/chord tolerance and then
+    # continues into one of the adjacent chambers.  At the geometric wall
+    # limit the orbit ends at the exact target critical point.
+    connection[-1] = (target.a, target.b)
+
+    target_stable = [
+        branch for branch in p.branches
+        if branch.kind == "stable"
+        and abs(branch.diag.get("saddle_b", math.inf)-target.b) < 1e-7]
+    closest_source = min(
+        math.sqrt(float(np.min(
+            (branch.Y[:, 0]-source.a)**2
+            + (branch.Y[:, 1]-source.b)**2)))
+        for branch in target_stable)
+    display, surgery = saddle_wall.wall_limit_portrait(
+        p, family, connection)
+    points = [[float(q[0]), float(q[1])] for q in connection]
+    record = {
+        "kind": "stable_unstable",
+        "label": "saddle connection (Wu = Ws)",
+        "source_b": float(source.b),
+        "target_b": float(target.b),
+        "n_traced": len(points),
+        "points": points,
+    }
+    diagnostics = {
+        "geometry_method": "geometric wall limit",
+        "parameter": float(family.wall_parameter),
+        "trace": {
+            "method": "paired house continuations",
+            "source_unstable_closest_to_target": closest_target,
+            "target_stable_closest_to_source": closest_source,
+        },
+        "surgery": surgery,
+    }
+    return display, [record], diagnostics
 
 
 def _model_for(key, f, g, spec):
@@ -314,6 +404,215 @@ def trace(payload: dict) -> dict:
             "arclength": ds * (len(pts) // 2 - 1)}
 
 
+def _bounded_int(payload, name, default, lower, upper):
+    value = int(payload.get(name, default))
+    if not lower <= value <= upper:
+        raise ValueError(f"{name} must be in [{lower}, {upper}]")
+    return value
+
+
+def _allocator_policy(result, color, max_points=350, *,
+                      width_base=0.55, width_gain=1.2,
+                      opacity_base=0.08, opacity_gain=0.72,
+                      mark_start=False, mark_end=False):
+    """Serialize one allocation policy as weighted viewer traces."""
+    counts = result.allocations
+    largest = max(int(max(counts)), 1)
+    traces = []
+    for arm, (trajectory, pulls) in enumerate(
+            zip(result.trajectories, counts)):
+        raw_points = optimizer_gallery._thin(
+            trajectory, max_points=max_points).tolist()
+        # json.dumps would otherwise emit non-standard NaN/Infinity tokens
+        # when a deliberately ill-scaled optimizer escapes.  Stop a drawn
+        # trajectory at its last finite point, as the standalone gallery does
+        # visually, while the allocation and final observation still record
+        # the failed continuation.
+        points = []
+        for point in raw_points:
+            if len(point) != 2 or not all(math.isfinite(float(x))
+                                          for x in point):
+                break
+            points.append([float(point[0]), float(point[1])])
+        share = float(pulls) / largest
+        traces.append({
+            "arm": arm,
+            "pulls": int(pulls),
+            "executed_steps": int(result.executed_steps[arm]),
+            "termination": result.termination_reasons[arm],
+            "points": points,
+            "color": color,
+            "width": width_base + width_gain * share,
+            "opacity": opacity_base + opacity_gain * math.sqrt(share),
+            "mark_start": bool(mark_start),
+            "mark_end": bool(mark_end),
+        })
+    return {
+        **allocator_demo._allocation_summary(result),
+        "traces": traces,
+        "allocations": [int(x) for x in counts],
+        "final_observations": [
+            (float(values[-1]) if values else None)
+            for values in result.observations],
+    }
+
+
+def allocator(payload: dict) -> dict:
+    """Equal-versus-Thompson traces for the active portrait model.
+
+    The request uses the same model selector as ``/portrait`` and ``/trace``.
+    ``allocation_view`` is deliberately separate: it is the visible window
+    from which the browser asks us to place the common initialization design,
+    not a request to rebuild or recertify the portrait.
+    """
+    f, g, resolved_view, spec, key = _resolve(payload)
+    m = _model_for(key, f, g, spec)
+
+    raw_view = payload.get("allocation_view", resolved_view)
+    if raw_view is None or len(raw_view) != 4:
+        raise ValueError("allocation_view must contain [a0, a1, b0, b1]")
+    view = tuple(float(x) for x in raw_view)
+    if not all(math.isfinite(x) for x in view):
+        raise ValueError("allocation_view must be finite")
+    if not (view[0] < view[1] and view[2] < view[3]):
+        raise ValueError("allocation_view must have increasing bounds")
+
+    starts = _bounded_int(payload, "starts", 32, 1, 512)
+    rounds = _bounded_int(payload, "rounds", 3200, starts, 250000)
+    chunk_steps = _bounded_int(payload, "chunk_steps", 10, 1, 1000)
+    batch_size = _bounded_int(payload, "batch_size", 32, 1, 100000)
+    seed = _bounded_int(payload, "seed", 1729, 0, 2**32 - 1)
+    if rounds * chunk_steps > 2_000_000:
+        raise ValueError("rounds * chunk_steps must not exceed 2,000,000")
+
+    method = str(payload.get("method", "adam"))
+    schedule = str(payload.get("schedule", "inverse-sqrt"))
+    design = str(payload.get("design", "low-discrepancy"))
+    learning_rate = float(payload.get(
+        "learning_rate", optimizer_gallery.DEFAULT_LR.get(method, 1e-3)))
+    if not math.isfinite(learning_rate) or learning_rate <= 0.0:
+        raise ValueError("learning_rate must be finite and positive")
+    time_limit_sec = float(payload.get("time_limit_sec", 20.0))
+    if not math.isfinite(time_limit_sec) or not 1.0 <= time_limit_sec <= 300.0:
+        raise ValueError("time_limit_sec must be finite and in [1, 300]")
+
+    distribution = spec.get("kind", "uniform01")
+    samples = spec.get("samples") if distribution == "empirical" else None
+    cb_library = allocator_demo.cb_sampler.resolve_library(auto_build=True)
+    t0 = time.perf_counter()
+    deadline = t0 + time_limit_sec
+    comparison = allocator_demo.compare_allocators(
+        m, f, g, view, starts=starts, rounds=rounds,
+        chunk_steps=chunk_steps, batch_size=batch_size, method=method,
+        schedule=schedule, design=design, seed=seed,
+        distribution=distribution, samples=samples,
+        learning_rate=learning_rate, cb_library=cb_library,
+        should_stop=lambda: time.perf_counter() >= deadline)
+    elapsed = time.perf_counter() - t0
+
+    return {
+        "format": "spong-equal-thompson-traces-v1",
+        "observation": "L/(1+L)",
+        "selection": "minimum exact continuous-Bernoulli posterior draw",
+        "capture_used_for_allocation": False,
+        "allocation_view": list(view),
+        "elapsed_sec": elapsed,
+        "work_loss_histogram": allocator_demo.work_loss_histogram(
+            comparison["equal"], comparison["thompson"]),
+        "configuration": {
+            "starts": starts,
+            "rounds": rounds,
+            "chunk_steps": chunk_steps,
+            "total_optimizer_steps_per_policy": rounds * chunk_steps,
+            "batch_size": batch_size,
+            "method": method,
+            "schedule": schedule,
+            "warmup_steps": comparison["warmup_steps"],
+            "learning_rate": comparison["learning_rate"],
+            "time_limit_sec": time_limit_sec,
+            "design": design,
+            "seed": seed,
+            "distribution": distribution,
+            "cb_library": comparison["library_path"],
+        },
+        # Equal is deliberately a broad, half-transparent underlay.  The
+        # narrower saturated Thompson trace then remains legible while the
+        # common initial portion still reads as an overlap.
+        "equal": _allocator_policy(
+            comparison["equal"], "#66727b",
+            width_base=0.85, width_gain=1.30,
+            opacity_base=0.14, opacity_gain=0.28),
+        "thompson": _allocator_policy(
+            comparison["thompson"], "#5b21b6",
+            opacity_base=0.10, opacity_gain=0.80,
+            mark_start=True, mark_end=True),
+    }
+
+
+def isolated_allocator(payload: dict) -> dict:
+    """Run the interactive allocator beyond a killable process boundary.
+
+    The cooperative deadline inside :func:`allocator` keeps ordinary runs
+    cheap to stop.  This outer deadline also covers a native sampler call
+    that never returns to Python.
+    """
+    raw_limit = payload.get("time_limit_sec", 20.0)
+    try:
+        requested_limit = float(raw_limit)
+    except (TypeError, ValueError):
+        requested_limit = 20.0
+    if not math.isfinite(requested_limit):
+        requested_limit = 20.0
+    hard_limit = min(300.0, max(1.0, requested_limit)) + 2.0
+
+    command = [sys.executable, str(Path(__file__).resolve()),
+               "--allocator-worker"]
+    process = subprocess.Popen(
+        command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = process.communicate(
+            json.dumps(payload), timeout=hard_limit)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise TimeoutError(
+            "allocation stopped by hard interactive time limit") from None
+
+    try:
+        envelope = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        detail = stderr.strip() or stdout.strip() or "allocator worker failed"
+        raise RuntimeError(detail) from exc
+    if envelope.get("ok"):
+        return envelope["result"]
+    message = envelope.get("error", "allocator worker failed")
+    if envelope.get("kind") == "allocation_timeout":
+        raise TimeoutError(message)
+    if envelope.get("kind") == "value_error":
+        raise ValueError(message)
+    raise RuntimeError(message)
+
+
+def allocator_worker_main() -> int:
+    """Private JSON transport used by :func:`isolated_allocator`."""
+    try:
+        payload = json.load(sys.stdin)
+        envelope = {"ok": True, "result": allocator(payload)}
+    except TimeoutError as exc:
+        envelope = {"ok": False, "kind": "allocation_timeout",
+                    "error": str(exc)}
+    except ValueError as exc:
+        envelope = {"ok": False, "kind": "value_error",
+                    "error": str(exc)}
+    except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
+        envelope = {"ok": False, "kind": "worker_error",
+                    "error": f"{type(exc).__name__}: {exc}"}
+    json.dump(envelope, sys.stdout)
+    return 0
+
+
 def compute(payload: dict) -> dict:
     # A zoo case supplies its own f, g, moment distribution and default_view.
     # Using them is not a convenience: default_view is tuned per case, and
@@ -329,7 +628,8 @@ def compute(payload: dict) -> dict:
     # wanted for.
     stage = payload.get("stage", "final")
 
-    hit = _CACHE.get((key, stage))
+    display_mode = "wall_limit" if payload.get("wall_limit") else "ordinary"
+    hit = _CACHE.get((key, stage, display_mode))
     if hit is not None:
         return dict(hit, cached=True)
 
@@ -379,6 +679,7 @@ def compute(payload: dict) -> dict:
     else:
         p = portrait.certified_compute(m, view=trace_view,
                                        _enumeration=enumeration)
+    p, wall_connections, wall_limit = _geometric_wall_limit(payload, p)
     t3 = time.perf_counter()
     elapsed = t3 - t0
     timing = {"moments": t1 - t0, "build": t2 - t1, "portrait": t3 - t2}
@@ -403,6 +704,8 @@ def compute(payload: dict) -> dict:
         "field": _field_coeffs(m),
         "critical": _critical_points(e, m),
         "branches": _branches(p),
+        "wall_connections": wall_connections,
+        "wall_limit": wall_limit,
         "box": [float(x) for x in p.box],
         "view": None if p.view is None else [float(x) for x in p.view],
         "enumeration": {
@@ -414,13 +717,17 @@ def compute(payload: dict) -> dict:
             "alternates": bool(e.alternates),
         },
         "ledger_summary": (p.ledger or {}).get("summary", {}),
-        "status": (p.ledger or {}).get("topology", {}).get("status"),
+        "status": ("geometric_wall_limit" if wall_limit else
+                   (p.ledger or {}).get("topology", {}).get("status")),
+        "ordinary_status": (p.ledger or {}).get(
+            "topology", {}).get("status") if wall_limit else None,
         "d_eff": atlas.effective_degree(m),
         # What the client asked to LOOK at, distinct from what was traced.
         "frame_view": (list(view) if view is not None else None),
         "legal_box": list(trace_view),
-        "reason": (p.ledger or {}).get(
-            "topology", {}).get("resolution_reason"),
+        "reason": ("saddle_connection_wall" if wall_limit else
+                   (p.ledger or {}).get(
+                       "topology", {}).get("resolution_reason")),
         # The library measures itself: enumeration / stub / geometry split,
         # and one entry per geometry escalation with its status and reason.
         "ledger_timing": (p.ledger or {}).get("timing", {}),
@@ -428,7 +735,7 @@ def compute(payload: dict) -> dict:
         "geometry_level": (p.ledger or {}).get(
             "topology", {}).get("geometry_level"),
     }
-    _CACHE[(key, stage)] = out
+    _CACHE[(key, stage, display_mode)] = out
     if len(_CACHE) > _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
     return out
@@ -491,17 +798,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "not found", "text/plain")
 
     def do_POST(self):
-        if self.path not in ("/portrait", "/trace"):
+        if self.path not in ("/portrait", "/trace", "/allocator"):
             self._send(404, "not found", "text/plain")
             return
         n = int(self.headers.get("Content-Length", 0))
         try:
             payload = json.loads(self.rfile.read(n) or b"{}")
             result = (trace(payload) if self.path == "/trace"
+                      else isolated_allocator(payload)
+                      if self.path == "/allocator"
                       else compute(payload))
             self._send(200, json.dumps(result), "application/json")
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except TimeoutError as exc:
+            self._send(408, json.dumps({
+                "error": str(exc), "kind": "allocation_timeout",
+            }), "application/json")
         except Exception as exc:
             traceback.print_exc()
             self._send(400, json.dumps(
@@ -525,4 +838,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(allocator_worker_main()
+                     if "--allocator-worker" in sys.argv else main())

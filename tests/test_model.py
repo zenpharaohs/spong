@@ -1,12 +1,30 @@
 """spong.model: exact identities of SPONG_FOUNDING Part II sections 1-3."""
 
 from fractions import Fraction as F
+import warnings
 
 import numpy as np
 import pytest
 
 from spong import model
 from spong import _poly as P
+
+
+def test_far_field_rational_derivatives_do_not_overflow_intermediates():
+    """The ratios vanish at infinity although raw A, B, and A**2 overflow."""
+    f = [1.0, -0.5]
+    g = [1.0 / (k + 1) for k in range(18)]
+    m = model.build(f, g, model.moments_uniform01(35))
+    b = np.array([-1e20, 1e20])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        values = (m.a_star(b), m.a_star_p(b), m.a_star_pp(b),
+                  m.u(b), m.u_p(b), m.u_pp(b))
+
+    assert all(np.all(np.isfinite(value)) for value in values)
+    assert np.all(np.abs(m.a_star_p(b)) < 1e-300)
+    assert np.all(np.abs(m.u_p(b)) < 1e-30)
 
 
 @pytest.fixture(scope="module")

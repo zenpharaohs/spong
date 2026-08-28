@@ -90,6 +90,25 @@ it emitted fewer vertices, while acknowledging that direction is ill
 conditioned as the vector field vanishes.  Each gallery includes an automatic
 zoom around the deepest certified unstable branch.
 
+The gallery also applies SPONG's loss-level order diagnostic to every
+uncertified manifold proposal.  Chord-intersection candidates are classified
+by resolved transverse order on regular loss levels.  The JSON and HTML
+reports distinguish:
+
+- isolated resolved pair roots, which are numerical violations of ODE
+  uniqueness;
+- same-order chord contacts, which do not reverse the represented curves;
+- contacts at a critical loss or without resolved witnesses, which remain
+  unresolved; and
+- transverse self-crossings and ambiguous self-contacts.
+
+The textbook methods inherit no production terminal, local-graph, or endpoint
+certificates.  Their apparent asymptotic contacts therefore cannot be silently
+discharged, and an `accepted` contact diagnostic still does **not** certify the
+portrait.  It says only that this scan found no contact fault.  Use
+`--contact-threshold` to change the resolved-order margin and
+`--contact-limit` to bound pathological scribble output.
+
 The handle-slide wall has a dedicated geometry comparison:
 
 ```sh

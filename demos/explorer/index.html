@@ -26,6 +26,10 @@
   .grid{display:grid;grid-template-columns:1.35fr 1fr;gap:10px}
   .stack{display:flex;flex-direction:column;gap:10px}
   canvas{display:block;width:100%;height:auto;cursor:crosshair}
+  /* The plot owns its own gestures.  Without this, Safari treats a pinch over
+     the canvas as a PAGE zoom -- a different nuisance from plot zoom, and one
+     worth suppressing on every machine. */
+  #cPort{touch-action:none}
   #cResp{cursor:default}
   label{display:block;color:var(--ink-2);font-size:10px;letter-spacing:.08em;
         text-transform:uppercase;margin-bottom:3px}
@@ -60,11 +64,104 @@
   .cert.ok{color:#1668c9}        /* certified Morse, topology certified */
   .cert.nonmorse{color:var(--trace)}   /* certified NON-Morse: also exact */
   .cert.unresolved{color:var(--response)}  /* the only genuine unknown */
+  .cert.walllimit{color:var(--backbone)}   /* deliberately a different picture, not a verdict */
   .legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--ink-2);font-size:11px;margin-top:6px}
   .status{font-size:11px;color:var(--ink-2)}
   .status.busy{color:var(--response)}
   .status.err{color:var(--stable)}
   .stale{opacity:.35}
+
+  /* ---- facelift additions below; house tokens and rules above unchanged ---- */
+
+  /* Onboarding strip: the one thing a first-time visitor reads before
+     touching anything.  Dismissible and remembered, but never blocking --
+     it sits above the instrument, not over it. */
+  .onboard{background:var(--paper);border:1px solid var(--rule);
+       border-left:3px solid var(--target);padding:10px 12px;
+       display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .onboard p{margin:0;max-width:62ch}
+  .onboard .lead{font-family:var(--serif);font-style:italic;font-size:13px}
+  .onboard button.ghost{border-color:var(--rule);color:var(--ink-2);white-space:nowrap}
+  .onboard.hidden{display:none}
+
+  /* Start-here chips: the zoo presets and generators promoted out of small
+     selects into things a casual visitor would think to click first. */
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:11px;padding:6px 12px;cursor:pointer;
+       border:1px solid var(--ink);background:transparent;color:var(--ink);
+       display:flex;align-items:center;gap:6px}
+  .chip:hover{background:var(--ink);color:var(--paper)}
+  .chip .n{color:var(--ink-2);font-size:10px}
+  .chip:hover .n{color:var(--rule-2)}
+
+  /* Inline glossary: a small "?" that carries a definition on hover/focus,
+     for the jargon (backbone, N-saddle, wall family, certified) that a
+     specialist reads fluently and a visitor cannot. Native title tooltip
+     plus a visible focus ring so it's reachable by keyboard, not just mouse. */
+  .help{display:inline-flex;align-items:center;justify-content:center;
+       width:13px;height:13px;border-radius:50%;border:1px solid var(--ink-2);
+       color:var(--ink-2);font-size:9px;line-height:1;cursor:help;
+       margin-left:4px;vertical-align:1px;user-select:none}
+  .help:hover,.help:focus{background:var(--ink-2);color:var(--paper);outline:none}
+
+  /* Persistent key strip under the portrait toolbar: the glyph and colour
+     legend that used to live only in a title attribute or under a different
+     panel.  Compact by default, expands on click -- present without being
+     loud. */
+  .keystrip summary{cursor:pointer;color:var(--ink-2);font-size:11px;
+       list-style:none;display:flex;align-items:center;gap:6px}
+  .keystrip summary::-webkit-details-marker{display:none}
+  .keystrip summary::before{content:"▸";font-size:9px}
+  .keystrip[open] summary::before{content:"▾"}
+  .keystrip .body{display:flex;gap:16px;flex-wrap:wrap;color:var(--ink-2);
+       font-size:11px;margin:8px 0 2px;padding-top:8px;border-top:1px dotted var(--rule-2)}
+  .keystrip .grp{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .glyph-min,.glyph-gmin,.glyph-ns,.glyph-bs{display:inline-block;width:10px;height:10px}
+  .glyph-min{border-radius:50%;background:var(--glyph)}
+  .glyph-gmin{border-radius:50%;background:#fff;border:1.6px solid var(--glyph)}
+  .glyph-ns{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
+       border-bottom:8px solid var(--glyph)}
+  .glyph-bs{width:9px;height:9px;background:#fff;border:1.6px solid var(--glyph);
+       transform:rotate(45deg)}
+
+  /* Toolbar: labelled icon-ish buttons plus a live hint line for the active
+     tool, so "trace" doesn't require already knowing what trace does. */
+  .toolbar{flex-wrap:wrap}
+  .tool{padding:6px 11px;min-width:44px}
+  .toolhint{width:100%;font-size:11px;color:var(--ink-2);margin:4px 0 0;
+       font-style:italic;font-family:var(--serif)}
+
+  /* Progressive disclosure for the research-tool panels (random cases, wall
+     families, the descent demo layer).  Collapsed by default: a casual
+     visitor sees the core instrument first, a specialist opens these
+     deliberately.  Plain <details> -- no script needed to open or close. */
+  details.adv{background:var(--paper);border:1px solid var(--rule)}
+  details.adv > summary{cursor:pointer;padding:10px 12px;font-family:var(--serif);
+       font-size:13px;font-style:italic;list-style:none;display:flex;
+       align-items:center;justify-content:space-between;gap:10px}
+  details.adv > summary::-webkit-details-marker{display:none}
+  details.adv > summary .tag{font-family:var(--mono);font-style:normal;
+       font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+  details.adv > summary::after{content:"open ▸";font-family:var(--mono);
+       font-size:10px;color:var(--ink-2);text-transform:none;letter-spacing:0}
+  details.adv[open] > summary::after{content:"close ▾"}
+  details.adv[open] > summary{border-bottom:1px solid var(--rule-2)}
+  details.adv .panel{border:none;padding:10px 12px 12px}
+  details.adv + details.adv{border-top:none}
+
+  .section-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+       color:var(--ink-2);margin:2px 0 0}
+
+  /* Colour pickers in the Appearance panel -- native <input type=color>,
+     just resized to sit comfortably in the same grid as everything else. */
+  #palUI input[type=color],#palPlot input[type=color]{
+       padding:2px;height:30px;cursor:pointer}
+
+  @media (max-width:900px){
+    .grid{grid-template-columns:1fr}
+    .controls{grid-template-columns:repeat(auto-fit,minmax(96px,1fr))}
+    .onboard{flex-direction:column;align-items:flex-start}
+  }
 </style>
 
 <header>
@@ -72,30 +169,77 @@
     <p class="eyebrow">one-neuron polynomial net · mean-square loss</p>
     <h1>a·g(bx) against f(x)</h1>
   </div>
-  <span class="note">select · pan · zoom box · trace, MATLAB style · arrows pan, +/− zoom, 0 resets · click the backbone panel to snap to a*(b)</span>
+  <button class="ghost" id="themeToggle" style="margin-left:auto" title="Change the interface and plot colors">appearance</button>
 </header>
+
+<div class="panel onboard" id="onboard">
+  <p class="lead">Start here.</p>
+  <p>This shows the loss landscape of fitting one polynomial neuron
+    <code>a·g(bx)</code> to a target <code>f(x)</code>, over the two
+    parameters <code>(a, b)</code>. The curves and the
+    <span class="help" tabindex="0" title="Contours of constant loss, the backbone a=a*(b) that minimizes loss for each b, and the certified critical points, saddles, and separatrices connecting them.">?</span>
+    verdict are proven, not simulated — pick a case below, or click anywhere
+    in the portrait to trace a trajectory from there.</p>
+  <button class="ghost" id="onboardHide">got it, hide this</button>
+</div>
+
+<details class="adv" id="advTheme">
+  <summary>Appearance <span class="tag">interface and plot colors, remembered on this device</span></summary>
+  <div class="panel">
+    <div class="wide row" style="margin-bottom:10px">
+      <button data-preset="house">house (default)</button>
+      <button class="ghost" data-preset="dark">dark</button>
+      <button class="ghost" data-preset="colorblind">colorblind-safe</button>
+      <span class="gap" style="width:16px"></span>
+      <button class="ghost" id="themeReset">reset to defaults</button>
+    </div>
+    <p class="section-label">Interface</p>
+    <div class="controls" id="palUI"></div>
+    <p class="section-label" style="margin-top:10px">Plot colors
+      <span class="help" tabindex="0" title="These default to render.py's own palette, so a picture here matches a picture made anywhere else in the repo. Changing them is a display-only override for this browser -- it does not touch render.py or anything the certificate depends on.">?</span></p>
+    <div class="controls" id="palPlot"></div>
+  </div>
+</details>
+
+<div class="panel" id="starthere">
+  <p class="cap">Start here <span class="rhs">a few ready-made cases, or a fresh random one</span></p>
+  <div class="chips" id="startChips">
+    <button class="chip" id="chipSimple">a plain example <span class="n">deg 2</span></button>
+    <button class="chip" id="chipZoo">a tricky certified case <span class="n">from the zoo</span></button>
+    <button class="chip" id="chipRandom">draw a random case <span class="n">seeded, reproducible</span></button>
+    <button class="chip" id="chipWall">explore a wall family <span class="n">a saddle connection sliding through</span></button>
+  </div>
+  <p class="toolhint" style="margin-top:8px">select · pan · zoom box · trace, MATLAB style · arrows pan, +/− zoom, 0 resets · click the backbone panel to snap to a*(b)</p>
+</div>
 
 <div class="grid">
   <div class="stack">
     <div class="panel">
       <p class="cap">Phase portrait <span class="rhs"><span id="certMark" class="cert" title="not yet certified">✓</span> <span id="portraitInfo"></span></span></p>
       <div class="toolbar" id="tools">
-        <button class="tool on" data-tool="select">select</button>
-        <button class="tool" data-tool="pan">pan</button>
-        <button class="tool" data-tool="zoom">zoom box</button>
-        <button class="tool" data-tool="trace">trace</button>
+        <button class="tool on" data-tool="select" title="Click to read off (a,b) and the loss there">select</button>
+        <button class="tool" data-tool="pan" title="Drag to move the view">pan</button>
+        <button class="tool" data-tool="zoom" title="Drag a box to zoom into it">zoom box</button>
+        <button class="tool" data-tool="trace" title="Click a point to launch a trajectory from it">trace</button>
         <span class="gap"></span>
-        <button class="tool" id="zoomIn">+</button>
-        <button class="tool" id="zoomOut">−</button>
-        <button class="tool" id="reset">reset</button>
+        <button class="tool" id="zoomIn" title="Zoom in">+</button>
+        <button class="tool" id="zoomOut" title="Zoom out">−</button>
+        <button class="tool" id="reset" title="Reset to the case's default view">reset</button>
         <span class="gap"></span>
         <label for="levels" style="margin:0 4px 0 0;text-transform:none;letter-spacing:0">contours</label>
         <input id="levels" type="number" value="44" min="4" max="400" step="4"
                style="width:64px">
         <select id="levelSpan" style="width:auto">
+          <option value="even" selected>even coverage</option>
+          <option value="critical">clustered at critical values</option>
           <option value="view">across the view</option>
           <option value="backbone">across the backbone</option>
         </select>
+        <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0"
+               title="Trackpad pinch only. Off by default: on a pointing stick or a mouse there is no pinch, and binding zoom to the scroll stream hijacks ordinary scrolling.">
+          <input id="pinchZoom" type="checkbox"
+                 style="width:auto;margin-right:4px">pinch zoom
+        </label>
         <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0">
           <input id="showCross" type="checkbox" checked
                  style="width:auto;margin-right:4px">crosshair
@@ -104,8 +248,29 @@
           <input id="showSlaved" type="checkbox" checked
                  style="width:auto;margin-right:4px">slaved continuation
         </label>
+        <p class="toolhint" id="toolHint">select: click a point in the portrait to read off (a, b) and the loss there.</p>
       </div>
       <canvas id="cPort" width="760" height="470" tabindex="0"></canvas>
+      <details class="keystrip">
+        <summary>key: glyphs, curves, and the certificate mark</summary>
+        <div class="body">
+          <div class="grp"><span class="glyph-min"></span> local minimum
+            <span class="glyph-gmin" style="margin-left:8px"></span> global minimum
+            <span class="glyph-ns" style="margin-left:8px"></span> saddle
+            <span class="glyph-bs" style="margin-left:8px"></span> saddle (B-root)</div>
+          <div class="grp"><i class="swatch" style="background:var(--backbone)"></i>backbone a*(b)
+            <i class="swatch" style="background:var(--unstable);margin-left:8px"></i>unstable manifold
+            <i class="swatch" style="background:var(--stable);margin-left:8px"></i>stable manifold
+            <i class="swatch" style="background:var(--trace);margin-left:8px"></i>trajectory</div>
+          <div class="grp">
+            <span class="cert ok" style="font-size:14px">✓</span>certified
+            <span class="cert nonmorse" style="font-size:14px;margin-left:8px">◆</span>certified non-Morse
+            <span class="cert unresolved" style="font-size:14px;margin-left:8px">?</span>topology unresolved
+            <span class="cert walllimit" style="font-size:14px;margin-left:8px">⇢</span>exact wall limit shown
+            <span class="cert" style="font-size:14px;margin-left:8px">…</span>working
+          </div>
+        </div>
+      </details>
     </div>
     <div class="panel">
       <p class="cap">Backbone a*(b) and loss along it <span class="rhs">stops mark certified critical points</span></p>
@@ -118,12 +283,8 @@
       <p class="cap">Response <span class="rhs" id="respInfo"></span></p>
       <canvas id="cResp" width="440" height="290"></canvas>
       <div class="legend">
-        <span><i class="swatch" style="background:var(--target)"></i>f(x)</span>
-        <span><i class="swatch" style="background:var(--response)"></i>a·g(bx)</span>
-        <span><i class="swatch" style="background:var(--backbone)"></i>backbone</span>
-        <span><i class="swatch" style="background:var(--unstable)"></i>unstable</span>
-        <span><i class="swatch" style="background:var(--stable)"></i>stable</span>
-        <span>● local min · ○ global · ▲ N-saddle · ◇ B-saddle</span>
+        <span><i class="swatch" style="background:var(--target)"></i>target f(x)</span>
+        <span><i class="swatch" style="background:var(--response)"></i>net's response a·g(bx)</span>
       </div>
     </div>
 
@@ -143,14 +304,15 @@
       <p class="cap">Model <span class="rhs status" id="status">ready</span></p>
       <div class="controls">
         <div class="wide">
-          <label for="preset">preset</label>
+          <label for="preset">preset or zoo case</label>
           <select id="preset">
             <option value="">— custom —</option>
             <option value="quad">f = g = 1 + x + x²</option>
           </select>
         </div>
         <div class="wide">
-          <label for="fIn">f coefficients (low → high)</label>
+          <label for="fIn">f coefficients (low → high)
+            <span class="help" tabindex="0" title="The target function f(x), as coefficients from the constant term up: '1, 1, 1' means 1 + x + x².">?</span></label>
           <input id="fIn" type="text" value="1, 1, 1">
         </div>
         <div class="wide">
@@ -158,7 +320,8 @@
           <input id="gIn" type="text" value="1, 1, 1">
         </div>
         <div>
-          <label for="dist">moments</label>
+          <label for="dist">moments
+            <span class="help" tabindex="0" title="The distribution x is drawn from when scoring the fit. 'Empirical batch' uses a finite random sample instead of the exact population moments.">?</span></label>
           <select id="dist">
             <option value="uniform01">U(0,1)</option>
             <option value="normal01">N(0,1)</option>
@@ -178,8 +341,11 @@
       </div>
     </div>
 
-    <div class="panel">
-      <p class="cap">Random case <span class="rhs">seeded, so a case is reproducible</span></p>
+    <p class="section-label">Research tools</p>
+
+    <details class="adv" id="advRandom">
+      <summary>Random case generator <span class="tag">seeded, reproducible</span></summary>
+      <div class="panel">
       <div class="controls">
         <div>
           <label for="degF">deg f</label>
@@ -212,13 +378,16 @@
           <button id="nextRandom" class="ghost">next seed</button>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div class="panel">
-      <p class="cap">Wall family <span class="rhs" id="wallInfo"></span></p>
+    <details class="adv" id="advWall">
+      <summary>Wall families <span class="tag" id="wallInfo">a saddle connection sliding through</span></summary>
+      <div class="panel">
       <div class="controls">
         <div class="wide">
-          <label for="wallSel">family</label>
+          <label for="wallSel">family
+            <span class="help" tabindex="0" title="A wall family is a path through parameter space that crosses a saddle-connection wall -- the one place the topology genuinely changes. Slide the parameter to watch it happen.">?</span></label>
           <select id="wallSel">
             <option value="">— none —</option>
           </select>
@@ -229,6 +398,13 @@
                  style="width:100%;padding:0">
         </div>
         <div class="wide row">
+          <label style="margin:0 8px 0 0;text-transform:none;letter-spacing:0">
+            <input id="wallLimit" type="checkbox" style="width:auto;margin-right:4px">
+            show the exact geometric limit at the wall
+            <span class="help" tabindex="0" title="A numerically-continued portrait must refuse right at a saddle-connection wall: the stable and unstable manifolds coincide there, so they aren't independently meaningful. This ignores the slider and instead draws the exact connecting orbit between the two critical points at the idealized wall parameter -- a different, non-refusing thing to look at, not a more precise version of the numerical trace.">?</span>
+          </label>
+        </div>
+        <div class="wide row">
           <button id="lamReset" class="ghost">back to the wall</button>
         </div>
         <p class="wide" id="lamRead" style="margin:0;font-size:11px;
@@ -236,10 +412,12 @@
         <p class="wide" id="lamWarn" style="margin:2px 0 0;font-size:11px;
            color:var(--response)"></p>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div class="panel">
-      <p class="cap">Descent <span class="rhs">demo layer, not certified</span></p>
+    <details class="adv" id="advDescent">
+      <summary>Descent methods <span class="tag">demo layer, not certified</span></summary>
+      <div class="panel">
       <div class="controls">
         <div>
           <label for="method">method</label>
@@ -281,7 +459,87 @@
           <button id="clearTr" class="ghost">clear traces</button>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
+
+    <details class="adv" id="advAllocator">
+      <summary>Allocator: equal vs. Thompson <span class="tag">optimizer trajectories, not certified</span></summary>
+      <div class="panel">
+      <p style="margin:0 0 8px;color:var(--ink-2)">Many-start optimizer trajectories over the certified portrait,
+        under two initialization/allocation policies
+        <span class="help" tabindex="0" title="Equal: every start gets the same fixed budget of steps. Thompson: budget is allocated adaptively by a continuous-Bernoulli posterior over each start's observed loss. Both use the same random design and, within each start/batch pair, the same seed.">?</span>.
+        Runs against the model currently shown, in the current view.</p>
+      <div class="controls">
+        <div>
+          <label for="allocMethod">method</label>
+          <select id="allocMethod">
+            <option value="sgd">sgd</option>
+            <option value="sgd-momentum">sgd-momentum</option>
+            <option value="adam" selected>adam</option>
+            <option value="muon-adamw">muon-adamw</option>
+            <option value="vector-muon">vector-muon</option>
+          </select>
+        </div>
+        <div>
+          <label for="allocSchedule">schedule</label>
+          <select id="allocSchedule">
+            <option value="constant">constant</option>
+            <option value="cosine">cosine</option>
+            <option value="inverse-sqrt" selected>inverse-sqrt</option>
+          </select>
+        </div>
+        <div>
+          <label for="allocDesign">design</label>
+          <select id="allocDesign">
+            <option value="low-discrepancy" selected>low-discrepancy</option>
+            <option value="blue-noise">blue-noise</option>
+          </select>
+        </div>
+        <div>
+          <label for="allocLR">learning rate <span class="help" tabindex="0" title="Leave blank to use the method's own default.">?</span></label>
+          <input id="allocLR" type="number" step="0.0001" min="0" placeholder="auto">
+        </div>
+        <div>
+          <label for="allocStarts">starts</label>
+          <input id="allocStarts" type="number" value="32" min="1" max="512" step="1">
+        </div>
+        <div>
+          <label for="allocRounds">rounds</label>
+          <input id="allocRounds" type="number" value="3200" min="1" step="1">
+        </div>
+        <div>
+          <label for="allocChunk">steps / round</label>
+          <input id="allocChunk" type="number" value="10" min="1" max="1000" step="1">
+        </div>
+        <div>
+          <label for="allocBatch">batch n</label>
+          <input id="allocBatch" type="number" value="32" min="1" step="1">
+        </div>
+        <div>
+          <label for="allocSeed">seed</label>
+          <input id="allocSeed" type="number" value="1729" min="0" step="1">
+        </div>
+        <div>
+          <label for="allocLimit">time limit (s)</label>
+          <input id="allocLimit" type="number" value="20" min="1" max="300" step="1">
+        </div>
+        <div class="wide row">
+          <button id="runAllocator">run allocator</button>
+          <button id="clearAllocator" class="ghost">clear overlay</button>
+        </div>
+        <p class="wide status" id="allocStatus" style="margin:2px 0 0"></p>
+        <div class="wide" id="allocSummary" style="font-size:11px;color:var(--ink-2)"></div>
+        <div class="wide">
+          <canvas id="cHist" width="440" height="150" style="margin-top:6px"></canvas>
+          <div class="legend" style="margin-top:2px">
+            <span><i class="swatch" style="background:#66727b"></i>equal</span>
+            <span><i class="swatch" style="background:#5b21b6"></i>thompson</span>
+            <span>steps executed, by exact post-chunk loss (log scale)</span>
+          </div>
+        </div>
+      </div>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -304,6 +562,7 @@ const els = id => document.getElementById(id);
 const cP = els("cPort"), xP = cP.getContext("2d");
 const cB = els("cBone"), xB = cB.getContext("2d");
 const cR = els("cResp"), xR = cR.getContext("2d");
+const cHist = els("cHist"), xH = cHist.getContext("2d");
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 
 const S = {
@@ -312,7 +571,7 @@ const S = {
   sel: { a: 1, b: 1 },
   tool: "select",
   levels: 44,
-  levelSpan: "view",
+  levelSpan: "even",
   showCross: true,
   showSlaved: true,
   rubber: null,
@@ -373,13 +632,18 @@ async function recompute(_unused, zooName){
   // and separatrices are chord-traced across the result, so a case whose
   // natural box is large can trace for a very long time.  The view you are
   // looking at is the honest bound.
-  const base = WALL ? { wall: WALL.name, lam: lamFromSlider() }
+  const base = WALL ? { wall: WALL.name, lam: lamFromSlider(),
+                         wall_limit: els("wallLimit").checked }
     : zooName ? { zoo: zooName } : {
     f: parseCoeffs(els("fIn").value),
     g: parseCoeffs(els("gIn").value),
     moments,
     view: [v.a0, v.a1, v.b0, v.b1]
   };
+  // The request just built is the truth.  A non-zoo request computes whatever
+  // is in the boxes, so the preset label must stop naming a zoo entry -- else
+  // the plot and the label disagree and the next moments change compounds it.
+  if (!zooName && !WALL && els("preset").value) els("preset").value = "";
   S.lastBody = base;   // /trace integrates against the same model
 
   const send = async stage => {
@@ -448,6 +712,14 @@ async function recompute(_unused, zooName){
    Uncertified is reserved for a Morse model whose topology the machinery
    could not resolve in binary64.  That is the only state where the answer is
    genuinely open. */
+/* Four outcomes now, not three. The fourth is not a determination about
+   the numerically-continued model at all: it is a deliberately DIFFERENT
+   picture, the exact geometric limit at an idealized wall parameter,
+   requested by wall_limit and standing in for a case that would otherwise
+   correctly refuse (a saddle connection is not Morse-Smale, so binary64
+   can bracket it but never confirm standing on it). It gets its own glyph
+   rather than being folded into "certified" or "unresolved", because
+   neither of those is what it is. */
 function certStateFor(data){
   const e = data.enumeration || {};
   if (e.psi_positive === false)
@@ -456,6 +728,10 @@ function certStateFor(data){
   if (e.morse === false)
     return ["nonmorse", "certified NON-MORSE: the critical skeleton is "
                       + "degenerate, exactly determined"];
+  if (data.status === "geometric_wall_limit")
+    return ["walllimit", "showing the exact geometric limit at the wall, "
+                      + "not a numerically continued portrait — the ordinary "
+                      + `numerical status here is ${data.ordinary_status || "unresolved"}`];
   if (data.status === "certified")
     return ["ok", "certified: Morse skeleton and topology both determined"];
   return ["unresolved", `Morse, topology unresolved: ${data.reason || "refused"}`];
@@ -466,6 +742,7 @@ function setCert(state, title){
   el.className = "cert" + (state ? " " + state : "");
   el.textContent = state === "ok" ? "✓"
                  : state === "nonmorse" ? "◆"
+                 : state === "walllimit" ? "⇢"
                  : state === "unresolved" ? "?" : "…";
   el.title = title;
 }
@@ -494,10 +771,13 @@ function apply(data, zooName){
   // cannot otherwise be reported or reproduced.
   els("caseId").textContent =
     `f = [${data.f.join(", ")}]   g = [${data.g.join(", ")}]   `
-    + `moments = ${els("dist").value}`;
+    + `moments = ${(zooName && ZOO_MOMENTS[zooName]) || els("dist").value}`;
   if (zooName || WALL){             // reflect what the entry supplied
     els("fIn").value = data.f.map(c => +c.toPrecision(15)).join(", ");
     els("gIn").value = data.g.map(c => +c.toPrecision(15)).join(", ");
+    // ... including the MOMENTS, which the server took from the entry and the
+    // control would otherwise contradict.
+    if (zooName && ZOO_MOMENTS[zooName]) els("dist").value = ZOO_MOMENTS[zooName];
     lastSent.f = els("fIn").value;
     lastSent.g = els("gIn").value;
     let vv = data.frame_view || data.view;
@@ -550,6 +830,147 @@ function glyph(ctx, x, y, c){
   }
 }
 
+/* ---------------- contour level placement ---------------- */
+/* Near a nondegenerate critical point L ~ L_c + quadratic, so the level curve
+   at L_c + h sits at radius ~ sqrt(h).  Equally spaced RADII therefore want
+   h_k ~ k^2, i.e. a level density rho(L) ~ |L - L_c|^(-1/2).  Spacing
+   quadratically about a single anchor (the old "view" rule, ramping from the
+   global backbone minimum) gets that right at the bottom of the picture and
+   nowhere else, so most lines end up out on the bluffs where the loss moves
+   fastest and the neighbourhoods of the critical points -- the part worth
+   looking at -- are left bare.
+
+   Put one inverse-square-root singularity at EVERY critical value instead.
+   The cumulative is closed form,
+
+       Phi(L) = sum_i 2 w_i sgn(L - L_i) sqrt(|L - L_i|)   (+ a linear floor)
+
+   strictly increasing, so the levels are its equal-spaced quantiles, found by
+   bisection.  Near any one L_i this reduces to Phi ~ 2 sqrt(L - L_i) and the
+   radii come out evenly spaced; where critical values crowd together the
+   densities simply add. */
+function levelValues(uMin, uMaxBone, Lmax, NL, v){
+  const span = Lmax - uMin;
+  if (!(span > 0)) return Array.from({length: NL}, () => uMin);
+
+  // EVEN COVERAGE.  Uniform density of contour lines across the view means
+  // equal AREA between consecutive levels: the strip between c_k and c_{k+1}
+  // has width dc/|grad L|, so its area is dc * integral(dl / |grad L|), and
+  // holding that constant widens dc where the loss is steep and narrows it
+  // where the loss is flat.  That is exactly the empirical area quantile --
+  // sample L over the view, sort, and take the k/(NL+1) order statistics.
+  //
+  // Grid sampling here chooses only the LEVELS; the curves themselves stay
+  // closed form, so none of the usual marching-squares artifacts come with it.
+  //
+  // The flat strip comes out right rather than degenerate: a large area at
+  // nearly equal L crowds many quantiles into a narrow band of c, and since
+  // flat means a small dc spans a large da, those closely spaced levels are
+  // widely separated ON SCREEN -- fine level resolution exactly where the
+  // geometry needs it.
+  if (S.levelSpan === "even"){
+    const NS = 160, samp = [];
+    for (let i = 0; i <= NS; i++){
+      const a = v.a0 + (v.a1 - v.a0) * i / NS;
+      for (let j = 0; j <= NS; j++){
+        const b = v.b0 + (v.b1 - v.b0) * j / NS;
+        const L = Lof(a, b);
+        if (Number.isFinite(L)) samp.push(L);
+      }
+    }
+    if (samp.length < NL + 2)
+      return Array.from({length: NL},
+        (_, i) => uMin + span * Math.pow((i + 1) / (NL + 1), 2));
+    samp.sort((x, y) => x - y);
+    const M = samp.length, out = [];
+    let prev = -Infinity;
+    for (let k = 1; k <= NL; k++){
+      let c = samp[Math.min(M - 1, Math.floor(M * k / (NL + 1)))];
+      // Exact ties in the sample would draw one curve twice; nudge past them.
+      if (!(c > prev)) c = prev + Math.max(Math.abs(prev), 1) * 1e-12;
+      out.push(c); prev = c;
+    }
+    return out;
+  }
+
+  if (S.levelSpan !== "critical"){
+    // Previous behaviour, kept: a single quadratic ramp from the anchor.
+    return Array.from({length: NL},
+      (_, i) => uMin + span * Math.pow((i + 1) / (NL + 1), 2));
+  }
+
+  // TWO BANDS.  Below the backbone maximum a level has turning points where
+  // c = u(b), so it CLOSES around the skeleton; above it there is no turning
+  // point in view and the level sweeps across as an outer curve.  Capping at
+  // uMaxBone therefore drew only the closing ones and lost every outer line.
+  // Raising the cap instead drowned the clustering, since the corner loss can
+  // be 1e5 while the whole skeleton lives in an interval of order one.
+  //
+  // So allocate lines to the two bands in proportion to the SCREEN AREA each
+  // occupies -- sampled on a coarse grid -- and use the right law inside each.
+  const NS = 48;
+  let inside = 0, total = 0;
+  for (let i = 0; i <= NS; i++){
+    const a = v.a0 + (v.a1 - v.a0) * i / NS;
+    for (let j = 0; j <= NS; j++){
+      const b = v.b0 + (v.b1 - v.b0) * j / NS;
+      const L = Lof(a, b);
+      if (!Number.isFinite(L)) continue;
+      total++;
+      if (L <= uMaxBone) inside++;
+    }
+  }
+  let frac = total ? inside / total : 0.6;
+  frac = Math.min(0.9, Math.max(0.2, frac));   // never starve either band
+  let nIn = Math.round(frac * NL);
+  if (uMaxBone <= uMin + 1e-300) nIn = 0;
+  if (Lmax <= uMaxBone) nIn = NL;
+  const nOut = NL - nIn;
+
+  // Anchors: the distinct critical values inside the drawn range, plus the
+  // range floor so the far field still gets the sqrt treatment.
+  const tol = 1e-9 * Math.max(Math.abs(uMin), Math.abs(Lmax), 1);
+  const anchors = [uMin];
+  for (const c of (S.P && S.P.critical) || []){
+    const L = c.loss;
+    if (!Number.isFinite(L) || L < uMin - tol || L > Lmax + tol) continue;
+    if (!anchors.some(x => Math.abs(x - L) <= tol)) anchors.push(L);
+  }
+  // A small linear term keeps Phi strictly increasing even where every sqrt
+  // term is momentarily flat, so the bisection below cannot stall.
+  const lin = 1e-3 / Math.sqrt(span);
+  const Phi = L => {
+    let s = lin * (L - uMin);
+    for (const A of anchors){
+      const d = L - A;
+      s += 2 * Math.sign(d) * Math.sqrt(Math.abs(d));
+    }
+    return s;
+  };
+
+  const out = [];
+  if (nIn > 0){
+    const p0 = Phi(uMin), p1 = Phi(uMaxBone);
+    for (let k = 1; k <= nIn; k++){
+      const target = p0 + (p1 - p0) * k / (nIn + 1);
+      let lo = uMin, hi = uMaxBone;
+      for (let it = 0; it < 60; it++){
+        const mid = 0.5 * (lo + hi);
+        if (Phi(mid) < target) lo = mid; else hi = mid;
+      }
+      out.push(0.5 * (lo + hi));
+    }
+  }
+  // Outer band.  For c above every u(b) the contour sits at
+  // a = a* +- sqrt((c-u)/A), so da/dc ~ 1/(2 sqrt(A(c-u))) and equal spacing
+  // in a again wants a sqrt law -- now measured from the backbone maximum
+  // rather than from uMin.
+  for (let j = 1; j <= nOut; j++){
+    out.push(uMaxBone + (Lmax - uMaxBone) * Math.pow(j / (nOut + 1), 2));
+  }
+  return out;
+}
+
 function drawPortrait(){
   const W = cP.width, H = cP.height, v = S.view;
   xP.setTransform(1,0,0,1,0,0);
@@ -599,8 +1020,11 @@ function drawPortrait(){
   // changing this costs a redraw and never a recompute.
   const NL = Math.max(4, Math.min(400, S.levels | 0)), margin = 2 * (v.a1 - v.a0);
   xP.strokeStyle = css("--contour"); xP.lineWidth = 1;
+  let uMaxBone = uMin;
+  for (const u of uv) uMaxBone = Math.max(uMaxBone, u);
+  const LEVELS = levelValues(uMin, uMaxBone, Lmax, NL, v);
   for (let k = 1; k <= NL; k++){
-    const c = uMin + (Lmax - uMin) * Math.pow(k / (NL + 1), 2);
+    const c = LEVELS[k - 1];
     for (const sgn of [1, -1]){
       xP.beginPath();
       let on = false;
@@ -825,6 +1249,60 @@ function drawPortrait(){
     xP.restore();
   }
 
+  // exact geometric wall-limit connection (requested via wall_limit), the
+  // idealized W^u = W^s orbit standing in for the pair of numerical
+  // continuations that a saddle-connection wall makes ill-defined.
+  if (S.P.wall_connections && S.P.wall_connections.length){
+    xP.save();
+    xP.lineWidth = 2.2;
+    xP.strokeStyle = css("--backbone");
+    xP.globalAlpha = .9;
+    for (const rec of S.P.wall_connections){
+      const pts = rec.points || [];
+      if (pts.length < 2) continue;
+      xP.beginPath();
+      pts.forEach((p, i) => i ? xP.lineTo(X(p[0]), Y(p[1])) : xP.moveTo(X(p[0]), Y(p[1])));
+      xP.stroke();
+      const mid = pts[Math.floor(pts.length / 2)];
+      xP.fillStyle = css("--backbone");
+      xP.font = "11px " + css("--mono");
+      xP.fillText(rec.label || "saddle connection", X(mid[0]) + 6, Y(mid[1]) - 6);
+    }
+    xP.restore();
+    xP.globalAlpha = 1;
+  }
+
+  // allocator demo overlay (equal vs. Thompson), fully styled by the server:
+  // colour/width/opacity encode each arm's pull share.
+  if (S.allocator){
+    xP.save();
+    for (const group of [S.allocator.equal, S.allocator.thompson]){
+      if (!group) continue;
+      for (const tr of group.traces || []){
+        const pts = tr.points || [];
+        if (pts.length < 1) continue;
+        xP.globalAlpha = tr.opacity ?? .5;
+        xP.lineWidth = tr.width ?? 1;
+        xP.strokeStyle = tr.color || css("--trace");
+        if (pts.length >= 2){
+          xP.beginPath();
+          pts.forEach((p, i) => i ? xP.lineTo(X(p[0]), Y(p[1])) : xP.moveTo(X(p[0]), Y(p[1])));
+          xP.stroke();
+        }
+        xP.fillStyle = tr.color || css("--trace");
+        if (tr.mark_start){
+          xP.beginPath(); xP.arc(X(pts[0][0]), Y(pts[0][1]), 2.5, 0, 7); xP.fill();
+        }
+        if (tr.mark_end){
+          const last = pts[pts.length - 1];
+          xP.beginPath(); xP.arc(X(last[0]), Y(last[1]), 3.5, 0, 7); xP.fill();
+        }
+      }
+    }
+    xP.restore();
+    xP.globalAlpha = 1;
+  }
+
   // user traces (demo layer)
   xP.globalAlpha = 1;
   xP.lineWidth = 1.4; xP.strokeStyle = css("--trace");
@@ -856,7 +1334,8 @@ function drawPortrait(){
     xP.beginPath();
     xP.moveTo(sx,0); xP.lineTo(sx,H); xP.moveTo(0,sy); xP.lineTo(W,sy); xP.stroke();
   }
-  xP.beginPath(); xP.arc(sx, sy, 5, 0, 7); xP.stroke();
+  // No selection ring: the crosshair already marks the point, and a ring sits
+  // on top of whatever the picture is actually about.
 
   xP.fillStyle = css("--ink-2"); xP.font = "10px " + css("--mono");
   xP.fillText(`a ${v.a0.toFixed(2)} … ${v.a1.toFixed(2)}`, 6, H - 6);
@@ -1099,7 +1578,50 @@ function drawRubber(){
   xP.restore();
 }
 
-function draw(){ drawPortrait(); drawBone(); drawResp(); drawReadout(); drawRubber(); }
+function draw(){ drawPortrait(); drawBone(); drawResp(); drawReadout(); drawRubber(); drawHist(); }
+
+/* ---------------- allocator histogram ---------------- */
+/* work_loss_histogram bins EXECUTED optimizer steps against the exact
+   post-chunk loss on a shared log10 axis, one histogram per policy. Zero and
+   non-finite losses cannot sit on a log axis, so the server reports their
+   step totals separately -- shown as text, not squeezed onto the chart. */
+function drawHist(){
+  const W = cHist.width, H = cHist.height;
+  xH.clearRect(0, 0, W, H);
+  const hist = S.allocator && S.allocator.work_loss_histogram;
+  if (!hist) return;
+  const pad = { l: 40, r: 8, t: 8, b: 26 };
+  const edges = hist.edges, bins = edges.length - 1;
+  const logE = edges.map(Math.log10);
+  const X = i => pad.l + (logE[i] - logE[0]) / (logE[bins] - logE[0] || 1) * (W - pad.l - pad.r);
+  const eq = hist.equal, th = hist.thompson;
+  const maxStep = Math.max(1, ...eq.steps, ...th.steps);
+  const Y = v => H - pad.b - (v / maxStep) * (H - pad.t - pad.b);
+
+  xH.strokeStyle = css("--rule-2"); xH.lineWidth = 1;
+  xH.beginPath(); xH.moveTo(pad.l, H - pad.b); xH.lineTo(W - pad.r, H - pad.b); xH.stroke();
+
+  const drawBars = (steps, color) => {
+    xH.fillStyle = color;
+    for (let i = 0; i < bins; i++){
+      if (!steps[i]) continue;
+      const x0 = X(i), x1 = X(i + 1);
+      xH.globalAlpha = .75;
+      xH.fillRect(x0, Y(steps[i]), Math.max(1, x1 - x0 - 1), Y(0) - Y(steps[i]));
+    }
+    xH.globalAlpha = 1;
+  };
+  drawBars(eq.steps, "#66727b");
+  drawBars(th.steps, "#5b21b6");
+
+  xH.fillStyle = css("--ink-2");
+  xH.font = "10px " + css("--mono");
+  xH.fillText(edges[0].toExponential(1), pad.l, H - 9);
+  xH.textAlign = "right";
+  xH.fillText(edges[bins].toExponential(1), W - pad.r, H - 9);
+  xH.textAlign = "left";
+  xH.fillText(`${maxStep.toLocaleString()} steps/bin`, pad.l, 10);
+}
 
 /* ---------------- descent (demo layer) ---------------- */
 function maxflatKernel(d, lam){
@@ -1318,13 +1840,26 @@ cB.addEventListener("pointerdown", e => {
   const b = S.view.b0 + Math.min(Math.max(frac,0),1) * (S.view.b1 - S.view.b0);
   S.sel = { b, a: aStar(b) }; draw();
 });
+// Zoom is EXPLICIT, never gestural.  A plain wheel event arrives from a mouse
+// wheel, from a trackpad two-finger scroll, AND from a pointing stick's
+// middle-button scroll -- so binding zoom to it hijacks the ordinary scroll
+// gesture on the very device that has no pinch to fall back on.  Plain wheel
+// therefore does nothing here.  The toolbar +/-/reset, the keys +/-/0 and the
+// zoom box are the interface, and those work identically on every device.
+//
+// ctrlKey+wheel is what a trackpad pinch synthesises.  It is honoured only
+// when the box is ticked, but its preventDefault is unconditional so the
+// browser never zooms the PAGE instead.
 cP.addEventListener("wheel", e => {
-  e.preventDefault();
-  const p = toModel(e), k = e.deltaY > 0 ? 1.12 : 1/1.12, v = S.view;
-  v.b0 = p.b + (v.b0 - p.b)*k; v.b1 = p.b + (v.b1 - p.b)*k;
-  v.a0 = p.a + (v.a0 - p.a)*k; v.a1 = p.a + (v.a1 - p.a)*k;
-  draw();
+  if (e.ctrlKey && e.cancelable) e.preventDefault();
+  if (!e.ctrlKey || !els("pinchZoom").checked) return;
+  zoomBy(e.deltaY > 0 ? 1.12 : 1/1.12, toModel(e));
 }, { passive:false });
+
+// Safari raises its own gesture events alongside the wheel stream; without
+// these the page zooms out from under the plot.
+for (const name of ["gesturestart", "gesturechange"])
+  cP.addEventListener(name, e => { if (e.cancelable) e.preventDefault(); });
 
 els("clearTr").onclick = () => { S.traces = []; draw(); };
 // A click cannot land on the slaved curve accurately enough to trace from it.
@@ -1478,6 +2013,7 @@ fetch("/walls").then(r => r.json()).then(list => {
     WALL = list.find(w => w.name === sel.value) || null;
     els("lamLabel").textContent = WALL ? WALL.parameter_name : "parameter";
     els("wallInfo").textContent = WALL ? `base ${WALL.base_case}` : "";
+    els("wallLimit").checked = false;
     if (!WALL){ updateWallReadout(); return; }
     // start at the wall itself
     const t = (WALL.wall - WALL.below) / (WALL.above - WALL.below);
@@ -1488,6 +2024,7 @@ fetch("/walls").then(r => r.json()).then(list => {
   };
   els("lam").addEventListener("input", updateWallReadout);
   els("lam").addEventListener("change", () => { if (WALL) recompute(); });
+  els("wallLimit").addEventListener("change", () => { if (WALL) recompute(); });
 }).catch(() => {});
 
 let timer = null;
@@ -1509,6 +2046,7 @@ function clearWall(){
   WALL = null;
   const sel = els("wallSel");
   if (sel) sel.value = "";
+  els("wallLimit").checked = false;
   updateWallReadout();
 }
 
@@ -1528,16 +2066,277 @@ els("preset").onchange = e => {
 };
 
 // Populate the preset list from the zoo itself rather than hard-coding cases.
+// A zoo case carries its OWN moment distribution.  The portrait payload does
+// not report which moments the server used, so the client remembers what /zoo
+// declared and syncs the control to it -- otherwise the dropdown keeps showing
+// a stale choice and the NEXT recompute silently sends the boxes with the
+// wrong moments, as a custom case, while the label still names the zoo entry.
+const ZOO_MOMENTS = {};
 fetch("/zoo").then(r => r.json()).then(cases => {
   const sel = els("preset");
   for (const c of cases){
     const o = document.createElement("option");
     o.value = c.name;
+    ZOO_MOMENTS[c.name] = c.moment_dist;
     o.textContent = `${c.name}  (deg ${c.deg_f}/${c.deg_g}, ${c.moment_dist})`;
     o.title = c.description || "";
     sel.appendChild(o);
   }
 }).catch(() => {});
+
+// ---- facelift: onboarding, start-here chips, tool hints ------------------
+// Presentation-only glue.  Every action below drives the same controls and
+// functions defined above (recompute, drawRandom, setTool, WALL/wallSel) --
+// nothing here talks to the server directly.
+
+(function(){
+  const KEY = "spong-explorer-onboard-hidden";
+  const board = els("onboard");
+  if (board && localStorage.getItem(KEY) === "1") board.classList.add("hidden");
+  const hideBtn = els("onboardHide");
+  if (hideBtn) hideBtn.onclick = () => {
+    board.classList.add("hidden");
+    try { localStorage.setItem(KEY, "1"); } catch (_) {}
+  };
+})();
+
+const TOOL_HINTS = {
+  select: "select: click a point in the portrait to read off (a, b) and the loss there.",
+  pan:    "pan: drag to move the view.",
+  zoom:   "zoom box: drag a rectangle to zoom into it.",
+  trace:  "trace: click a point to launch a trajectory from it (method and length set in Descent, below)."
+};
+(function(){
+  const orig = setTool;
+  window.setTool = function(t){
+    orig(t);
+    const hint = els("toolHint");
+    if (hint) hint.textContent = TOOL_HINTS[t] || "";
+  };
+  for (const btn of document.querySelectorAll("#tools [data-tool]"))
+    btn.onclick = () => window.setTool(btn.dataset.tool);
+})();
+
+function openDetails(id){
+  const d = document.getElementById(id);
+  if (d) d.open = true;
+  return d;
+}
+
+els("chipSimple").onclick = () => {
+  els("preset").value = "quad";
+  els("preset").dispatchEvent(new Event("change"));
+};
+
+els("chipZoo").onclick = () => {
+  const sel = els("preset");
+  const pick = () => {
+    const opts = Array.from(sel.options).filter(o => o.value && o.value !== "quad");
+    if (!opts.length) return false;
+    const tricky = opts.find(o => /tricky|thrash|nonnearest|slide/i.test(o.value));
+    sel.value = (tricky || opts[opts.length - 1]).value;
+    sel.dispatchEvent(new Event("change"));
+    return true;
+  };
+  if (!pick()){
+    // /zoo hasn't resolved yet -- try again shortly rather than doing nothing.
+    setTimeout(pick, 400);
+  }
+};
+
+els("chipRandom").onclick = () => {
+  openDetails("advRandom");
+  els("drawRandom").click();
+  els("advRandom").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+
+els("chipWall").onclick = () => {
+  openDetails("advWall");
+  const sel = els("wallSel");
+  const pick = () => {
+    const opts = Array.from(sel.options).filter(o => o.value);
+    if (!opts.length) return false;
+    sel.value = opts[0].value;
+    sel.dispatchEvent(new Event("change"));
+    return true;
+  };
+  if (!pick()) setTimeout(pick, 400);
+  els("advWall").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+
+// ---- facelift: user-changeable palette ------------------------------------
+// The plot colours default to the exact house palette from render.py, so a
+// picture made here matches one made anywhere else in the repo -- that is
+// the point of a "house palette" and this panel does not change it unless
+// asked to.  What it offers: interface colours a person may just want to
+// look at differently, and a colorblind-safe remap of the SEMANTIC colours
+// (backbone / unstable / stable / target / response / trace) for the one
+// case where a fixed palette is a genuine accessibility problem, since
+// green-vs-red is exactly the pairing that fails most often.  All of this is
+// a display-only override in this browser: it edits CSS custom properties,
+// nothing that feeds a certificate or is written back to render.py.
+const PAL_GROUPS = {
+  ui:   [["--ground","background"],["--paper","panels"],["--ink","text"],
+         ["--ink-2","secondary text"],["--rule","borders"],["--rule-2","hairlines"]],
+  plot: [["--target","target f(x)"],["--response","response a·g(bx)"],
+         ["--backbone","backbone"],["--unstable","unstable manifold"],
+         ["--stable","stable manifold"],["--trace","trajectory"],
+         ["--contour","contour lines"],["--glyph","critical-point glyphs"],
+         ["--rim","degenerate-point rim"]]
+};
+const DEFAULT_PALETTE = {
+  "--ground":"#D3D9DD","--paper":"#FAFBFB","--ink":"#121D26","--ink-2":"#4A5A66",
+  "--rule":"#A6B2BA","--rule-2":"#C7CFD5","--target":"#12507A","--response":"#C25E00",
+  "--contour":"#c8c8c8","--backbone":"#e6a817","--unstable":"#00b400",
+  "--stable":"#d40000","--glyph":"#111111","--rim":"#888888","--trace":"#5B3E8C"
+};
+// "dark" only touches the interface group: the canvases paint a fixed white
+// plot surface (see drawPortrait's fillRect), so the semantic colours were
+// already chosen for a white background and stay exactly as render.py has
+// them regardless of the surrounding chrome.
+const PRESET_DARK = {
+  "--ground":"#171C20","--paper":"#20272C","--ink":"#E7ECEF","--ink-2":"#9FB0BC",
+  "--rule":"#3A454C","--rule-2":"#2C353B"
+};
+// Okabe-Ito derived: blue/vermillion for stable/unstable instead of
+// green/red (the pairing that fails most often for red-green colorblindness),
+// with the rest of the plot group remapped to stay mutually distinguishable.
+const PRESET_COLORBLIND = {
+  "--target":"#0072B2","--response":"#E69F00","--backbone":"#CC79A7",
+  "--unstable":"#009E73","--stable":"#D55E00","--trace":"#000000"
+};
+const PAL_KEY = "spong-explorer-palette";
+
+function paletteFromLocalStorage(){
+  try { return JSON.parse(localStorage.getItem(PAL_KEY) || "{}"); }
+  catch (_) { return {}; }
+}
+function applyPalette(map, save){
+  for (const [k, v] of Object.entries(map))
+    document.documentElement.style.setProperty(k, v);
+  syncPaletteInputs();
+  if (save){
+    const stored = paletteFromLocalStorage();
+    Object.assign(stored, map);
+    try { localStorage.setItem(PAL_KEY, JSON.stringify(stored)); } catch (_) {}
+  }
+  if (S.P) draw();   // recolour whatever is already on screen
+}
+function resetPalette(){
+  document.documentElement.removeAttribute("style");
+  try { localStorage.removeItem(PAL_KEY); } catch (_) {}
+  syncPaletteInputs();
+  if (S.P) draw();
+}
+function currentValue(varName){
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim()
+      || DEFAULT_PALETTE[varName];
+}
+function syncPaletteInputs(){
+  for (const box of [els("palUI"), els("palPlot")])
+    for (const inp of box.querySelectorAll("input[type=color]"))
+      inp.value = currentValue(inp.dataset.var);
+}
+function buildPaletteControls(){
+  const build = (container, group) => {
+    for (const [varName, label] of group){
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `<label for="pal-${varName.slice(2)}">${label}</label>
+        <input type="color" id="pal-${varName.slice(2)}">`;
+      const inp = wrap.querySelector("input");
+      inp.dataset.var = varName;
+      inp.value = currentValue(varName);
+      inp.addEventListener("input", () => applyPalette({ [varName]: inp.value }, true));
+      container.appendChild(wrap);
+    }
+  };
+  build(els("palUI"), PAL_GROUPS.ui);
+  build(els("palPlot"), PAL_GROUPS.plot);
+}
+buildPaletteControls();
+applyPalette(paletteFromLocalStorage(), false);   // restore this browser's choice, if any
+
+document.querySelectorAll("#advTheme [data-preset]").forEach(btn => {
+  btn.onclick = () => {
+    if (btn.dataset.preset === "house") resetPalette();
+    else applyPalette(btn.dataset.preset === "dark" ? PRESET_DARK : PRESET_COLORBLIND, true);
+  };
+});
+els("themeReset").onclick = resetPalette;
+els("themeToggle").onclick = () => { els("advTheme").open = true; els("advTheme").scrollIntoView({ behavior:"smooth", block:"nearest" }); };
+
+// ---- allocator: equal vs. Thompson (demo layer, not certified) -----------
+// Runs against the exact model behind the currently shown portrait --
+// S.lastBody is the same payload /portrait was last sent (set in recompute),
+// so this asks the server to resolve the identical model rather than
+// re-deriving f/g/moments/zoo/wall selection logic here.
+function fmtRange(vals){
+  const v = (vals || []).filter(Number.isFinite);
+  if (!v.length) return "—";
+  return `${Math.min(...v).toExponential(2)} .. ${Math.max(...v).toExponential(2)}`;
+}
+async function runAllocator(){
+  if (!S.lastBody){ return; }
+  const body = {
+    ...S.lastBody,
+    allocation_view: [S.view.a0, S.view.a1, S.view.b0, S.view.b1],
+    method: els("allocMethod").value,
+    schedule: els("allocSchedule").value,
+    design: els("allocDesign").value,
+    starts: +els("allocStarts").value,
+    rounds: +els("allocRounds").value,
+    chunk_steps: +els("allocChunk").value,
+    batch_size: +els("allocBatch").value,
+    seed: +els("allocSeed").value,
+    time_limit_sec: +els("allocLimit").value
+  };
+  const lr = els("allocLR").value;
+  if (lr !== "") body.learning_rate = +lr;
+
+  const st = els("allocStatus"), sum = els("allocSummary");
+  st.className = "status busy"; st.textContent = "running…";
+  sum.textContent = "";
+  els("runAllocator").disabled = true;
+  try {
+    const r = await fetch("/allocator", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    if (!r.ok || data.error){
+      st.className = "status err";
+      st.textContent = data.error || `HTTP ${r.status}`;
+      return;
+    }
+    S.allocator = data;
+    st.className = "status"; st.textContent = `done · ${data.elapsed_sec.toFixed(1)}s`;
+    const eq = data.equal || {}, th = data.thompson || {};
+    let summary =
+      `equal — final loss range [${fmtRange(eq.final_observations)}]<br>`
+      + `thompson — final loss range [${fmtRange(th.final_observations)}]`;
+    const hist = data.work_loss_histogram;
+    if (hist){
+      const off = p => `zero-loss ${p.zero_steps.toLocaleString()} · `
+        + `non-finite ${p.nonfinite_steps.toLocaleString()} steps (off the histogram's log axis, out of ${p.total_steps.toLocaleString()} total)`;
+      summary += `<br>equal — ${off(hist.equal)}`
+              + `<br>thompson — ${off(hist.thompson)}`;
+    }
+    sum.innerHTML = summary;
+    draw();
+  } catch (e){
+    st.className = "status err";
+    st.textContent = "backend unreachable";
+  } finally {
+    els("runAllocator").disabled = false;
+  }
+}
+els("runAllocator").onclick = runAllocator;
+els("clearAllocator").onclick = () => {
+  S.allocator = null;
+  els("allocSummary").textContent = "";
+  els("allocStatus").textContent = "";
+  draw();
+};
 
 recompute();
 </script>

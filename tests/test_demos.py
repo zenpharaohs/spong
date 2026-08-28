@@ -6,6 +6,7 @@ oracle model.
 """
 
 from fractions import Fraction
+import warnings
 
 import numpy as np
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from demos import initializers
 from demos import adam_flow
 from demos import batch_moment_portraits
+from demos import cb_sampler
 from demos import hybrid_saddle_connection
 from demos import l2_l4_phase_portraits
 from demos import optimizer_moustaches
@@ -21,6 +23,7 @@ from demos import saddle_connections
 from demos import saddle_connection_comparison
 from demos import saddle_connection_triptych
 from demos import thompson
+from demos import thompson_moustaches
 from spong import charts, model, portrait, sturm, zoo
 
 
@@ -33,6 +36,69 @@ def test_batch_gradient_matches_mean_field(d2):
     est = np.mean([g(a, b) for _ in range(20)], axis=0)
     exact = m.gradL(a, b)
     assert np.allclose(est, exact, rtol=0.05, atol=0.02)
+
+
+def test_batch_gradient_supports_normal_portrait_law():
+    m = model.build(
+        [1, 1, 1], [1, 1, 1], model.moments_normal01(5))
+    gradient = opt.BatchGradient(
+        [1, 1, 1], [1, 1, 1], batch_size=40000,
+        rng=np.random.default_rng(31), distribution="normal01")
+    estimate = np.mean([gradient(0.7, 0.2) for _ in range(8)], axis=0)
+    assert np.allclose(estimate, m.gradL(0.7, 0.2), rtol=0.03, atol=0.03)
+
+
+def test_batch_gradient_resamples_empirical_portrait_support():
+    samples = np.array([-1.25, 0.0, 0.75])
+    gradient = opt.BatchGradient(
+        [1, -0.5], [0.25, 1], batch_size=200,
+        rng=np.random.default_rng(37), distribution="empirical",
+        samples=samples)
+    assert set(np.unique(gradient._draw())) <= set(samples)
+
+
+def test_cb_library_resolver_honors_explicit_override(tmp_path):
+    library = tmp_path / "libcb_core.test"
+    library.touch()
+    assert cb_sampler.resolve_library(library) == library.resolve()
+
+
+def test_cb_library_resolver_can_build_discovered_sibling_source(
+        tmp_path, monkeypatch):
+    source = tmp_path / "cb_core.c"
+    source.write_text("/* exact sampler test source */\n")
+    built = tmp_path / "libcb_core.test"
+    monkeypatch.delenv("CB_CORE_LIBRARY", raising=False)
+    monkeypatch.delenv("CB_CORE_SOURCE", raising=False)
+    monkeypatch.setattr(cb_sampler, "_source_candidates", lambda: iter([source]))
+    monkeypatch.setattr(cb_sampler, "_built_candidates", lambda _source: iter(()))
+    monkeypatch.setattr(cb_sampler, "_build_shared", lambda found: built)
+    assert cb_sampler.resolve_library(auto_build=True) == built
+
+
+@pytest.mark.parametrize("observation", [-1e-12, 1.0 + 1e-12, np.nan, np.inf])
+def test_cb_bank_rejects_observations_outside_closed_unit_interval(observation):
+    bank = object.__new__(cb_sampler.ContinuousBernoulliBank)
+    with pytest.raises(ValueError, match="closed interval"):
+        bank.update(0, observation)
+
+
+def test_cb_bank_closed_endpoints_remain_direct_point_masses():
+    library = cb_sampler.resolve_library(auto_build=True)
+    with cb_sampler.ContinuousBernoulliBank(2, library=library) as bank:
+        for _ in range(1000):
+            bank.update(0, 0.0)
+            bank.update(1, 1.0)
+            assert np.array_equal(bank.draw_all(), [0.0, 1.0])
+
+
+def test_cb_bank_can_replace_descent_sample_and_hold_stats():
+    library = cb_sampler.resolve_library(auto_build=True)
+    with cb_sampler.ContinuousBernoulliBank(1, library=library) as bank:
+        bank.set_observation(0, 0.25, 7)
+        assert np.isfinite(bank.draw_all()[0])
+        bank.set_observation(0, 0.75, 8)
+        assert np.isfinite(bank.draw_all()[0])
 
 
 def test_l4_exact_fit_has_zero_hessian_and_quartic_leading_loss():
@@ -120,6 +186,19 @@ def test_resumable_sgd_matches_one_shot_run():
     assert np.array_equal(joined, whole)
 
 
+def test_optimizer_run_stops_at_last_finite_iterate_without_warnings():
+    gradient = opt.BatchGradient(
+        [1.0], [0.0, 0.0, 0.0, 1.0], batch_size=4,
+        rng=np.random.default_rng(39), distribution="empirical",
+        samples=[2.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        trajectory = opt.run_adam(
+            gradient, (1.0, 1e200), lr=1e-3, n_steps=4)
+    assert trajectory.shape == (1, 2)
+    assert np.array_equal(trajectory[-1], [1.0, 1e200])
+
+
 def test_vector_muon_surrogate_normalizes_the_2x1_update():
     state = opt.VectorMuonState(
         np.array([1.0, 1.0]), lr=0.2, momentum=0.0, nesterov=False)
@@ -155,6 +234,24 @@ class _DeterministicPosterior:
         self.updates.append((arm, observation))
 
 
+class _FakeContinuousBernoulliBank:
+    def __init__(self, n_arms, seed=0, library=None):
+        self.n_arms = n_arms
+        self.library_path = "/fake/libcb_core"
+
+    def draw_all(self):
+        return np.arange(self.n_arms, 0, -1, dtype=float)
+
+    def update(self, arm, observation):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        pass
+
+
 def test_thompson_allocates_immediately_without_capture_information():
     states = [
         opt.SGDState(np.array([1.0, 0.0]), lr=0.1),
@@ -171,8 +268,137 @@ def test_thompson_allocates_immediately_without_capture_information():
     # One forced pull per arm, then posterior choices 1 and 0.
     assert np.array_equal(result.choices, [0, 1, 1, 0])
     assert np.array_equal(result.allocations, [2, 2])
+    assert np.array_equal(result.allocation_steps, [1, 1, 1, 1])
+    assert np.allclose(result.allocation_losses, [.81, 3.24, 2.6244, .6561])
     assert [arm for arm, _ in posterior.updates] == [0, 1, 1, 0]
     assert all(0 <= value <= 1 for _, value in posterior.updates)
+
+
+def test_thompson_replaces_sample_and_hold_stats_when_supported():
+    class HoldingPosterior(_DeterministicPosterior):
+        def __init__(self):
+            super().__init__(([0.8, 0.2], [0.1, 0.9]))
+            self.held = []
+
+        def set_observation(self, arm, observation, selections):
+            self.held.append((arm, observation, selections))
+
+        def update(self, arm, observation):
+            raise AssertionError("descent allocation must replace, not add")
+
+    states = [
+        opt.SGDState(np.array([1.0, 0.0]), lr=0.1),
+        opt.SGDState(np.array([2.0, 0.0]), lr=0.1),
+    ]
+    gradients = [lambda a, b: np.array([a, b])] * 2
+    posterior = HoldingPosterior()
+    result = thompson.allocate(
+        states, gradients, lambda a, b: a*a+b*b,
+        posterior, rounds=4, chunk_steps=1)
+    assert np.array_equal(result.choices, [0, 1, 1, 0])
+    assert [(arm, selections) for arm, _, selections in posterior.held] == [
+        (0, 1), (1, 1), (1, 2), (0, 2)]
+
+
+def test_inverse_sqrt_allocator_schedule_is_budget_prefix_consistent():
+    short = thompson_moustaches._schedule(
+        "inverse-sqrt", 0.01, horizon=1000, warmup_steps=80)
+    long = thompson_moustaches._schedule(
+        "inverse-sqrt", 0.01, horizon=100000, warmup_steps=80)
+    assert [short(t) for t in (1, 40, 80, 2000)] == [
+        long(t) for t in (1, 40, 80, 2000)]
+
+
+def test_thompson_allocation_honors_interactive_stop_hook():
+    state = opt.SGDState(np.array([1.0, 0.0]), lr=0.1)
+    posterior = _DeterministicPosterior(())
+    with pytest.raises(TimeoutError, match="interactive time limit"):
+        thompson.allocate(
+            [state], [lambda a, b: np.array([a, b])],
+            lambda a, b: a*a+b*b, posterior,
+            rounds=1, chunk_steps=10, should_stop=lambda: True)
+    assert state.t == 0
+    assert posterior.updates == []
+
+
+def test_thompson_marks_divergent_arm_terminal_without_retrying_it():
+    state = opt.AdamState(np.array([1.0, 1e200]), lr=1e-3)
+    gradient = opt.BatchGradient(
+        [1.0], [0.0, 0.0, 0.0, 1.0], batch_size=4,
+        rng=np.random.default_rng(41), distribution="empirical",
+        samples=[2.0])
+    posterior = _DeterministicPosterior(([0.0], [0.0]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        result = thompson.allocate(
+            [state], [gradient], lambda a, b: a*a+b*b,
+            posterior, rounds=3, chunk_steps=2)
+    assert np.array_equal(result.allocations, [1])
+    assert np.array_equal(result.executed_steps, [0])
+    assert np.array_equal(result.terminated, [True])
+    assert result.termination_reasons == ("nonfinite_gradient",)
+    assert result.observations == [[1.0]]
+    assert np.array_equal(result.allocation_steps, [0])
+    assert np.all(np.isinf(result.allocation_losses))
+    assert result.trajectories[0].shape == (1, 2)
+
+
+def test_thompson_escalates_nonfinite_loss_without_sampling_from_one():
+    state = opt.SGDState(np.array([1e200, 0.0]), lr=0.1)
+    posterior = _DeterministicPosterior(())
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        result = thompson.allocate(
+            [state], [lambda a, b: np.zeros(2)],
+            lambda a, b: a*a+b*b, posterior,
+            rounds=1, chunk_steps=1)
+    assert result.observations == [[1.0]]
+    assert result.terminated[0]
+    assert result.termination_reasons == ("nonfinite_loss",)
+    assert result.executed_steps[0] == 1
+    assert np.array_equal(result.allocation_steps, [1])
+    assert np.all(np.isinf(result.allocation_losses))
+
+
+def test_work_loss_histogram_accounts_for_every_executed_step():
+    from types import SimpleNamespace
+
+    equal = SimpleNamespace(
+        allocation_losses=np.array([1e-3, 1e-1, np.inf]),
+        allocation_steps=np.array([10, 20, 0]))
+    adaptive = SimpleNamespace(
+        allocation_losses=np.array([1e-2, 0.0, np.inf]),
+        allocation_steps=np.array([4, 5, 6]))
+    histogram = thompson_moustaches.work_loss_histogram(
+        equal, adaptive, bins=8)
+    assert len(histogram["edges"]) == 9
+    assert histogram["weight"] == "executed_optimizer_steps"
+    assert sum(histogram["equal"]["steps"]) == 30
+    assert histogram["equal"]["total_steps"] == 30
+    assert sum(histogram["thompson"]["steps"]) == 4
+    assert histogram["thompson"]["zero_steps"] == 5
+    assert histogram["thompson"]["nonfinite_steps"] == 6
+    assert histogram["thompson"]["total_steps"] == 15
+
+
+def test_equal_thompson_comparison_accepts_arbitrary_model_and_view(
+        d2, monkeypatch):
+    m, _ = d2
+    monkeypatch.setattr(
+        thompson_moustaches.cb_sampler, "ContinuousBernoulliBank",
+        _FakeContinuousBernoulliBank)
+    result = thompson_moustaches.compare_allocators(
+        m, [1, 1, 1], [1, 1, 1], (-0.5, 0.5, -0.75, 0.75),
+        starts=3, rounds=6, chunk_steps=1, batch_size=4,
+        method="adam", schedule="constant", seed=41)
+    starts = result["starts"]
+    assert np.all((-0.5 <= starts[:, 0]) & (starts[:, 0] <= 0.5))
+    assert np.all((-0.75 <= starts[:, 1]) & (starts[:, 1] <= 0.75))
+    assert np.array_equal(result["equal"].allocations, [2, 2, 2])
+    assert np.array_equal(result["thompson"].allocations, [1, 1, 4])
+    assert np.array_equal(result["equal"].executed_steps, [2, 2, 2])
+    assert not np.any(result["equal"].terminated)
+    assert result["library_path"] == "/fake/libcb_core"
 
 
 def test_saddle_connection_coefficients_are_bounded_dyadics():
@@ -276,10 +502,20 @@ def test_spsa_coefficient_step_is_clipped():
 
 
 @pytest.mark.parametrize("value, expected", [
-    (0.0, 0.0), (1.0, 0.5), (3.0, 0.75),
-    (float("inf"), 1.0), (-1e-15, 0.0)])
+    (0.0, 0.0),
+    (1.0, 0.5), (3.0, 0.75),
+    (float("inf"), 1.0),
+    (-1e-15, 0.0)])
 def test_transformed_loss(value, expected):
     assert thompson.transformed_loss(value) == pytest.approx(expected)
+
+
+def test_transformed_loss_uses_closed_family_boundaries():
+    values = [0.0, -1.0, 1e-300, 1.0, 1e300, np.inf, np.nan]
+    observations = [thompson.transformed_loss(value) for value in values]
+    assert observations[:2] == [0.0, 0.0]
+    assert observations[-2:] == [1.0, 1.0]
+    assert all(0.0 <= observation <= 1.0 for observation in observations)
 
 
 def test_empirical_adam_innovation_matches_empirical_loss_gradient():

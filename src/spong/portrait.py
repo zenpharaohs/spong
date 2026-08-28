@@ -86,7 +86,8 @@ def _capture_radius(e: sturm.Enumeration, ds: float) -> float:
 
 def compute(m: Model, view=None, geometry_level: int = 0,
             _enumeration=None, _display_view=None,
-            _genericity=None, _skip_audit: bool = False) -> Portrait:
+            _genericity=None, _skip_audit: bool = False,
+            pair_contact_policy: str = "order_sweep") -> Portrait:
     """Compute the certified portrait inside the §8b box contract.
 
     _skip_audit returns the geometry with NO topology certificate.  It exists
@@ -94,6 +95,10 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     produced, while the audit is what costs -- 714s of an 808s level-0
     portrait on linear-target-d17-thrash.  The resulting ledger reports status
     ``not_audited`` and must never be presented as a verdict.
+
+    ``pair_contact_policy`` selects the production loss-level order sweep,
+    its chord-verdict shadow comparison, or the former chord audit; see
+    :func:`spong.topology.audit`.
     """
     e = (_enumeration if _enumeration is not None else
          sturm.materialize_stubs(m, sturm.enumerate_critical_points(m)))
@@ -249,7 +254,9 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             "branch_inventory": {}, "attempts": [],
         }
     else:
-        p.ledger["topology"] = topology.audit(m, e, branches, box)
+        p.ledger["topology"] = topology.audit(
+            m, e, branches, box,
+            pair_contact_policy=pair_contact_policy)
     _t_done = time.perf_counter()
     # Branch tracing is a small minority of a portrait: measured on
     # tricky-d11, 8.2s of branches against 143s of wall.  The certificate
@@ -273,7 +280,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
 
 
 def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
-                      _enumeration=None) -> Portrait:
+                      _enumeration=None,
+                      pair_contact_policy: str = "order_sweep") -> Portrait:
     """Step up the portraitist until topology certifies or explicitly refuse."""
     # Geometry escalation must not redo the exact zero-dimensional Morse
     # skeleton, its conditioned critical jets, or its materialized stubs.
@@ -293,7 +301,8 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
         geometry_started = time.perf_counter()
         result = compute(
             m, view=view, geometry_level=level, _enumeration=enumeration,
-            _display_view=display_view, _genericity=genericity)
+            _display_view=display_view, _genericity=genericity,
+            pair_contact_policy=pair_contact_policy)
         top = result.ledger["topology"]
         attempts.append({
             "geometry_level": level, "status": top["status"],

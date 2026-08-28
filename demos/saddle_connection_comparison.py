@@ -264,6 +264,8 @@ def main(argv=None):
     parser.add_argument(
         "--stork-stages", type=int, default=20,
         help="stabilized stages for STORK-2/4 (STORK-4 supports 9 or 20)")
+    parser.add_argument("--contact-threshold", type=float, default=4.0)
+    parser.add_argument("--contact-limit", type=int, default=50000)
     parser.add_argument(
         "--output-dir", type=Path,
         default=Path("out/saddle_connection_comparison"))
@@ -331,6 +333,12 @@ def main(argv=None):
         target_approach = point_polyline_distance(
             (target.a, target.b), branch.Y)
         section = two_sided_section_measurement(candidate, family)
+        contact_diagnostics = comparison.manifold_contact_diagnostics(
+            m, raw_wall.enumeration, candidate.branches, candidate.box,
+            threshold=args.contact_threshold,
+            candidate_limit=args.contact_limit)
+        pair_contacts = contact_diagnostics["pair_order_sweep"]
+        self_contacts = contact_diagnostics["self_contacts"]
         transverse_panels.append((
             method, transverse_section_samples(candidate, family)))
         destination_label = (
@@ -352,7 +360,11 @@ def main(argv=None):
             f"then selects {destination_label}; endpoint distance to that "
             f"minimum is {destination_distance:.3e}. The independent "
             f"W^u(B)/W^s(N) midpoint mismatch is "
-            f"{abs(section['signed_mismatch']):.3e}. This is a numerical "
+            f"{abs(section['signed_mismatch']):.3e}. Contact diagnostic="
+            f"{contact_diagnostics['decision']}: pair roots="
+            f"{pair_contacts['roots']}, unresolved="
+            f"{pair_contacts['unresolved'] + pair_contacts['critical_transition']}, "
+            f"self-crossings={self_contacts['crosses']}. This is a numerical "
             "chamber choice, not the wall portrait.")
         cards.append(_card(method, full_name, detail_name, note))
         records.append({
@@ -361,6 +373,7 @@ def main(argv=None):
             "points": int(len(branch.Y)),
             "target_saddle_approach": target_approach,
             "two_sided_section": section,
+            "contact_diagnostics": contact_diagnostics,
             "destination": {
                 "a": float(destination.a),
                 "b": float(destination.b),
@@ -379,7 +392,7 @@ def main(argv=None):
 
     report_name = f"{family.name}-casual-comparison.json"
     report = {
-        "format": "spong-saddle-connection-comparison-v2",
+        "format": "spong-saddle-connection-comparison-v3",
         "family": family.name,
         "wall_parameter": family.wall_parameter,
         "critical_points": "exact Sturm inventory shared by all panels",
@@ -391,6 +404,8 @@ def main(argv=None):
             "atol": args.atol,
             "stork_stages": args.stork_stages,
             "capture_saddles": False,
+            "contact_threshold": args.contact_threshold,
+            "contact_limit": args.contact_limit,
         },
         "reference": {
             "wall_trace": trace,

@@ -188,6 +188,7 @@ def m_of(p):
 def snapshot(p) -> dict:
     """The assertions of a portrait, independent of how it was computed."""
     led = p.ledger
+    sweep = led["topology"].get("pair_order_sweep")
     return {
         "enumeration": led["enumeration"],
         "critical": [(str(q.b), str(q.a), q.kind, q.source, int(q.u2_sign))
@@ -198,6 +199,12 @@ def snapshot(p) -> dict:
         "forbidden": led["topology"]["forbidden_count"],
         "ambiguous": led["topology"]["ambiguous_count"],
         "level": led["topology"]["geometry_level"],
+        "pair_contact_policy": led["topology"].get(
+            "pair_contact_policy", "order_sweep"),
+        "pair_order_sweep": (None if sweep is None else (
+            sweep["decision"], sweep["candidates"], sweep["roots"],
+            sweep["same_order"], sweep["terminal"],
+            sweep["critical_transition"], sweep["unresolved"])),
     }
 
 
@@ -227,6 +234,11 @@ def main() -> int:
                     default="mixed",
                     help="directed cases prescribe a critical point at a "
                          "large |b|, which is where the stiffness is")
+    ap.add_argument(
+        "--pair-contact-policy",
+        choices=("chord", "order_sweep_shadow", "order_sweep"),
+        default="order_sweep",
+        help="pair-contact classifier used by the geometry audit")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -269,7 +281,8 @@ def main() -> int:
         engine.use("native")
         try:
             t0 = time.perf_counter()
-            p = portrait.certified_compute(m)
+            p = portrait.certified_compute(
+                m, pair_contact_policy=args.pair_contact_policy)
             t_native += time.perf_counter() - t0
         except Exception as exc:
             tally["error"] += 1
@@ -301,7 +314,8 @@ def main() -> int:
         if sub.random() < args.determinism_rate:
             det_checked += 1
             os.environ["SPONG_WORKERS"] = "1"
-            solo = snapshot(portrait.certified_compute(m))
+            solo = snapshot(portrait.certified_compute(
+                m, pair_contact_policy=args.pair_contact_policy))
             os.environ["SPONG_WORKERS"] = str(args.workers)
             delta = differences(base, solo)
             if delta:
@@ -315,7 +329,8 @@ def main() -> int:
             ref_checked += 1
             engine.use("python")
             t0 = time.perf_counter()
-            ref = snapshot(portrait.certified_compute(m))
+            ref = snapshot(portrait.certified_compute(
+                m, pair_contact_policy=args.pair_contact_policy))
             t_reference += time.perf_counter() - t0
             engine.use("native")
             delta = differences(base, ref)

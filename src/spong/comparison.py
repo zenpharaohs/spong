@@ -600,6 +600,179 @@ def integral_curve_diagnostics(m: Model, Y, spacing):
     }
 
 
+def arc_forward_euler(m: Model, branches, box, stride: int = 32):
+    """Controlled low-order replacement for the manifold proposer.
+
+    The exact gradient flow and its unit-speed reparametrization have the
+    same integral curves.  Starting at each supplied launch point, march
+
+        y[n+1] = y[n] + sigma*h[n]*grad(L)(y[n])/|grad(L)(y[n])|
+
+    by Forward Euler.  ``h[n]`` is the arc length of ``stride`` consecutive
+    reference chords.  Thus launch points, trace box, and physical arc budget
+    remain comparable while the production continuation method is removed.
+    Terminal and local-graph certificates are deliberately not inherited.
+    """
+    if stride < 1:
+        raise ValueError("Euler stride must be positive")
+    result = []
+    for branch in branches:
+        reference = np.asarray(branch.Y, dtype=float)
+        if len(reference) < 2:
+            result.append(Branch(
+                branch.kind, reference.copy(), "max_steps",
+                certs={}, diag={**branch.diag, "uncertified": True,
+                                "arc_forward_euler_stride": stride,
+                                "critical_steps": 0}))
+            continue
+        initial_gradient = np.asarray(
+            m.gradL(float(reference[0, 0]), float(reference[0, 1])),
+            dtype=float)
+        initial_chord = reference[1]-reference[0]
+        orientation = (1.0 if float(initial_chord@initial_gradient) >= 0.0
+                       else -1.0)
+        chord = np.hypot(
+            np.diff(reference[:, 0]), np.diff(reference[:, 1]))
+        points = [reference[0].copy()]
+        term = "arc_budget"
+        for k in range(0, len(chord), stride):
+            step = float(np.sum(chord[k:k+stride]))
+            current = points[-1]
+            gradient = np.asarray(
+                m.gradL(float(current[0]), float(current[1])), dtype=float)
+            norm = float(np.hypot(gradient[0], gradient[1]))
+            if (not math.isfinite(norm) or norm == 0.0
+                    or not math.isfinite(step)):
+                term = "nonfinite"
+                break
+            candidate = current+orientation*step*gradient/norm
+            if not np.all(np.isfinite(candidate)):
+                term = "nonfinite"
+                break
+            points.append(candidate)
+            if not (box[0] <= candidate[0] <= box[1]
+                    and box[2] <= candidate[1] <= box[3]):
+                term = "box_exit"
+                break
+        result.append(Branch(
+            branch.kind, np.asarray(points), term, certs={},
+            diag={**branch.diag, "uncertified": True,
+                  "arc_forward_euler_stride": stride,
+                  # Only the launch segment gets the common-saddle
+                  # exclusion.  The reference local-graph certificate does
+                  # not apply to the Euler continuation constructed here.
+                  "critical_steps": min(1, len(points)-1)}))
+    return result
+
+
+def manifold_contact_diagnostics(
+        m: Model, reference_enumeration, branches, box, *,
+        threshold: float = 4.0, candidate_limit: int = 50000):
+    """Apply production contact semantics to an uncertified branch proposal.
+
+    The comparison methods inherit no terminal, local-graph, or endpoint
+    certificates.  Consequently this is a diagnostic, not a route by which a
+    textbook integrator can certify a portrait.  Resolved pair roots and
+    transverse self-crossings are faults; contacts without adequate witnesses
+    remain unresolved.
+    """
+    from . import order_sweep, topology
+
+    if candidate_limit < 1:
+        raise ValueError("candidate limit must be positive")
+    scale = max(1.0, *(abs(float(value)) for value in box))
+    predicate_tolerance = 128*np.finfo(float).eps*scale
+    contacts, pair_limited = order_sweep.pair_contact_candidates(
+        branches, reference_enumeration.points, box,
+        predicate_tolerance, limit=candidate_limit)
+    pair_result = order_sweep.classify_contacts(
+        m, reference_enumeration, branches, contacts,
+        predicate_tolerance, threshold=threshold)
+
+    # Self-intersections require two parameter sheets of one trace and cannot
+    # be represented by the pairwise single-valued loss profile.  Retain the
+    # established chord predicate here, but separate transverse crossings
+    # from ambiguous contacts in the report.
+    remaining = max(0, candidate_limit-len(contacts))
+    self_crosses = self_ambiguous = 0
+    self_examples = []
+    self_limited = False
+    if not pair_limited and remaining:
+        native = topology._native_contact_available()
+        critical = np.asarray([
+            (point.a, point.b) for point in reference_enumeration.points],
+            dtype=float)
+        allowed_radius = max(1024*np.finfo(float).eps*scale, 1e-11)
+        for branch_index, branch in enumerate(branches):
+            Y = np.asarray(branch.Y, dtype=float)
+            if len(Y) < 2:
+                continue
+            root = None if native else topology._tree(Y)
+            sagitta = topology._sagitta_bounds(Y)
+            for si, sj, kind, point in topology._self_contact_events(
+                    Y, root, predicate_tolerance, sagitta):
+                location = np.asarray(point, dtype=float)
+                if len(critical) and np.min(topology._row_norm2(
+                        critical-location)) <= allowed_radius:
+                    continue
+                if kind == "cross":
+                    self_crosses += 1
+                else:
+                    self_ambiguous += 1
+                if len(self_examples) < 32:
+                    self_examples.append({
+                        "branch": branch_index,
+                        "segments": (int(si), int(sj)),
+                        "kind": kind,
+                        "point": tuple(float(value) for value in point),
+                    })
+                remaining -= 1
+                if remaining == 0:
+                    self_limited = True
+                    break
+            if self_limited:
+                break
+
+    complete = not pair_limited and not self_limited
+    decision = (
+        "fault" if pair_result["roots"] or self_crosses else
+        "unresolved" if (not complete
+                         or pair_result["decision"] == "unresolved"
+                         or self_ambiguous) else
+        "accepted")
+    compact_pairs = []
+    for pair in pair_result["pairs"]:
+        compact_pairs.append({
+            key: pair.get(key) for key in (
+                "branches", "candidate_count", "root_count", "roots",
+                "same_order_count", "terminal_count",
+                "critical_transition_count", "unresolved_count",
+                "contact_cluster_count", "clusters", "profile_levels",
+                "first_dropped_nonmonotone",
+                "second_dropped_nonmonotone", "profile_valid_fraction",
+                "minimum_transversality")
+        })
+    return {
+        "method": "loss_level_order_sweep",
+        "decision": decision,
+        "complete": complete,
+        "threshold": float(threshold),
+        "predicate_tolerance": float(predicate_tolerance),
+        "candidate_limit": int(candidate_limit),
+        "limit_hit": not complete,
+        "pair_order_sweep": {
+            key: pair_result[key] for key in (
+                "decision", "candidates", "roots", "same_order",
+                "terminal", "critical_transition", "unresolved")
+        } | {"pairs": compact_pairs},
+        "self_contacts": {
+            "crosses": self_crosses,
+            "ambiguous": self_ambiguous,
+            "examples": self_examples,
+        },
+    }
+
+
 def casual_portrait(
         m: Model, method: str, *, critical_method: str = "certified",
         reference_enumeration=None, view=None, step_size: float = 0.01,

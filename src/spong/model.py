@@ -41,6 +41,80 @@ def _ev(c: np.ndarray, x):
     return np.polynomial.polynomial.polyval(x, c)
 
 
+def _ordinary_rational_input(x) -> bool:
+    """Whether established direct-Horner rounding is safely in range."""
+    if np.isscalar(x):
+        value = float(x)
+        return np.isfinite(value) and abs(value) <= 32.0
+    values = np.asarray(x, dtype=float)
+    return bool(np.all(np.isfinite(values) & (np.abs(values) <= 32.0)))
+
+
+def _rational_product(x, numerators, denominators):
+    """Evaluate a product of polynomials divided by another, projectively.
+
+    Direct far-field formulas such as ``B*N/A**2`` are badly scaled: every
+    polynomial and the squared denominator can overflow even though the ratio
+    is the small, finite quantity ``u' ~ C_inf/b**2``.  Once a conservative
+    coefficient/degree bound puts any direct product near binary64 overflow,
+    use ``t = 1/b`` and ``p(b) = b**deg(p) * reverse(p)(t)``.  Only the net
+    power is formed.  Ordinary coordinates retain their established Horner
+    rounding, which is also the native/Python parity contract.  Scalars remain
+    scalars and arrays retain their shape.
+    """
+    xx = np.asarray(x, dtype=float)
+    flat = xx.reshape(-1)
+    out = np.empty_like(flat)
+
+    def log_bound(coefficients):
+        degree = sum(len(c) - 1 for c in coefficients)
+        bound = 0.0
+        for coeff in coefficients:
+            largest = float(np.max(np.abs(coeff)))
+            if largest == 0.0:
+                return -np.inf, degree
+            bound += np.log(largest) + np.log(len(coeff))
+        return bound, degree
+
+    numerator_bound, numerator_degree = log_bound(numerators)
+    denominator_bound, denominator_degree = log_bound(denominators)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        log_b = np.log(np.maximum(np.abs(flat), 1.0))
+        direct_bound = np.maximum(
+            numerator_bound + numerator_degree * log_b,
+            denominator_bound + denominator_degree * log_b)
+    # exp(600) is about 1e260: enough headroom for Horner roundoff and for the
+    # subsequent products, while staying far above every ordinary portrait
+    # coordinate.  This is a routing threshold, not an acceptance tolerance.
+    reciprocal = (np.abs(flat) > 1.0) & (direct_bound > 600.0)
+
+    def product(coefficients, values, *, reverse=False):
+        result = np.ones_like(values)
+        for coeff in coefficients:
+            result *= _ev(coeff[::-1] if reverse else coeff, values)
+        return result
+
+    with np.errstate(over="ignore", under="ignore", invalid="ignore",
+                     divide="ignore"):
+        ordinary = ~reciprocal
+        if np.any(ordinary):
+            values = flat[ordinary]
+            out[ordinary] = (
+                product(numerators, values)
+                / product(denominators, values))
+        if np.any(reciprocal):
+            values = flat[reciprocal]
+            inverse = 1.0 / values
+            degree = numerator_degree - denominator_degree
+            out[reciprocal] = (
+                np.power(values, degree)
+                * product(numerators, inverse, reverse=True)
+                / product(denominators, inverse, reverse=True))
+
+    shaped = out.reshape(xx.shape)
+    return shaped.item() if xx.ndim == 0 else shaped
+
+
 def horner(c: tuple, x: float) -> float:
     """Pure-float Horner — the Tier-0 scalar fast path (0.33 µs vs 1.6 µs
     through numpy's polyval on scalars; the engine loop lives here)."""
@@ -207,32 +281,63 @@ class Model:
     def Npval(self, b):    return _ev(self._cnp, b)
 
     def a_star(self, b):
-        return self.B(b) / self.A(b)
+        if _ordinary_rational_input(b):
+            return self.B(b) / self.A(b)
+        return _rational_product(b, (self._cb,), (self._ca,))
 
     def a_star_p(self, b):
-        A, B = self.A(b), self.B(b)
-        return self.Bp(b) / A - B * self.Ap(b) / A**2
+        if _ordinary_rational_input(b):
+            A, B = self.A(b), self.B(b)
+            return self.Bp(b) / A - B * self.Ap(b) / A**2
+        return (_rational_product(b, (self._cbp,), (self._ca,))
+                - _rational_product(
+                    b, (self._cb, self._cap), (self._ca, self._ca)))
 
     def a_star_pp(self, b):
-        A, B = self.A(b), self.B(b)
-        Ap, Bp = self.Ap(b), self.Bp(b)
-        return ((self.Bpp(b) * A - B * self.App(b)) / A**2
-                - 2 * Ap * (Bp * A - B * Ap) / A**3)
+        if _ordinary_rational_input(b):
+            A, B = self.A(b), self.B(b)
+            Ap, Bp = self.Ap(b), self.Bp(b)
+            return ((self.Bpp(b) * A - B * self.App(b)) / A**2
+                    - 2 * Ap * (Bp * A - B * Ap) / A**3)
+        return (
+            _rational_product(b, (self._cbpp,), (self._ca,))
+            - _rational_product(
+                b, (self._cb, self._capp), (self._ca, self._ca))
+            - 2 * _rational_product(
+                b, (self._cap, self._cbp), (self._ca, self._ca))
+            + 2 * _rational_product(
+                b, (self._cap, self._cap, self._cb),
+                (self._ca, self._ca, self._ca)))
 
     def L(self, a, b):
         return float(self.C) - 2 * a * self.B(b) + a**2 * self.A(b)
 
     def u(self, b):
-        return float(self.C) - self.B(b)**2 / self.A(b)
+        if _ordinary_rational_input(b):
+            return float(self.C) - self.B(b)**2 / self.A(b)
+        return float(self.C) - _rational_product(
+            b, (self._cb, self._cb), (self._ca,))
 
     def u_p(self, b):
         """u' = B·N/A² (exact identity; see module docstring)."""
-        return self.B(b) * self.Nval(b) / self.A(b)**2
+        if _ordinary_rational_input(b):
+            return self.B(b) * self.Nval(b) / self.A(b)**2
+        return _rational_product(
+            b, (self._cb, self._cn), (self._ca, self._ca))
 
     def u_pp(self, b):
-        A, B, Nv = self.A(b), self.B(b), self.Nval(b)
-        return ((self.Bp(b) * Nv + B * self.Npval(b)) / A**2
-                - 2 * B * Nv * self.Ap(b) / A**3)
+        if _ordinary_rational_input(b):
+            A, B, Nv = self.A(b), self.B(b), self.Nval(b)
+            return ((self.Bp(b) * Nv + B * self.Npval(b)) / A**2
+                    - 2 * B * Nv * self.Ap(b) / A**3)
+        return (
+            _rational_product(
+                b, (self._cbp, self._cn), (self._ca, self._ca))
+            + _rational_product(
+                b, (self._cb, self._cnp), (self._ca, self._ca))
+            - 2 * _rational_product(
+                b, (self._cb, self._cn, self._cap),
+                (self._ca, self._ca, self._ca)))
 
     def w_of(self, a, b):
         return a - self.a_star(b)

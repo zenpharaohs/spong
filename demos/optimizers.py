@@ -2,7 +2,8 @@
 
 The one-neuron net sees data only through moments, so a BATCH is a point
 in moment space and SGD's noise is literally moment-space jitter: the
-stochastic gradient below is computed from raw samples x_i ~ U(0,1),
+stochastic gradient below is computed from raw samples x_i drawn from the
+same uniform, normal, or finite empirical law as the portrait,
 
     L_batch(a,b) = (1/n) Σ (f(x_i) − a·g(b·x_i))²
     ∂a = −(2/n) Σ (f(x_i) − a·g(b x_i))·g(b x_i)
@@ -27,21 +28,53 @@ def _polyval(coeffs, x):
 
 
 class BatchGradient:
-    """Stochastic gradient from raw U(0,1) samples (demo sampler)."""
+    """Stochastic gradient from raw samples of a supported portrait law.
 
-    def __init__(self, f_coeffs, g_coeffs, batch_size, rng):
+    ``uniform01`` remains the default for compatibility with the original
+    moustache galleries.  ``normal01`` draws fresh standard-normal samples;
+    ``empirical`` resamples the exact finite support used to build an
+    interactive empirical portrait.
+    """
+
+    def __init__(self, f_coeffs, g_coeffs, batch_size, rng,
+                 distribution="uniform01", samples=None):
         self.f = [float(c) for c in f_coeffs]
         self.g = [float(c) for c in g_coeffs]
         self.gp = [k * self.g[k] for k in range(1, len(self.g))]
-        self.n = batch_size
+        self.n = int(batch_size)
+        if self.n <= 0:
+            raise ValueError("batch_size must be positive")
         self.rng = rng
+        self.distribution = str(distribution)
+        self.samples = (None if samples is None
+                        else np.asarray(samples, dtype=float))
+        if self.distribution not in {"uniform01", "normal01", "empirical"}:
+            raise ValueError(
+                f"unsupported minibatch distribution {self.distribution!r}")
+        if self.distribution == "empirical" and (
+                self.samples is None or self.samples.size == 0):
+            raise ValueError("empirical minibatches need at least one sample")
+
+    def _draw(self):
+        if self.distribution == "uniform01":
+            return self.rng.random(self.n)
+        if self.distribution == "normal01":
+            return self.rng.normal(size=self.n)
+        return self.rng.choice(self.samples, size=self.n, replace=True)
 
     def __call__(self, a, b):
-        x = self.rng.random(self.n)
-        gv = _polyval(self.g, b * x)
-        res = _polyval(self.f, x) - a * gv
-        da = -2.0 * np.mean(res * gv)
-        db = -2.0 * np.mean(res * a * _polyval(self.gp, b * x) * x)
+        x = self._draw()
+        # A divergent demo optimizer is an ordinary experimental outcome,
+        # not a reason to flood the terminal with one warning per minibatch.
+        # Non-finite results remain visible to ``checked_step`` below, which
+        # terminates the trajectory at its last finite iterate.
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            bx = b * x
+            gv = _polyval(self.g, bx)
+            res = _polyval(self.f, x) - a * gv
+            da = -2.0 * np.mean(res * gv)
+            db = -2.0 * np.mean(
+                res * a * _polyval(self.gp, bx) * x)
         return np.array([da, db])
 
 
@@ -166,15 +199,49 @@ class VectorMuonState:
         return self.z
 
 
+def checked_step(state, grad):
+    """Advance once, or preserve the last finite iterate on FP64 failure.
+
+    Returns ``(z, None)`` on success and ``(z, reason)`` on failure.  The
+    optimizer's auxiliary accumulators may already be non-finite after a
+    failed update, so callers must regard any failure as terminal.
+    """
+    before = np.asarray(state.z, dtype=float).copy()
+    if not np.all(np.isfinite(before)):
+        return before, "nonfinite_state"
+    try:
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            gradient = np.asarray(grad(*before), dtype=float)
+    except ArithmeticError:
+        return before, "gradient_failure"
+    if gradient.shape != before.shape:
+        raise ValueError(
+            f"gradient shape {gradient.shape} does not match {before.shape}")
+    if not np.all(np.isfinite(gradient)):
+        return before, "nonfinite_gradient"
+    try:
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            z = np.asarray(state.step(gradient), dtype=float)
+    except ArithmeticError:
+        state.z = before
+        return before, "step_failure"
+    if z.shape != before.shape:
+        raise ValueError(
+            f"optimizer state shape {z.shape} does not match {before.shape}")
+    if not np.all(np.isfinite(z)):
+        state.z = before
+        return before, "nonfinite_step"
+    return z, None
+
+
 def run_state(state, grad, n_steps, box=None):
     """Advance a resumable optimizer state; Thompson scheduling uses one step."""
     trajectory = [state.z.copy()]
     for _ in range(n_steps):
-        gradient = np.asarray(grad(*state.z), dtype=float)
-        z = state.step(gradient)
-        trajectory.append(z.copy())
-        if not np.all(np.isfinite(z)):
+        z, failure = checked_step(state, grad)
+        if failure is not None:
             break
+        trajectory.append(z.copy())
         if box and not (
                 box[0] <= z[0] <= box[1] and box[2] <= z[1] <= box[3]):
             break

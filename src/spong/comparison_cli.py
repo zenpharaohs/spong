@@ -98,6 +98,12 @@ def main(argv=None):
     parser.add_argument(
         "--stork-stages", type=int, default=20,
         help="stabilized stages for STORK-2/4 (STORK-4 supports 9 or 20)")
+    parser.add_argument(
+        "--contact-threshold", type=float, default=4.0,
+        help="resolved-order margin used by the manifold contact diagnostic")
+    parser.add_argument(
+        "--contact-limit", type=int, default=50000,
+        help="maximum pair/self contact candidates retained per method")
     parser.add_argument("--width", type=int, default=800)
     parser.add_argument("--height", type=int, default=600)
     parser.add_argument("--no-bottom-zoom", action="store_true")
@@ -116,6 +122,8 @@ def main(argv=None):
         _branch_record(m, branch, diagnostic_spacing)
         for branch in reference.branches
     ]
+    reference_topology = reference.ledger.get("topology", {})
+    reference_sweep = reference_topology.get("pair_order_sweep", {})
     zoom_view = None if args.no_bottom_zoom else _bottom_zoom(reference)
     cards = []
     reference_name = f"{case.name}_certified.svg"
@@ -136,7 +144,9 @@ def main(argv=None):
         "Certified SPONG",
         reference_name,
         "Exact Morse skeleton, conditioned manifold stubs, implicit Gauss "
-        "continuation, and a-posteriori separatrix audit.",
+        "continuation, and a-posteriori separatrix audit; topology status="
+        f"{reference_topology.get('status', 'not reported')}; pair candidates="
+        f"{reference_sweep.get('candidates', 0)}.",
         reference_zoom))
 
     records = []
@@ -180,6 +190,12 @@ def main(argv=None):
         bottom_branch = (
             min(unstable_records, key=lambda branch: branch["b_range"][0])
             if unstable_records else None)
+        contact_diagnostics = comparison.manifold_contact_diagnostics(
+            m, reference.enumeration, candidate.branches, candidate.box,
+            threshold=args.contact_threshold,
+            candidate_limit=args.contact_limit)
+        pair_contacts = contact_diagnostics["pair_order_sweep"]
+        self_contacts = contact_diagnostics["self_contacts"]
         record = {
             **candidate.ledger["comparison"],
             "branches": len(candidate.branches),
@@ -203,6 +219,7 @@ def main(argv=None):
             ],
             "bottom_unstable_branch": bottom_branch,
             "branch_diagnostics": branch_records,
+            "contact_diagnostics": contact_diagnostics,
             "svg": filename,
             "zoom_svg": zoom_name,
         }
@@ -215,11 +232,16 @@ def main(argv=None):
             f"{candidate.ledger['comparison']['time_horizon']:g}; "
             f"rtol={args.rtol:g}, atol={args.atol:g}; "
             f"worst RMS angle defect={record['worst_angle_rms_deg']:.3g}°; "
+            f"contact diagnostic={contact_diagnostics['decision']}; "
+            f"pair candidates={pair_contacts['candidates']}, "
+            f"resolved roots={pair_contacts['roots']}, "
+            f"unresolved={pair_contacts['unresolved'] + pair_contacts['critical_transition']}; "
+            f"self-crossings={self_contacts['crosses']}; "
             f"branch terms={terms}.",
             zoom_name))
 
     report = {
-        "format": "spong-portrait-comparison-v1",
+        "format": "spong-portrait-comparison-v2",
         "zoo": case.name,
         "description": case.description,
         "reference": reference_name,
@@ -231,6 +253,20 @@ def main(argv=None):
                 (branch["angle_max_deg"] or 0.0
                  for branch in reference_branch_records), default=0.0),
             "branch_diagnostics": reference_branch_records,
+            "topology": {
+                "status": reference_topology.get("status"),
+                "resolution_reason": reference_topology.get(
+                    "resolution_reason"),
+                "forbidden": reference_topology.get("forbidden_count", 0),
+                "ambiguous": reference_topology.get("ambiguous_count", 0),
+                "pair_order_sweep": {
+                    "decision": reference_sweep.get("decision"),
+                    **{key: reference_sweep.get(key, 0) for key in (
+                        "candidates", "roots", "same_order",
+                        "terminal", "critical_transition", "unresolved")
+                       },
+                },
+            },
         },
         "configuration": {
             "critical_method": args.critical_method,
@@ -241,6 +277,8 @@ def main(argv=None):
             "rtol": args.rtol,
             "atol": args.atol,
             "stork_stages": args.stork_stages,
+            "contact_threshold": args.contact_threshold,
+            "contact_limit": args.contact_limit,
         },
         "comparisons": records,
     }

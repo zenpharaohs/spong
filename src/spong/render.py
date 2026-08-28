@@ -6,10 +6,10 @@ a_±(b; c) = a*(b) ± √((c − u(b))/A(b)), so contours are exact polylines on
 a dense b-grid — no marching squares, no grid artifacts, no fcontour.
 
 House palette (mse-bundle heritage): light-gray contours, gold backbone,
-green unstable branches, red separatrices; local nonglobal minima as filled
-dots, global minima as open circles, N-root saddles as triangles, B-root
-saddles as open diamonds (they are saddles by Theorem 2's B-root clause and
-deserve their own glyph).
+green unstable branches, red separatrices.  Shape records Morse type and fill
+records subtype: minima are equal-size circles (global open, local filled),
+while saddles are equal-size diamonds (B-root open, N-root filled).  B roots
+are saddles by Theorem 2's B-root clause.
 
 Output is vector SVG: crisp at any zoom (the polylines beneath are the
 certified, chord-uniform ones from spong.charts), viewable in any
@@ -74,10 +74,10 @@ class _SVG:
                           f'stroke-width="{sw}" '
                           f'vector-effect="non-scaling-stroke"/>')
 
-    def diamond(self, x, y, r, stroke, sw=1.6):
+    def diamond(self, x, y, r, stroke, sw=1.6, fill="white"):
         p = [(x, y - r), (x + r, y), (x, y + r), (x - r, y)]
         d = "M" + " L".join(f"{_fmt(px)},{_fmt(py)}" for px, py in p) + " Z"
-        self.parts.append(f'<path d="{d}" fill="white" stroke="{stroke}" '
+        self.parts.append(f'<path d="{d}" fill="{fill}" stroke="{stroke}" '
                           f'stroke-width="{sw}" '
                           f'vector-effect="non-scaling-stroke"/>')
 
@@ -371,11 +371,13 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
             svg.circle(x, y, 6, "white", stroke=PALETTE["min_fill"],
                        sw=1.8)
         elif q.kind == "min":
-            svg.circle(x, y, 5, PALETTE["min_fill"])
+            svg.circle(x, y, 6, PALETTE["min_fill"],
+                       stroke=PALETTE["min_fill"], sw=1.8)
         elif q.source == "B":
             svg.diamond(x, y, 6, PALETTE["bsaddle_stroke"])
         else:
-            svg.triangle(x, y, 6, PALETTE["saddle_fill"])
+            svg.diamond(x, y, 6, PALETTE["saddle_fill"],
+                        fill=PALETTE["saddle_fill"])
 
     # ---- overlays (demo consumers: optimizer trajectories etc.) -------- #
     if overlays:
@@ -499,11 +501,13 @@ def disk_view(p: Portrait, width=900, height=900, n_levels=24,
             svg.circle(x, y, 5.5, "white", stroke=PALETTE["min_fill"],
                        sw=1.7)
         elif q.kind == "min":
-            svg.circle(x, y, 4.5, PALETTE["min_fill"])
+            svg.circle(x, y, 5.5, PALETTE["min_fill"],
+                       stroke=PALETTE["min_fill"], sw=1.7)
         elif q.source == "B":
-            svg.diamond(x, y, 5, PALETTE["bsaddle_stroke"])
+            svg.diamond(x, y, 5.5, PALETTE["bsaddle_stroke"])
         else:
-            svg.triangle(x, y, 5, PALETTE["saddle_fill"])
+            svg.diamond(x, y, 5.5, PALETTE["saddle_fill"],
+                        fill=PALETTE["saddle_fill"])
 
     if title:
         svg.text(width / 2, 22, title, size=14, anchor="middle")

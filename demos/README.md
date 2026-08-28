@@ -38,10 +38,21 @@ Here now:
   Every initialization first receives one short optimizer continuation.
   Thereafter the arm with the smallest exact continuous-Bernoulli posterior
   draw receives the next continuation and its posterior is immediately
-  updated with `L/(1+L)`.  Capture balls and portrait topology never enter
+  replaced by `(N Z, N)`, where `Z=L/(1+L)` is the arm's current held
+  observation and `N` its pull count.  Earlier losses on that same trajectory
+  are not accumulated.  Capture balls and portrait topology never enter
   allocation; they are interpretation equipment after the run.  The exact
   posterior implementation remains in the separate `continuous-bernoulli`
-  package:
+  package.  The shared comparison routine also powers the allocator panel in
+  `demos/explorer`: there it runs on the active custom, zoo, empirical, or
+  wall-family portrait and creates allocation-weighted traces in the current
+  viewer window.  Minibatches follow the portrait's input law rather than
+  assuming `U(0,1)`.  With the usual sibling-repository layout the explorer
+  discovers and builds `cb_core.c` into a temporary cache automatically;
+  `CB_CORE_LIBRARY` and `CB_CORE_SOURCE` remain explicit overrides.
+
+  Build the posterior library and run either the standalone gallery or the
+  interactive version:
 
   ```sh
   clang -O3 -std=c99 -dynamiclib \
@@ -50,6 +61,8 @@ Here now:
     --cb-library /tmp/libcb_core.dylib --zoo quadratic-stiff \
     --starts 100 --rounds 20000 --chunk-steps 10
   open out/thompson_moustaches/quadratic-stiff_low-discrepancy_adam.html
+
+  CB_CORE_LIBRARY=/tmp/libcb_core.dylib python demos/explorer/serve.py
   ```
 - `adam_phase_portrait.py` — first comparison between the certified
   steepest-descent portrait and the autonomous Adam vector field of
