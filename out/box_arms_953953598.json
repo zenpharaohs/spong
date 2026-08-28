@@ -1,0 +1,34 @@
+{
+  "seed": 953953598,
+  "mode": "directed",
+  "degree": 5,
+  "spec": "directed d4 |b|=40960 normal01",
+  "measure": {
+    "astar0": -44497081.84070016,
+    "kappa": 57.849716475394914,
+    "fscale": 1341805.5029063132,
+    "gscale": 1.744453
+  },
+  "gap_factor": 50.0,
+  "pad": 4.0,
+  "arms": {
+    "B": {
+      "label": "arm B: full pipeline, normalised units",
+      "status": "certified",
+      "resolution_reason": null,
+      "geometry_level": 0,
+      "seconds": 18.82,
+      "terms": {
+        "stable/box_exit": 4,
+        "unstable/capture": 3,
+        "unstable/box_exit": 1
+      }
+    }
+  },
+  "measure_normalised": {
+    "astar0": -57.849716475394914,
+    "kappa": 57.849716475394914,
+    "fscale": 1.0,
+    "gscale": 1.0
+  }
+}
