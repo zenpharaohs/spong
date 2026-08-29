@@ -17,10 +17,19 @@ two invariant directions -- and the eigenvector selects the branch).
 One analytic curve passes THROUGH the saddle, so a single jet serves
 both departure directions; stubs are per-direction.
 
-REFEREE.  The incumbent judges itself: launch from the stub endpoint and
-continue by fine RK4 on the orbit ODE (the Poincare technology's own
-trajectory), then measure |w_series - w_RK| at increasing radii, up to a
-fraction of the certified convergence radius
+REFEREE.  Two independent tests, both against fine RK4 on the orbit ODE
+(the Poincare technology's own trajectory):
+
+  * STUB-RELATIVE: launch from the stub endpoint, compare at 2x/5x/10x
+    the stub's own offset.  Requires a non-degenerate stub.
+  * SERIES-SEEDED (absolute radii): launch from a point the series
+    itself certifies, deep inside the convergence radius, and compare
+    at 10x/100x/1000x that seed offset.  Needs no stub at all -- this is
+    the test that still answers at a saddle whose stub is degenerate,
+    which is precisely the horizon failure mode (b = 196608 on
+    555999196: the incumbent never launches there).
+
+Both are capped at 0.6 of the certified convergence radius
 
     R = dist(b1, nearest other complex root of B*N or zero of A),
 
@@ -128,11 +137,10 @@ def residual(ch, b1, c, n):
     return left - 2.0 * smul(A5, w, n)
 
 
-def unstable_slope(m, ch, q):
+def unstable_slope(m, ch, q, verbose=False):
     """c1 from the Hessian's unstable eigenvector, in (b, w)."""
     a, b = float(q.a), float(q.b)
     A, Ap = pv(ch.A, b), pv(ch.Ap, b)
-    App = pv(fl(pderiv(tuple(ch.A))), b) if False else None
     # exact second derivatives of L = C - 2aB + a^2 A
     d2A = np.polyval(np.polyder(np.polyder(ch.A[::-1])), b)
     d2B = np.polyval(np.polyder(np.polyder(ch.B[::-1])), b)
@@ -143,18 +151,23 @@ def unstable_slope(m, ch, q):
     vals, vecs = np.linalg.eigh(H)
     v = vecs[:, int(np.argmin(vals))]        # negative eigenvalue: unstable
     da, db = float(v[0]), float(v[1])
+    if verbose:
+        print(f"      [diag] b={b:+.6g}  a={a:+.6g}  eigvals={vals}  "
+              f"eigvec(unstable)=({da:+.6g},{db:+.6g})  "
+              f"|da/db|={abs(da/db) if db else float('inf'):.6g}")
     if abs(db) < 1e-14 * abs(da):
         return None                          # transverse: not graphable
     return da / db - ch.astar_prime(b)
 
 
-def frobenius_jet(m, ch, q, n):
-    c1 = unstable_slope(m, ch, q)
+def frobenius_jet(m, ch, q, n, verbose=False):
+    c1 = unstable_slope(m, ch, q, verbose=verbose)
     if c1 is None:
-        return None
+        return None, "transverse eigenvector (chart cannot represent it)"
     b1 = float(q.b)
     c = np.zeros(n)
     c[0] = c1
+    fail_reason = None
     for _ in range(60):                      # Newton on residual coeffs 1..n
         r = residual(ch, b1, c, n)[1:n + 1]
         if np.max(np.abs(r)) == 0.0:
@@ -165,14 +178,26 @@ def frobenius_jet(m, ch, q, n):
             cp = c.copy()
             cp[j] += h
             J[:, j] = (residual(ch, b1, cp, n)[1:n + 1] - r) / h
+        cond = np.linalg.cond(J)
         try:
             step = np.linalg.solve(J, -r)
         except np.linalg.LinAlgError:
-            return None
+            fail_reason = f"singular Jacobian (cond={cond:.3e})"
+            return None, fail_reason
         c += step
         if np.max(np.abs(step)) <= 1e-14 * max(1.0, np.max(np.abs(c))):
             break
-    return c
+    r_final = residual(ch, b1, c, n)[1:n + 1]
+    if np.max(np.abs(r_final)) > 1e-6 * max(1.0, np.max(np.abs(c))) ** 2:
+        return None, (f"Newton stalled, not converged: "
+                     f"|residual|={np.max(np.abs(r_final)):.3e} "
+                     f"(step went small but residual did not -- "
+                     f"ill-conditioned Jacobian, cond={cond:.3e})")
+    if verbose:
+        print(f"      [diag] Newton converged, |residual|="
+              f"{np.max(np.abs(r_final)):.3e}, cond(J)={cond:.3e}, "
+              f"c1={c1:+.6g}")
+    return c, None
 
 
 def convergence_radius(ch, b1):
@@ -201,6 +226,35 @@ def rk_reference(ch, b0, w0, b_targets):
     return out
 
 
+def series_w(c, s):
+    return float(np.polyval(c[::-1], s) * s)
+
+
+def series_seeded_test(ch, c, b1, R, direction, radii=(10.0, 100.0, 1000.0)):
+    """Absolute-radius referee that never depends on a stub.
+
+    Seeds the RK reference from a point the series itself certifies (deep
+    inside R, where the jet is trustworthy by construction) and walks
+    outward.  This is the test that still works when the incumbent's stub
+    is degenerate -- precisely the horizon case that motivated it: there
+    is no stub endpoint to launch from, so launch from the series instead.
+    """
+    eps0 = direction * max(R * 1e-4, 1e-8 * max(1.0, abs(b1)))
+    w0 = series_w(c, eps0)
+    targets_s = [r * eps0 for r in radii if abs(r * eps0) < 0.6 * R]
+    if not targets_s:
+        return []
+    targets_b = [b1 + s for s in targets_s]
+    ref = rk_reference(ch, b1 + eps0, w0, targets_b)
+    rows = []
+    for s, bt in zip(targets_s, targets_b):
+        wv = series_w(c, s)
+        wr = ref[bt]
+        rows.append({"s": s, "b": bt, "w_series": wv, "w_rk": wr,
+                     "rel_err": abs(wv - wr) / max(abs(wr), 1e-300)})
+    return rows
+
+
 def run(seed, mode, degree, pow2, order):
     generate = directed_model if mode == "directed" else random_model
     built = generate(__import__("random").Random(seed), degree)
@@ -223,11 +277,10 @@ def run(seed, mode, degree, pow2, order):
             continue
         b1 = float(q.b)
         t0 = time.perf_counter()
-        c = frobenius_jet(m, ch, q, order)
+        c, fail_reason = frobenius_jet(m, ch, q, order, verbose=True)
         jet_time = time.perf_counter() - t0
         if c is None:
-            print(f"  saddle b={b1:+.6g}: jet failed (transverse or "
-                  "singular Newton)")
+            print(f"  saddle b={b1:+.6g}: jet failed -- {fail_reason}")
             continue
         R = convergence_radius(ch, b1)
         tail = [abs(x) ** (1.0 / (k + 1)) for k, x in enumerate(c)
@@ -237,12 +290,37 @@ def run(seed, mode, degree, pow2, order):
                "R_complex": R, "R_empirical": R_emp, "dirs": []}
         print(f"  saddle b={b1:+.6g}   jet({order}) {jet_time*1e3:.1f} ms   "
               f"R_complex {R:.4g}   R_empirical {R_emp:.4g}")
+
+        # Series-seeded referee: always available, absolute radii, never
+        # depends on a stub existing.  This is the test that still works
+        # at a saddle whose stub is degenerate (the horizon failure mode).
+        for direction in (-1, +1):
+            rows = series_seeded_test(ch, c, b1, R, direction)
+            if not rows:
+                continue
+            print(f"    dir {direction:+d} (series-seeded, absolute):")
+            for cr in rows:
+                print(f"      s={cr['s']:+.3e}  series {cr['w_series']:+.9e}"
+                      f"   rk {cr['w_rk']:+.9e}   rel {cr['rel_err']:.2e}")
+            row["dirs"].append({"direction": direction, "mode": "series_seed",
+                               "compare": rows})
+
         for s in q.stubs:
             if s.manifold != "unstable":
                 continue
             curve = np.asarray(s.curve, dtype=float)
+            if len(curve) < 2:
+                print(f"    dir {s.b_direction:+d}: stub is degenerate "
+                      "(zero-length curve) -- this is the launch failure "
+                      "the horizon class exhibits; see series-seeded rows "
+                      "above instead")
+                continue
             bs, as_ = float(curve[-1, 1]), float(curve[-1, 0])
             s_stub = bs - b1
+            if abs(s_stub) < 1e-13 * max(1.0, abs(b1)):
+                print(f"    dir {s.b_direction:+d}: stub offset ~0 "
+                      "(degenerate) -- see series-seeded rows above instead")
+                continue
             w_stub = as_ - ch.astar(bs)
             w_ser = float(np.polyval(c[::-1], s_stub) * s_stub)
             radii = [r for r in (2.0, 5.0, 10.0)
@@ -260,13 +338,13 @@ def run(seed, mode, degree, pow2, order):
                 cmp_rows.append({"radius_x_stub": r, "b": bt,
                                  "w_series": wv, "w_rk": wr,
                                  "rel_err": err})
-            d = {"direction": int(s.b_direction),
+            d = {"direction": int(s.b_direction), "mode": "stub",
                  "stub_offset": s_stub,
                  "agree_at_stub": abs(w_ser - w_stub)
                  / max(abs(w_stub), 1e-300),
                  "rk_secs": round(rk_time, 4), "compare": cmp_rows}
             row["dirs"].append(d)
-            print(f"    dir {s.b_direction:+d}: stub offset "
+            print(f"    dir {s.b_direction:+d} (stub-relative): stub offset "
                   f"{s_stub:+.3e}   series-vs-stub "
                   f"{d['agree_at_stub']:.2e}")
             for cr in cmp_rows:
