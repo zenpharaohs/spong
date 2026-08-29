@@ -1,0 +1,118 @@
+[
+  {
+    "seed": 555999196,
+    "spec": "directed d3 |b|=196608 uniform01",
+    "pow2": false,
+    "u_inf": 0.031610125352202464,
+    "events": [
+      {
+        "kind": "birth",
+        "level": 0.027464740761657724,
+        "detail": "m0@-3.64318",
+        "b": -3.6431838932473295,
+        "vs_uinf": "below"
+      },
+      {
+        "kind": "birth",
+        "level": 0.03160965296780871,
+        "detail": "m4@74.2637",
+        "b": 74.2637020197641,
+        "vs_uinf": "below"
+      },
+      {
+        "kind": "escape_open",
+        "level": 0.031610125352202464,
+        "detail": "escape-->m0@-3.64318  escape+",
+        "vs_uinf": "at"
+      },
+      {
+        "kind": "fusion",
+        "level": 0.03161012535240437,
+        "detail": "escape++m4@74.2637",
+        "b": 196608.0,
+        "vs_uinf": "above"
+      },
+      {
+        "kind": "birth",
+        "level": 1.1754878928984056,
+        "detail": "m2@-0.415952",
+        "b": -0.41595154186051003,
+        "vs_uinf": "above"
+      },
+      {
+        "kind": "fusion",
+        "level": 1.2678051414173293,
+        "detail": "escape++m2@-0.415952",
+        "b": 0.20797966200946116,
+        "vs_uinf": "above"
+      },
+      {
+        "kind": "fusion",
+        "level": 1.9174815940336662,
+        "detail": "escape++m0@-3.64318",
+        "b": -1.2839953707745033,
+        "vs_uinf": "above"
+      }
+    ],
+    "final_components": [
+      "escape+"
+    ],
+    "exact_vs_float_order_differs": false,
+    "exact_comparisons": 11,
+    "births": 3,
+    "fusions": 3,
+    "skeleton_minima": 3,
+    "skeleton_saddles": 3
+  },
+  {
+    "seed": 634753038,
+    "spec": "directed d5 |b|=98304 normal01",
+    "pow2": false,
+    "u_inf": 125173.92633417192,
+    "events": [
+      {
+        "kind": "birth",
+        "level": 13145.54058937398,
+        "detail": "m2@-0.0198826",
+        "b": -0.019882616086789463,
+        "vs_uinf": "below"
+      },
+      {
+        "kind": "birth",
+        "level": 125173.92515718588,
+        "detail": "m0@-53.8673",
+        "b": -53.86732005529053,
+        "vs_uinf": "below"
+      },
+      {
+        "kind": "escape_open",
+        "level": 125173.92633417192,
+        "detail": "escape-->m0@-53.8673  escape+",
+        "vs_uinf": "at"
+      },
+      {
+        "kind": "fusion",
+        "level": 125173.92633417297,
+        "detail": "escape++m2@-0.0198826",
+        "b": 98304.0,
+        "vs_uinf": "above"
+      },
+      {
+        "kind": "fusion",
+        "level": 126374.16442941001,
+        "detail": "escape++m0@-53.8673",
+        "b": -0.7928540420078121,
+        "vs_uinf": "above"
+      }
+    ],
+    "final_components": [
+      "escape+"
+    ],
+    "exact_vs_float_order_differs": false,
+    "exact_comparisons": 5,
+    "births": 2,
+    "fusions": 2,
+    "skeleton_minima": 2,
+    "skeleton_saddles": 2
+  }
+]
