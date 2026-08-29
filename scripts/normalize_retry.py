@@ -46,7 +46,7 @@ from spong import portrait                                # noqa: E402
 from qualify import directed_model, random_model          # noqa: E402
 
 
-def retry_case(rec, mode, degree):
+def retry_case(rec, mode, degree, pow2=False, identity=False):
     generate = directed_model if mode == "directed" else random_model
     built = generate(random.Random(int(rec["seed"])), degree)
     if built is None or built[0] is None:
@@ -58,7 +58,7 @@ def retry_case(rec, mode, degree):
     base = measure(m)
     g0_margin = (abs(float(m.g[0])) / base["gscale"]
                  if base["gscale"] else 0.0)
-    mn = normalised(m)
+    mn = m if identity else normalised(m, pow2=pow2)
     t0 = time.perf_counter()
     try:
         p = portrait.certified_compute(mn)
@@ -90,6 +90,20 @@ def main(argv=None):
     ap.add_argument("--reasons", default=None,
                     help="comma subset of original refusal reasons "
                          "(default: every non-certified case)")
+    ap.add_argument("--all", action="store_true",
+                    help="retry EVERY case, certified ones included -- "
+                         "measures the speed effect on the healthy "
+                         "population and catches regressions "
+                         "(certified -> not certified)")
+    ap.add_argument("--pow2", action="store_true",
+                    help="normalise by powers of two: exact in FP64 and "
+                         "denominator-free in the exact layers, at the "
+                         "price of a factor <2 in the compression")
+    ap.add_argument("--identity", action="store_true",
+                    help="CONTROL: rerun the ORIGINAL model, no "
+                         "normalisation at all -- isolates the harness/"
+                         "environment component of any before-vs-after "
+                         "timing difference")
     ap.add_argument("--seeds", default=None,
                     help="comma list of specific seeds")
     ap.add_argument("--limit", type=int, default=None)
@@ -102,11 +116,14 @@ def main(argv=None):
     mode = args.mode or ("random" if "random" in ens_path.stem
                          else "directed")
     out_path = Path(args.out) if args.out else (
-        REPO / "out" / f"normalize_retry-{ens_path.stem}.jsonl")
+        REPO / "out" / (f"normalize_retry-{ens_path.stem}"
+                        + ("-identity" if args.identity else
+                           "-pow2" if args.pow2 else "") + ".jsonl"))
 
     records = [json.loads(line) for line in
                ens_path.read_text().splitlines() if line.strip()]
-    todo = [r for r in records if r.get("status") != "certified"]
+    todo = (list(records) if args.all
+            else [r for r in records if r.get("status") != "certified"])
     if args.reasons:
         wanted = {s.strip() for s in args.reasons.split(",")}
         todo = [r for r in todo if r.get("reason") in wanted]
@@ -132,15 +149,18 @@ def main(argv=None):
     print("-" * 108)
 
     tallies: dict[str, list[int]] = {}
+    t_before = t_after = 0.0
+    regressions = []
     with out_path.open("a") as fh:
         for rec in todo:
             row = {"case": rec.get("case"), "seed": int(rec["seed"]),
-                   "spec": rec.get("spec"),
+                   "spec": rec.get("spec"), "pow2": bool(args.pow2),
                    "before": {"status": rec.get("status"),
                               "reason": rec.get("reason"),
                               "seconds": rec.get("seconds"),
                               "terms": rec.get("terms")}}
-            row.update(retry_case(rec, mode, args.degree))
+            row.update(retry_case(rec, mode, args.degree, pow2=args.pow2,
+                                  identity=args.identity))
             fh.write(json.dumps(row, default=str) + "\n")
             fh.flush()
             after = row.get("after", {})
@@ -151,6 +171,11 @@ def main(argv=None):
             tally = tallies.setdefault(str(rec.get("reason")), [0, 0])
             tally[1] += 1
             tally[0] += int(a_status == "certified")
+            t_before += float(rec.get("seconds") or 0.0)
+            t_after += float(after.get("seconds") or 0.0)
+            if (rec.get("status") == "certified"
+                    and a_status != "certified"):
+                regressions.append(row["seed"])
             print(f"{row['seed']:>12} {before_txt:<24}"
                   f"{float(rec.get('seconds', 0)):>8.1f}"
                   f"{row.get('kappa', float('nan')):>11.4g}"
@@ -158,10 +183,14 @@ def main(argv=None):
                   f"{a_txt:<34}{after.get('seconds', 0.0):>8.1f}")
 
     print("-" * 108)
-    print("converted / total by original reason:")
+    print("certified-after / total by original reason "
+          "(reason None = originally certified):")
     for reason in sorted(tallies):
         got, tot = tallies[reason]
         print(f"  {reason:<40}{got:>4} / {tot}")
+    print(f"wall time: before {t_before:.1f}s, after {t_after:.1f}s")
+    if regressions:
+        print(f"REGRESSIONS (certified -> not certified): {regressions}")
     print(f"results appended to {out_path}")
     return 0
 

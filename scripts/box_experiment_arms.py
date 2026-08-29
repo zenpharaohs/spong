@@ -78,17 +78,44 @@ def measure(m):
             "fscale": float(fscale), "gscale": float(gscale)}
 
 
-def normalised(m):
+def _pow2_ceil(x: Fraction) -> Fraction:
+    """The smallest power of two >= x (x > 0), as an exact Fraction."""
+    import math
+    k = math.ceil(math.log2(float(x)))
+    while Fraction(2) ** k < x:
+        k += 1
+    while k > -1074 and Fraction(2) ** (k - 1) >= x:
+        k -= 1
+    return Fraction(2) ** k
+
+
+def normalised(m, pow2=False):
     """Rebuild with f/||f||_inf and g/||g||_inf, exactly.
 
     Fraction/Fraction is exact, and model.build reconstructs A, B, C, N and
     the reduced backbone from scratch, so every derived certificate object
     belongs to the normalised model in its own right.
+
+    pow2=True divides by 2^ceil(log2 ||.||_inf) instead: exact division
+    keeps dyadic coefficients dyadic (no Fraction denominator growth in the
+    exact layers), and scaling a binary64 float by a power of two is exact
+    (no rounding in the float mirrors) -- while still compressing the units
+    factor of kappa to within 2x of the ideal.  Only hazard is running off
+    the exponent range into subnormals, which is guarded: any nonzero
+    coefficient within 2^-1000 of the norm's scale refuses the pow2 path.
     """
     tau = max(abs(c) for c in m.f)
     sigma = max(abs(c) for c in m.g)
     if tau == 0 or sigma == 0:
         raise ValueError("degenerate model: f or g identically zero")
+    if pow2:
+        tau, sigma = _pow2_ceil(tau), _pow2_ceil(sigma)
+        tiny = Fraction(1, 2 ** 1000)
+        for c, scale in ([(c, tau) for c in m.f]
+                         + [(c, sigma) for c in m.g]):
+            if c != 0 and abs(c) / scale < tiny:
+                raise ValueError("pow2 normalisation would drive a "
+                                 "coefficient toward subnormal range")
     return model.build(tuple(c / tau for c in m.f),
                        tuple(c / sigma for c in m.g), m.mu)
 
