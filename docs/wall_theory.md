@@ -148,3 +148,33 @@ certify `t*` by tracing in normalised units, and test the ordering
 `|t_{K+M} - t*| << |t_K - t*|`, both shrinking under far-field scaling.
 If that ordering appears, the geometric coordinate exists and its
 formula is the residue-log expression above.
+
+## First results (2026-08-29)
+
+Phase-1 sweep (`out/wall_sweep-nonnearest-attachment.json`): delta
+reaches -1.1e-8 at t = 0; every pointwise algebraic column (pole Im,
+N-pair eps, nu at both saddles) varies smoothly through the wall with no
+signature -- wall-blindness confirmed.  Delta K trends 37 -> 14.28
+without vanishing: the measured eps at O(1) b, and the reason phase 2
+needs a far-field family.  Bonus: |nu_src| collapsed tenfold as the
+connection formed -- not a wall criterion (no zero; the theorem forbids
+it) but a tracing-conditioning predictor: peel-off exponent ~ -0.0035
+means the branch is weakly isolated exactly when connected.
+
+Frobenius launch race (`scripts/frobenius_launch.py`): on tractable
+saddles the jet agrees with the stub germ to ~1e-6..1e-8 and with the
+flow (fine RK referee) to ~1e-9 at TEN TIMES the stub radius
+(555999196, b = -1.284: w ~ 1.0 at the test point) -- the reach claim
+is confirmed, and R_complex from the nearest complex root is consistent
+with R_empirical.  Prototype build cost (~100-230 ms/saddle,
+FD-Jacobian Newton) exceeds stub materialisation; the exact recursion
+is the obvious optimisation.  Open items: (1) the jet Newton fails at
+the B-root saddles of 953953598 (--pow2) -- near-transverse eigenvector
+vs ill-conditioned FD Jacobian, not yet isolated; (2) at the horizon
+saddle b = 196608 the STUB itself is degenerate (zero-length curve --
+the fp64 launch failure that defines the class), so stub-relative radii
+test nothing there; the harness needs absolute radii and a
+series-seeded referee; note R_empirical ~ 5.5e3 << R_complex ~ 2e5 at
+that saddle -- double-precision conditioning at wild scales, or a
+genuine movable singularity of the nonlinear equation.  Worth deciding
+which.
