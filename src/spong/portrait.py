@@ -124,6 +124,11 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     # scale lets dense collocation distinguish nearby invariant manifolds
     # before the exact terminal-product completion takes over.
     resolution_divisor = 2.0**geometry_level
+    # Every tracer receives the exact critical skeleton: the potential-rate
+    # phases bound their step by the distance to the nearest critical point
+    # (charts.CRITICAL_STEP_FRACTION), which is what keeps a near-wall
+    # branch from stepping through a saddle onto the wrong ray.
+    critical_points = [(float(q.a), float(q.b)) for q in e.points]
 
     def _stable_branch(task):
         t0 = time.perf_counter()
@@ -132,7 +137,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             m, s.b, sign, box=box,
             ds=span_scale/(30000.0*resolution_divisor),
             critical_local=s.local,
-            critical_stub=_stable_stub(s, sign, m))
+            critical_stub=_stable_stub(s, sign, m),
+            critical_points=critical_points)
         br.diag["saddle_b"] = s.b
         br.diag["stable_sign"] = sign
         if br.term == "box_exit" and len(br.Y) > 50:
@@ -180,7 +186,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             arrival_local=(direct.local if direct is not None else None),
             candidate_minima=same_side,
             candidate_enumeration=e,
-            capture_targets=[(q.a, q.b) for q in same_side])
+            capture_targets=[(q.a, q.b) for q in same_side],
+            critical_points=critical_points)
         br.diag["saddle_b"] = s.b
         br.diag["unstable_direction"] = direction
         br.diag["sublevel_candidate_b"] = [
@@ -209,7 +216,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
                 # otherwise a coarse separatrix crossing can nominate
                 # the wrong basin and the refined integral curve reaches
                 # its true minimum with capture artificially disabled.
-                capture_targets=[(q.a, q.b) for q in e.minima])
+                capture_targets=[(q.a, q.b) for q in e.minima],
+                critical_points=critical_points)
             if refined.term == "capture":
                 destination = min(
                     e.minima,

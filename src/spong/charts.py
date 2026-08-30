@@ -45,6 +45,26 @@ UNSTABLE_LAUNCH_REL = 1e-6
 STABLE_LAUNCH_DELTA = 1e-4
 GEOMETRIC_IRK_PRIMARY = 8
 
+# Step-length cap near critical points for the potential-rate phases.  Those
+# phases step in LOSS with the field grad(L)/|grad(L)|^2, which is singular
+# at every critical point: near one, |grad L| ~ lambda*r, so a loss step h
+# is an arclength h/|grad L| and a modest h crosses the whole lingering
+# region in one step.  Observed (2026-08-30): a stable branch 2.6e-9 from a
+# wall stepped straight through the source saddle onto the opposite
+# unstable ray, and every downstream check -- Richardson, Hermite, the
+# turn budget -- passed, because the overshooting step is itself straight.
+# The flow's curvature radius near a critical point is ~r, so an arclength
+# step of tan(theta)*r turns by about theta.  Nominal theta = 3.75 degrees,
+# a quarter of the audit's 15-degree attestation angle: the loss step is
+# sized with |grad L| at the step's START, and |grad L| falls toward the
+# closest approach, so the realised arclength runs 2-2.5x the nominal
+# (measured 15-20 degrees per vertex at tan(7.5 degrees) on a passage
+# 1e-7 from a saddle).  At this setting the realised turn stays under
+# ~10 degrees, inside the audit's bound with margin, at ~36 vertices per
+# e-fold of approach -- a passage in to 1e-5 and back is a few hundred
+# vertices, not a picture.
+CRITICAL_STEP_FRACTION = float(np.tan(np.radians(3.75)))
+
 # Minimum significant digits the DIRECTION of grad L must carry for a vertex to
 # contribute to angle_energy.  R = |grad L| / g_floor; below this the vertex
 # reports evaluation noise as geometry.  Measured choice -- see
@@ -540,9 +560,102 @@ def _cubic_hermite(z0, z1, f0, f1, h, s):
             + (-2*s3+3*s2)*z1 + (s3-s2)*h*f1)
 
 
+def _critical_array(critical_points):
+    """The enumeration's critical points as an (n, 2) float array, or None."""
+    if critical_points is None:
+        return None
+    array = np.asarray(critical_points, dtype=float).reshape(-1, 2)
+    return array if len(array) else None
+
+
+def _critical_arclength_cap(z, critical):
+    """Proximity guard: a quarter of the distance to the nearest critical
+    point, or +inf without a list.  This only prevents a step from JUMPING
+    a corner the curvature bound has not yet seen; the resolution of the
+    corner itself is the curvature term in :func:`_step_arclength_cap`."""
+    if critical is None or len(critical) == 0:
+        return np.inf
+    d = np.hypot(critical[:, 0]-float(z[0]), critical[:, 1]-float(z[1]))
+    return 0.25*float(np.min(d))
+
+
+def _step_arclength_cap(m, z, critical, ng: float | None = None):
+    """Arclength a potential-rate step may take from z.
+
+    The unit-speed field is t = grad L/|grad L|, and along its flow line
+    dt/ds = (I - t t^T) H t / |grad L|, so the line's curvature is
+
+        kappa = |(I - t t^T) H t| / |grad L|
+
+    -- one Hessian evaluation, exact pointwise.  A step of
+    CRITICAL_STEP_FRACTION/kappa turns by about the nominal angle wherever
+    the line actually turns, and costs nothing where it runs straight.
+    Measured: a proximity-only cap (step ~ distance to the nearest critical
+    point) held every branch of linear-target-d17-thrash to millimetre
+    steps along straight valleys because its skeleton is dense, and cost
+    75% on that case; curvature is what the step should follow.  The
+    proximity guard remains, loosely, so a step cannot leap a corner that
+    kappa at the step's start has not yet seen.
+    """
+    a, b = float(z[0]), float(z[1])
+    g = np.asarray(m.gradL(a, b), dtype=float)
+    if ng is None:
+        ng = float(np.hypot(*g))
+    cap = _critical_arclength_cap(z, critical)
+    if not (np.isfinite(ng) and ng > 0.0):
+        return cap
+    t = g/ng
+    H = np.asarray(m.hessL(a, b), dtype=float)
+    w = H @ t
+    w_perp = w-float(w @ t)*t
+    kappa = float(np.hypot(*w_perp))/ng
+    if np.isfinite(kappa) and kappa > 0.0:
+        cap = min(cap, CRITICAL_STEP_FRACTION/kappa)
+    return cap
+
+
+def _arclength_step(native, m, z, arclength: float, flow_sign: float):
+    """One unit-speed step where a loss step could not be resolved.
+
+    Constant-potential-rate stepping has a floor: a loss difference below
+    ~4096*eps*(1+|L|) is unrepresentable, and near a critical point that
+    floor is an arclength of floor/|grad L| -- at 1e-7 from a saddle, a
+    hundred times the passage distance.  Arclength has no such floor, since
+    the direction field grad L/|grad L| is resolvable down to where grad L
+    itself drowns in evaluation noise.  Same order-8 stepper, same
+    full/two-half Richardson check; the loss must move the right way
+    within roundoff.  Returns (endpoint, midpoint) or None.
+    """
+    if not hasattr(native, "normalized_step"):
+        return None
+    L0 = float(m.L(float(z[0]), float(z[1])))
+    # Roundoff floor for the two-composition agreement: the endpoints sit at
+    # coordinates of size |z|, and steps of a few tens of ulps cannot agree
+    # to a relative 1e-6 of their own length.
+    noise = 64.0*np.finfo(float).eps*(1.0+abs(float(z[0]))+abs(float(z[1])))
+    for order in _geometric_orders():
+        trial = _full_and_two_half(
+            native.normalized_step, z, flow_sign*arclength, order)
+        if trial is None:
+            continue
+        full, midpoint, half = trial
+        chord = float(np.hypot(*(half-z)))
+        if chord == 0.0:
+            continue
+        richardson = float(np.hypot(*(full-half)))
+        if richardson > max(1e-6*chord, noise):
+            continue
+        L1 = float(m.L(float(half[0]), float(half[1])))
+        slack = 64.0*np.finfo(float).eps*(1.0+abs(L0))
+        if not np.isfinite(L1) or flow_sign*(L1-L0) < -slack:
+            continue
+        return half, midpoint
+    return None
+
+
 def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
                            box, cap_r: float, engine_diag: dict,
-                           n_levels: int = 12000):
+                           n_levels: int = 12000, critical=None):
     """Trace a resolved anisotropic connection by constant loss decrease.
 
     This owns only the regular prefix.  The vector field
@@ -571,6 +684,8 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
     accepted = rejected = 0
     gl8_attempted = gl8_accepted = 0
     max_richardson = 0.0
+    critical_capped = 0
+    arclength_steps = 0
     term = None
     for _ in range(n_levels+1024):
         level = float(m.L(float(z[0]), float(z[1])))
@@ -579,6 +694,52 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
             term = "near_target"
             break
         h = -min(cur_level_step, 0.2*gap)
+        # Arclength per unit loss is 1/|grad L|: cap the loss step so the
+        # step does not outrun the flow's curvature near a critical point.
+        # Where that cap falls below the loss floor, the loss cannot
+        # resolve the step at all: take it in arclength instead.
+        ng = float(np.hypot(*m.gradL(float(z[0]), float(z[1]))))
+        arc_cap = _step_arclength_cap(m, z, critical, ng)
+        cap = arc_cap*ng
+        loss_floor = 4096*np.finfo(float).eps*(1.0+abs(level))
+        if np.isfinite(cap) and cap > 0.0 and abs(h) > cap:
+            critical_capped += 1
+            if cap < loss_floor:
+                arc = _arclength_step(native, m, z, arc_cap, -1.0)
+                if arc is not None:
+                    half, midpoint = arc
+                    arclength_steps += 1
+                    previous = z
+                    z = half
+                    accepted += 1
+                    exited = False
+                    for sample in (midpoint, z):
+                        if not (box[0] <= sample[0] <= box[1]
+                                and box[2] <= sample[1] <= box[3]):
+                            _append_resolved_point(
+                                pts, sample, geometry_floor)
+                            z = sample
+                            term = "box_exit"
+                            exited = True
+                            break
+                        if _segment_capture(
+                                float(previous[0]), float(previous[1]),
+                                float(sample[0]), float(sample[1]),
+                                at, bt, cap_r):
+                            _append_resolved_point(
+                                pts, sample, geometry_floor)
+                            _append_resolved_point(
+                                pts, (at, bt), geometry_floor)
+                            z = np.array([at, bt])
+                            term = "capture"
+                            exited = True
+                            break
+                        _append_resolved_point(pts, sample, geometry_floor)
+                        previous = sample
+                    if exited:
+                        break
+                    continue
+            h = -max(cap, loss_floor)
         zn = None
         accepted_midpoint = None
         for _retry in range(12):
@@ -641,6 +802,8 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
     engine_diag["potential_rate"] = {
         "accepted_steps": accepted,
         "rejected_steps": rejected,
+        "critical_capped_steps": critical_capped,
+        "arclength_steps": arclength_steps,
         "gl8_attempted": gl8_attempted,
         "gl8_accepted": gl8_accepted,
         "level_step": float(base),
@@ -653,7 +816,7 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
 
 def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
                                 box, cap_r: float, engine_diag: dict,
-                                n_levels: int = 2048):
+                                n_levels: int = 2048, critical=None):
     """Continue to the next minimum-level event without choosing a basin."""
     native = getattr(m, "_native_kernel", None)
     if native is None or not hasattr(native, "potential_step"):
@@ -680,6 +843,8 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
     accepted = rejected = 0
     gl8_attempted = gl8_accepted = 0
     max_richardson = 0.0
+    critical_capped = 0
+    arclength_steps = 0
     captured = None
     term = "budget"
     for _ in range(4*n_levels):
@@ -694,6 +859,38 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
         requested = (max(2.0*gap, crossing_floor)
                      if gap <= crossing_floor else
                      min(cur_level_step, 0.5*gap))
+        ng = float(np.hypot(*m.gradL(float(z[0]), float(z[1]))))
+        arc_cap = _step_arclength_cap(m, z, critical, ng)
+        cap = arc_cap*ng
+        if (np.isfinite(cap) and cap > 0.0 and requested > cap
+                and gap > crossing_floor):
+            critical_capped += 1
+            if cap < crossing_floor:
+                arc = _arclength_step(native, m, z, arc_cap, -1.0)
+                if arc is not None:
+                    half, midpoint = arc
+                    arclength_steps += 1
+                    previous = z
+                    z = half
+                    accepted += 1
+                    _append_resolved_point(pts, midpoint, geometry_floor)
+                    _append_resolved_point(pts, z, geometry_floor)
+                    if not (box[0] <= z[0] <= box[1]
+                            and box[2] <= z[1] <= box[3]):
+                        term = "box_exit"
+                        break
+                    for at, bt in targets:
+                        if _segment_capture(
+                                float(previous[0]), float(previous[1]),
+                                float(z[0]), float(z[1]), at, bt, cap_r):
+                            pts.append((at, bt))
+                            captured = (at, bt)
+                            term = "capture"
+                            break
+                    if captured is not None:
+                        break
+                    continue
+            requested = max(cap, crossing_floor)
         h = -requested
         zn = None
         accepted_midpoint = None
@@ -751,6 +948,8 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
         "event_level": float(event_level),
         "accepted_steps": accepted,
         "rejected_steps": rejected,
+        "critical_capped_steps": critical_capped,
+        "arclength_steps": arclength_steps,
         "gl8_attempted": gl8_attempted,
         "gl8_accepted": gl8_accepted,
         "max_richardson": float(max_richardson),
@@ -789,6 +988,18 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
     slow, fast = float(np.min(lam)), float(np.max(lam))
     dt = 0.25/fast
     dt_cap = 4.0/slow
+    # Turn control.  The raw flow's direction rotates at rate ~||H|| and dt
+    # = 0.25/fast turns it by ~14 degrees per step near a saddle -- this
+    # phase can pass one on the way to its minimum (observed: a near-wall
+    # branch whose target minimum lies just past the saddle it nearly
+    # connects to).  Reject a step that turns more than twice the nominal
+    # CRITICAL_STEP_FRACTION angle from the last accepted direction and
+    # halve dt; the ramp reopens along the slow approach, where the
+    # direction does not turn and dt_cap is what makes stiff arrivals
+    # affordable.
+    turn_reject = float(np.cos(2.0*np.arctan(CRITICAL_STEP_FRACTION)))
+    last_direction = None
+    turn_rejected = 0
     pts = [tuple(map(float, start))]
     accepted = rejected = 0
     gl8_attempted = gl8_accepted = 0
@@ -827,6 +1038,13 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
                 if (not np.isfinite(next_value) or next_value >= value
                         or richardson > tolerance):
                     continue
+                direction = half-z
+                if last_direction is not None and chord > 0.0:
+                    cosine = float(direction @ last_direction)/(
+                        chord*float(np.hypot(*last_direction)))
+                    if cosine < turn_reject:
+                        turn_rejected += 1
+                        continue
                 zn = half
                 accepted_midpoint = midpoint
                 max_richardson = max(max_richardson, richardson)
@@ -842,6 +1060,7 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
             break
         previous = z
         z = zn
+        last_direction = z-previous
         accepted += 1
         dt = min(dt_cap, 1.5*trial_dt)
         p0 = previous+center
@@ -860,6 +1079,7 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
     engine_diag["centered_arrival"] = {
         "accepted_steps": accepted,
         "rejected_steps": rejected,
+        "turn_rejected_steps": turn_rejected,
         "gl8_attempted": gl8_attempted,
         "gl8_accepted": gl8_accepted,
         "max_richardson": float(max_richardson),
@@ -872,7 +1092,8 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
 
 
 def _potential_rate_box_exit(m: Model, start, box, ds: float,
-                             engine_diag: dict, max_steps: int = 100000):
+                             engine_diag: dict, max_steps: int = 100000,
+                             critical=None):
     """Trace a stable branch outward with constant-potential-rate ascent."""
     native = getattr(m, "_native_kernel", None)
     if native is None or not hasattr(native, "potential_step"):
@@ -889,6 +1110,8 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
     # than the legacy scalar-chart sampler.  Four legacy chords retain ample
     # topology resolution while avoiding million-segment stable tails.
     geometric_ds = 4.0*ds
+    critical_capped = 0
+    arclength_steps = 0
     term = "budget"
     for _ in range(max_steps):
         level = float(m.L(*z))
@@ -900,6 +1123,35 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
         h = max(
             16.0*geometric_ds*ng,
             4096*np.finfo(float).eps*(1.0+abs(level)))
+        # Near a critical point the loss step is an arclength h/|grad L|;
+        # bound it by the flow's local curvature radius (see
+        # CRITICAL_STEP_FRACTION) so the step cannot cross the saddle.
+        # Where the cap falls below the loss floor, step in arclength.
+        arc_cap = _step_arclength_cap(m, z, critical, ng)
+        cap = arc_cap*ng
+        loss_floor = 4096*np.finfo(float).eps*(1.0+abs(level))
+        if np.isfinite(cap) and cap > 0.0 and h > cap:
+            critical_capped += 1
+            if cap < loss_floor:
+                arc = _arclength_step(native, m, z, arc_cap, +1.0)
+                if arc is not None:
+                    half, midpoint = arc
+                    arclength_steps += 1
+                    z = half
+                    accepted += 1
+                    exited = False
+                    for sample in (midpoint, z):
+                        _append_resolved_point(pts, sample, geometry_floor)
+                        if not (box[0] <= sample[0] <= box[1]
+                                and box[2] <= sample[1] <= box[3]):
+                            z = sample
+                            term = "box_exit"
+                            exited = True
+                            break
+                    if exited:
+                        break
+                    continue
+            h = max(cap, loss_floor)
         zn = None
         dense_data = None
         for _retry in range(14):
@@ -967,6 +1219,8 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
     engine_diag["potential_rate_ascent"] = {
         "accepted_steps": accepted,
         "rejected_steps": rejected,
+        "critical_capped_steps": critical_capped,
+        "arclength_steps": arclength_steps,
         "gl8_attempted": gl8_attempted,
         "gl8_accepted": gl8_accepted,
         "max_richardson": float(max_richardson),
@@ -1594,7 +1848,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                    _launch_rel: float | None = None,
                    critical_local=None, critical_stub=None,
                    capture_targets=None, arrival_local=None,
-                   candidate_minima=None, candidate_enumeration=None) -> Branch:
+                   candidate_minima=None, candidate_enumeration=None,
+                   critical_points=None) -> Branch:
     """Candidate-directed unstable continuation to capture, exit, or failure.
 
     Zone loop per the dispatcher contract: whenever the sounding says
@@ -1607,6 +1862,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     a_t, b_t = target
     targets = ([tuple(map(float, target))] if capture_targets is None else
                [tuple(map(float, q)) for q in capture_targets])
+    critical = _critical_array(critical_points)
     span = b_t - b_saddle
     sgn = 1.0 if span > 0 else -1.0
     if ds is None:
@@ -1761,7 +2017,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                     _potential_rate_level_event(
                         m, float(m.s_a_star(b_cur)+w_cur), float(b_cur),
                         [(q.a, q.b) for q in live_minima],
-                        box, cap_r, diag))
+                        box, cap_r, diag, critical=critical))
                 pts.extend(event_curve[1:])
                 if event_term == "capture":
                     term = "capture"
@@ -1852,7 +2108,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 and sc.get("global_resolution_margin", 0.0) >= 1024.0):
             prefix, b_cur, w_cur, prefix_term = _potential_rate_prefix(
                 m, float(m.s_a_star(b_cur)+w_cur), float(b_cur),
-                (at_unique, bt_unique), box, cap_r, diag)
+                (at_unique, bt_unique), box, cap_r, diag,
+                critical=critical)
             pts.extend(prefix[1:])
             if prefix_term == "capture":
                 term = "capture"
@@ -2132,7 +2389,7 @@ def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
 def trace_stable(m: Model, b_saddle: float, sign: int,
                  box=(-25.0, 25.0, -12.0, 16.0), ds: float | None = None,
                  delta: float | None = None, critical_local=None,
-                 critical_stub=None) -> Branch:
+                 critical_stub=None, critical_points=None) -> Branch:
     """Stable branch (separatrix): saddle → box exit, ascent flow.
 
     Fast-graph launch from the exact eigenvector jet; the continuation
@@ -2210,7 +2467,8 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
             and dict(critical_stub.certificates).get(
                 "global_field_ready", 0.0)):
         potential_pts, potential_term = _potential_rate_box_exit(
-            m, (m.a_star(b0)+w0, b0), box, ds, diag)
+            m, (m.a_star(b0)+w0, b0), box, ds, diag,
+            critical=_critical_array(critical_points))
         if prefix:
             prefix.extend(potential_pts[1:])
         else:
