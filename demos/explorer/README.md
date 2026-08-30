@@ -147,7 +147,11 @@ and break; the chambers certify and the wall itself cannot, because a saddle
 connection is codimension one and binary64 can bracket it but never confirm
 standing on it.  The panel shows `wall_bracket` and says explicitly when Λ is
 inside it, where the landing fate is launch-protocol-dependent and the
-coordinate is not citable.
+coordinate is not citable.  The slider holds Λ itself (`step="any"`), so the
+stored wall coordinate is representable exactly and "back to the wall" lands
+on it; the exact geometric limit is requested only when the slider sits there,
+and is drawn in its own colour (`--connection`), since the orbit is a stable
+and an unstable manifold at once and should read as neither.
 
 The current `f` and `g` are echoed as selectable text under the Model panel:
 coefficients live in `<input>` values, which do not survive copying the page,

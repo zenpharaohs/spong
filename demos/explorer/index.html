@@ -9,6 +9,9 @@
     /* spong house palette, from render.py */
     --contour:#c8c8c8; --backbone:#e6a817; --unstable:#00b400;
     --stable:#d40000; --glyph:#111111; --rim:#888888; --trace:#5B3E8C;
+    /* the exact Wu = Ws orbit at a wall: its own colour, since it stands in
+       for a stable AND an unstable manifold and must read as neither */
+    --connection:#0f7b8a;
     --serif:"Iowan Old Style","Palatino Linotype",Palatino,Charter,Georgia,serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
@@ -261,7 +264,8 @@
           <div class="grp"><i class="swatch" style="background:var(--backbone)"></i>backbone a*(b)
             <i class="swatch" style="background:var(--unstable);margin-left:8px"></i>unstable manifold
             <i class="swatch" style="background:var(--stable);margin-left:8px"></i>stable manifold
-            <i class="swatch" style="background:var(--trace);margin-left:8px"></i>trajectory</div>
+            <i class="swatch" style="background:var(--trace);margin-left:8px"></i>trajectory
+            <i class="swatch" style="background:var(--connection);margin-left:8px"></i>wall pair / exact connection</div>
           <div class="grp">
             <span class="cert ok" style="font-size:14px">✓</span>certified
             <span class="cert nonmorse" style="font-size:14px;margin-left:8px">◆</span>certified non-Morse
@@ -273,7 +277,12 @@
       </details>
     </div>
     <div class="panel">
-      <p class="cap">Backbone a*(b) and loss along it <span class="rhs">stops mark certified critical points</span></p>
+      <p class="cap">Backbone a*(b) and loss along it <span class="rhs">stops mark certified critical points
+        <button class="tool" id="exportPng" style="margin-left:10px"
+                title="Write one PNG of the phase portrait and backbone panels, redrawn at 2x, with captions and a compact view/contour record">export PNG 2x</button>
+        <button class="tool" id="exportSvg"
+                title="Write the phase portrait's vector layers as SVG: every branch, shot, candidate and connection as its own path with data- attributes naming it. Contours are omitted.">export SVG</button>
+        <span id="exportStatus" role="status" aria-live="polite"></span></span></p>
       <canvas id="cBone" width="760" height="230"></canvas>
     </div>
   </div>
@@ -394,7 +403,11 @@
         </div>
         <div class="wide">
           <label for="lam" id="lamLabel">parameter</label>
-          <input id="lam" type="range" min="0" max="1000" value="500"
+          <!-- step="any": the slider holds the family parameter ITSELF, so
+               the stored wall coordinate is representable exactly and
+               "back to the wall" lands on it rather than on the nearest
+               of a thousand ticks.  min/max are set per family. -->
+          <input id="lam" type="range" min="0" max="1" step="any" value="0.5"
                  style="width:100%;padding:0">
         </div>
         <div class="wide row">
@@ -405,12 +418,21 @@
           </label>
         </div>
         <div class="wide row">
+          <label style="margin:0 8px 0 0;text-transform:none;letter-spacing:0">
+            <input id="wallStar" type="checkbox" style="width:auto;margin-right:4px">
+            overlay the Λ* connection candidate
+            <span class="help" tabindex="0" title="The glued two-sided shot at the Brent root Lambda* of the separation: numerically indistinguishable from the connection at binary64. Drawn over the portrait at ANY Lambda so the non-connecting manifolds here can be compared with it.">?</span>
+          </label>
+        </div>
+        <div class="wide row">
           <button id="lamReset" class="ghost">back to the wall</button>
         </div>
         <p class="wide" id="lamRead" style="margin:0;font-size:11px;
            color:var(--ink-2);user-select:all"></p>
         <p class="wide" id="lamWarn" style="margin:2px 0 0;font-size:11px;
            color:var(--response)"></p>
+        <p class="wide" id="wallGap" style="margin:2px 0 0;font-size:11px;
+           color:var(--connection);user-select:all"></p>
       </div>
       </div>
     </details>
@@ -589,6 +611,12 @@ const gradOf = (a, b) => {
 };
 const aStar = b => evalp(S.P.field.B, b) / evalp(S.P.field.A, b);
 
+// Drawing code lays out in CSS pixels; the canvas transform does the
+// scaling.  1 on screen; the PNG export sets it to 2 while it redraws both
+// panels against temporary 2x backing stores, so line weights and type
+// scale with the geometry instead of staying one device pixel wide.
+let renderScale = 1;
+
 /* ---------------- backend ---------------- */
 function sampleBatch(n, kind){
   const xs = [];
@@ -633,7 +661,7 @@ async function recompute(_unused, zooName){
   // natural box is large can trace for a very long time.  The view you are
   // looking at is the honest bound.
   const base = WALL ? { wall: WALL.name, lam: lamFromSlider(),
-                         wall_limit: els("wallLimit").checked }
+                         wall_limit: !!WALL.atWall }
     : zooName ? { zoo: zooName } : {
     f: parseCoeffs(els("fIn").value),
     g: parseCoeffs(els("gIn").value),
@@ -793,7 +821,52 @@ function apply(data, zooName){
     }
   }
   S.stale = false;
+  updateWallGap(data);
   draw();
+}
+
+// How close the wall family's two continuations come, from the payload.
+// This is the number the picture cannot show at every zoom at once: at
+// ordinary magnification a near-miss looks like a connection, and at deep
+// magnification the passing branch leaves the view entirely.
+function updateWallGap(data){
+  const el = els("wallGap");
+  if (!el) return;
+  if (!WALL || !data){ el.textContent = ""; return; }
+  // Once the family's Brent root is known, THAT is the wall coordinate:
+  // "back to the wall" lands on it and the exact-limit request is made
+  // there.  If the slider is parked on the old stored value with the box
+  // ticked, move it (one cached round trip).
+  if (data.wall_root && WALL.wall !== data.wall_root.lam){
+    WALL.wall = data.wall_root.lam;
+    if (els("wallLimit").checked && lamFromSlider() !== WALL.wall){
+      els("lamReset").click();
+      return;
+    }
+    updateWallReadout();
+  }
+  const fmt = x => Number.isFinite(x) ? x.toExponential(3) : "—";
+  const root = data.wall_root;
+  const rootLine = root
+    ? `  │  ${WALL.parameter_name}* = ${root.lam.toPrecision(16)} by two-sided `
+      + `shooting (Brent, ${root.evaluations} shots, ds ${root.ds}), δ* = ${fmt(root.delta)}; `
+      + `stored coordinate off by ${fmt(root.stored_wall - root.lam)}`
+    : "";
+  const rec = (data.wall_connections || [])[0];
+  if (rec){
+    el.textContent =
+      `connection candidate shown: Wu(b* = ${rec.source_b.toFixed(4)}) shot down and `
+      + `Ws(b* = ${rec.target_b.toFixed(4)}) shot up meet at the midlevel to `
+      + `|δ| = ${fmt(rec.numerical_miss)}` + rootLine;
+    return;
+  }
+  const shot = data.wall_shot;
+  if (!shot){ el.textContent = rootLine.replace(/^ {2}│ {2}/, ""); return; }
+  el.textContent =
+    `δ = ${fmt(shot.delta)} at level ${shot.level.toPrecision(6)}: Wu(b* = `
+    + `${shot.source_b.toFixed(4)}) crosses at b = ${shot.unstable_crossing[1].toPrecision(8)}, `
+    + `Ws(b* = ${shot.target_b.toFixed(4)}) at b = ${shot.stable_crossing[1].toPrecision(8)}`
+    + rootLine;
 }
 
 /* ---------------- portrait ---------------- */
@@ -972,8 +1045,8 @@ function levelValues(uMin, uMaxBone, Lmax, NL, v){
 }
 
 function drawPortrait(){
-  const W = cP.width, H = cP.height, v = S.view;
-  xP.setTransform(1,0,0,1,0,0);
+  const W = cP.width / renderScale, H = cP.height / renderScale, v = S.view;
+  xP.setTransform(renderScale,0,0,renderScale,0,0);
   xP.fillStyle = "#fff"; xP.fillRect(0,0,W,H);
   if (!S.P) return;
   const F = S.P.field;
@@ -1249,24 +1322,87 @@ function drawPortrait(){
     xP.restore();
   }
 
+  // The two-sided shot at THIS Lambda: the source's unstable branch shot
+  // down and the target's stable branch shot up to the common midlevel,
+  // drawn on top in the connection colour with their crossings marked.
+  // Their signed gap delta along the level is smooth in Lambda and zero
+  // exactly at the wall; the panel prints it.  At deep zoom the two curves
+  // simply pass one another, which is the honest picture.
+  if (S.P.wall_shot && !(S.P.wall_connections && S.P.wall_connections.length)){
+    const shot = S.P.wall_shot;
+    xP.save();
+    xP.lineWidth = 2.4;
+    xP.strokeStyle = css("--connection");
+    for (const [pts, dashed] of [[shot.unstable_points, false],
+                                 [shot.stable_points, true]]){
+      if (!pts || pts.length < 2) continue;
+      xP.setLineDash(dashed ? [6, 4] : []);
+      xP.beginPath();
+      pts.forEach((p, i) => i ? xP.lineTo(X(p[0]), Y(p[1])) : xP.moveTo(X(p[0]), Y(p[1])));
+      xP.stroke();
+    }
+    xP.setLineDash([]);
+    xP.fillStyle = css("--connection");
+    for (const q of [shot.unstable_crossing, shot.stable_crossing]){
+      xP.beginPath(); xP.arc(X(q[0]), Y(q[1]), 2.6, 0, 7); xP.fill();
+    }
+    xP.restore();
+  }
+
+  // The Lambda* candidate overlaid at any Lambda, for comparison with the
+  // manifolds that do NOT connect here.
+  if (S.P.wall_root && els("wallStar").checked
+      && !(S.P.wall_connections && S.P.wall_connections.length)){
+    const pts = S.P.wall_root.candidate_points || [];
+    if (pts.length >= 2){
+      xP.save();
+      xP.lineWidth = 1.6;
+      xP.globalAlpha = .7;
+      xP.setLineDash([2, 3]);
+      xP.strokeStyle = css("--connection");
+      xP.beginPath();
+      pts.forEach((p, i) => i ? xP.lineTo(X(p[0]), Y(p[1])) : xP.moveTo(X(p[0]), Y(p[1])));
+      xP.stroke();
+      xP.restore();
+      xP.globalAlpha = 1;
+    }
+  }
+
   // exact geometric wall-limit connection (requested via wall_limit), the
   // idealized W^u = W^s orbit standing in for the pair of numerical
-  // continuations that a saddle-connection wall makes ill-defined.
+  // continuations that a saddle-connection wall makes ill-defined.  It gets
+  // its own colour: it is neither a stable nor an unstable manifold but both
+  // at once.  When the manifolds are EQUAL the orbit runs critical point to
+  // critical point and those already carry glyphs, so no endpoint mark; any
+  // other connection kind marks where it lands, since that endpoint is the
+  // finding.
   if (S.P.wall_connections && S.P.wall_connections.length){
     xP.save();
     xP.lineWidth = 2.2;
-    xP.strokeStyle = css("--backbone");
     xP.globalAlpha = .9;
     for (const rec of S.P.wall_connections){
       const pts = rec.points || [];
       if (pts.length < 2) continue;
+      const equal = rec.kind === "stable_unstable";
+      const marker = { color: css("--connection"),
+                       endRadius:equal ? 0 : 1.8,
+                       markerEndpoint:!equal };
+      xP.strokeStyle = marker.color;
       xP.beginPath();
       pts.forEach((p, i) => i ? xP.lineTo(X(p[0]), Y(p[1])) : xP.moveTo(X(p[0]), Y(p[1])));
       xP.stroke();
+      if (marker.markerEndpoint){
+        const end = pts[pts.length - 1];
+        xP.fillStyle = marker.color;
+        xP.beginPath(); xP.arc(X(end[0]), Y(end[1]), marker.endRadius, 0, 7); xP.fill();
+      }
       const mid = pts[Math.floor(pts.length / 2)];
-      xP.fillStyle = css("--backbone");
+      xP.fillStyle = marker.color;
       xP.font = "11px " + css("--mono");
-      xP.fillText(rec.label || "saddle connection", X(mid[0]) + 6, Y(mid[1]) - 6);
+      const miss = rec.numerical_miss;
+      xP.fillText((rec.label || "saddle connection")
+                  + (Number.isFinite(miss) ? ` · |δ| at the midlevel ${miss.toExponential(2)}` : ""),
+                  X(mid[0]) + 6, Y(mid[1]) - 6);
     }
     xP.restore();
     xP.globalAlpha = 1;
@@ -1433,7 +1569,8 @@ function drawFates(){
 
 /* ---------------- backbone ---------------- */
 function drawBone(){
-  const W = cB.width, H = cB.height, v = S.view;
+  const W = cB.width / renderScale, H = cB.height / renderScale, v = S.view;
+  xB.setTransform(renderScale,0,0,renderScale,0,0);
   xB.clearRect(0,0,W,H);
   if (!S.P) return;
   const F = S.P.field, pad = { l:52, r:52, t:14, b:24 };
@@ -1885,8 +2022,7 @@ els("showSlaved").addEventListener("change", () => {
 });
 els("lamReset").onclick = () => {
   if (!WALL) return;
-  const t = (WALL.wall - WALL.below) / (WALL.above - WALL.below);
-  els("lam").value = Math.round(1000 * t);
+  els("lam").value = WALL.wall;
   updateWallReadout();
   recompute();
 };
@@ -1980,6 +2116,13 @@ els("sameFG").onchange = () => {
 // OPPOSITE landing fates under a recorded protocol; inside it the fate is
 // launch-protocol-dependent, so the readout says so rather than implying that
 // some particular Lambda is the wall.
+//
+// The slider holds Lambda itself (step="any"), so the stored wall coordinate
+// is representable exactly and WALL.atWall is an exact comparison, not a
+// tolerance.  The exact geometric limit is only ever drawn there: it is a
+// picture of the idealized wall parameter, and drawing it while the slider
+// sits somewhere else would label a different model's orbit with this
+// model's coordinate.
 let WALL = null;
 
 function updateWallReadout(){
@@ -1987,19 +2130,25 @@ function updateWallReadout(){
   const lam = lamFromSlider();
   const br = WALL.bracket;
   const inside = br && lam > br[0] && lam < br[1];
+  const onWall = lam === WALL.wall;
+  WALL.atWall = onWall && els("wallLimit").checked;
   els("lamRead").textContent =
     `${WALL.parameter_name} = ${lam.toPrecision(10)}`
+    + (onWall ? "   (the wall coordinate)" : "")
     + (br ? `   bracket [${br[0].toPrecision(8)}, ${br[1].toPrecision(8)}]` : "");
-  els("lamWarn").textContent = inside
-    ? "inside the bracket: the landing fate is launch-protocol-dependent "
-      + "here, so this coordinate is not a citable wall location"
-    : "";
+  els("lamWarn").textContent =
+    (els("wallLimit").checked && !onWall)
+      ? "the exact geometric limit is drawn only at the stored wall "
+        + "coordinate — press 'back to the wall'"
+    : inside
+      ? "inside the bracket: the landing fate is launch-protocol-dependent "
+        + "here, so this coordinate is not a citable wall location"
+      : "";
 }
 
 function lamFromSlider(){
   if (!WALL) return null;
-  const t = +els("lam").value / 1000;
-  return WALL.below + t * (WALL.above - WALL.below);
+  return +els("lam").value;
 }
 
 fetch("/walls").then(r => r.json()).then(list => {
@@ -2015,16 +2164,27 @@ fetch("/walls").then(r => r.json()).then(list => {
     els("wallInfo").textContent = WALL ? `base ${WALL.base_case}` : "";
     els("wallLimit").checked = false;
     if (!WALL){ updateWallReadout(); return; }
-    // start at the wall itself
-    const t = (WALL.wall - WALL.below) / (WALL.above - WALL.below);
-    els("lam").value = Math.round(1000 * t);
+    // The slider IS Lambda over [below, above]; start at the wall itself.
+    els("lam").min = WALL.below;
+    els("lam").max = WALL.above;
+    els("lam").value = WALL.wall;
     updateWallReadout();
     S.traces = []; els("preset").value = "";
     recompute();
   };
   els("lam").addEventListener("input", updateWallReadout);
   els("lam").addEventListener("change", () => { if (WALL) recompute(); });
-  els("wallLimit").addEventListener("change", () => { if (WALL) recompute(); });
+  els("wallStar").addEventListener("change", () => draw());
+  els("wallLimit").addEventListener("change", () => {
+    if (!WALL) return;
+    // Ticking the box away from the wall means "show me the wall": go there.
+    if (els("wallLimit").checked && lamFromSlider() !== WALL.wall){
+      els("lamReset").click();
+      return;
+    }
+    updateWallReadout();
+    recompute();
+  });
 }).catch(() => {});
 
 let timer = null;
@@ -2047,7 +2207,9 @@ function clearWall(){
   const sel = els("wallSel");
   if (sel) sel.value = "";
   els("wallLimit").checked = false;
+  els("wallStar").checked = false;
   updateWallReadout();
+  updateWallGap(null);
 }
 
 els("preset").onchange = e => {
@@ -2181,6 +2343,7 @@ const PAL_GROUPS = {
   plot: [["--target","target f(x)"],["--response","response a·g(bx)"],
          ["--backbone","backbone"],["--unstable","unstable manifold"],
          ["--stable","stable manifold"],["--trace","trajectory"],
+         ["--connection","exact wall connection"],
          ["--contour","contour lines"],["--glyph","critical-point glyphs"],
          ["--rim","degenerate-point rim"]]
 };
@@ -2188,7 +2351,8 @@ const DEFAULT_PALETTE = {
   "--ground":"#D3D9DD","--paper":"#FAFBFB","--ink":"#121D26","--ink-2":"#4A5A66",
   "--rule":"#A6B2BA","--rule-2":"#C7CFD5","--target":"#12507A","--response":"#C25E00",
   "--contour":"#c8c8c8","--backbone":"#e6a817","--unstable":"#00b400",
-  "--stable":"#d40000","--glyph":"#111111","--rim":"#888888","--trace":"#5B3E8C"
+  "--stable":"#d40000","--glyph":"#111111","--rim":"#888888","--trace":"#5B3E8C",
+  "--connection":"#0f7b8a"
 };
 // "dark" only touches the interface group: the canvases paint a fixed white
 // plot surface (see drawPortrait's fillRect), so the semantic colours were
@@ -2203,7 +2367,8 @@ const PRESET_DARK = {
 // with the rest of the plot group remapped to stay mutually distinguishable.
 const PRESET_COLORBLIND = {
   "--target":"#0072B2","--response":"#E69F00","--backbone":"#CC79A7",
-  "--unstable":"#009E73","--stable":"#D55E00","--trace":"#000000"
+  "--unstable":"#009E73","--stable":"#D55E00","--trace":"#000000",
+  "--connection":"#56B4E9"
 };
 const PAL_KEY = "spong-explorer-palette";
 
@@ -2337,6 +2502,179 @@ els("clearAllocator").onclick = () => {
   els("allocStatus").textContent = "";
   draw();
 };
+
+// ---- PNG export ----------------------------------------------------------
+// One shareable image: the live phase portrait and backbone panels with
+// their captions and a compact record of the view and contour settings, and
+// none of the surrounding controls.  Both panels are REDRAWN against
+// temporary 2x backing stores (renderScale threads the factor through the
+// drawing code), so the file carries native high-resolution geometry rather
+// than an enlarged screenshot.
+function exportFilename(){
+  const slug = s => String(s).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  let stem;
+  if (S.lastBody && S.lastBody.zoo) stem = slug(S.lastBody.zoo);
+  else if (S.lastBody && S.lastBody.wall)
+    stem = slug(S.lastBody.wall) + "-lam" + slug((+S.lastBody.lam).toPrecision(10))
+         + (WALL && WALL.atWall ? "-wall-limit" : "");
+  else {
+    // FNV-1a over the coefficients and moment spec: the same custom case
+    // gets the same short name across sessions.
+    const text = JSON.stringify([S.P.f, S.P.g, (S.lastBody && S.lastBody.moments) || null]);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++){
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    stem = "custom-" + h.toString(16).padStart(8, "0");
+  }
+  return `spong-${stem}.png`;
+}
+
+function exportPng(scale){
+  if (!S.P) return;
+  const status = els("exportStatus");
+  const saved = { pw: cP.width, ph: cP.height, bw: cB.width, bh: cB.height };
+  const v = S.view;
+  try {
+    renderScale = scale;
+    cP.width = saved.pw * scale; cP.height = saved.ph * scale;
+    cB.width = saved.bw * scale; cB.height = saved.bh * scale;
+    drawPortrait();
+    drawBone();
+
+    const pad = 16 * scale, capH = 22 * scale, gap = 10 * scale;
+    const W = Math.max(cP.width, cB.width) + 2 * pad;
+    const H = pad + capH + cP.height + gap + capH + cB.height + capH + pad;
+    const out = document.createElement("canvas");
+    out.width = W; out.height = H;
+    const ctx = out.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+
+    const caption = (text, y, size, colour, face) => {
+      ctx.fillStyle = colour; ctx.font = `${size * scale}px ${css(face)}`;
+      ctx.fillText(text, pad, y + 14 * scale);
+    };
+    let y = pad;
+    const mark = els("certMark");
+    caption(`Phase portrait — ${mark.textContent} ${mark.title}`, y, 12, css("--ink"), "--serif");
+    y += capH;
+    ctx.drawImage(cP, pad, y);
+    y += cP.height + gap;
+    caption("Backbone a*(b) and loss along it — stops mark certified critical points",
+            y, 12, css("--ink"), "--serif");
+    y += capH;
+    ctx.drawImage(cB, pad, y);
+    y += cB.height;
+    const record =
+      `${els("caseId").textContent}   view a [${v.a0.toPrecision(6)}, ${v.a1.toPrecision(6)}] `
+      + `b [${v.b0.toPrecision(6)}, ${v.b1.toPrecision(6)}]   contours ${S.levels} (${S.levelSpan})   `
+      + `crosshair ${S.showCross ? "on" : "off"}   traces ${S.traces.length}`
+      + (WALL ? `   ${WALL.parameter_name} = ${(+S.lastBody.lam).toPrecision(10)}`
+                + (WALL.atWall ? " (exact wall limit)" : "") : "");
+    caption(record, y, 10, css("--ink-2"), "--mono");
+
+    const filename = exportFilename();
+    out.toBlob(blob => {
+      if (!blob){ status.textContent = "export failed"; return; }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = `wrote ${filename}`;
+    }, "image/png");
+  } finally {
+    renderScale = 1;
+    cP.width = saved.pw; cP.height = saved.ph;
+    cB.width = saved.bw; cB.height = saved.bh;
+    draw();
+  }
+}
+els("exportPng").onclick = () => exportPng(2);
+
+// ---- SVG export ----------------------------------------------------------
+// The vector layers of the phase portrait at the current view, one <path>
+// per object with data- attributes naming it: which saddle, which kind,
+// which direction, how it terminated.  This is the instrument for "whose
+// trace is that" -- a question a raster cannot answer.  Contours are
+// omitted (they are closed-form and recomputable); everything traced or
+// shot is included at full resolution.
+function exportSvg(){
+  if (!S.P) return;
+  const status = els("exportStatus");
+  const W = cP.width, H = cP.height, v = S.view;
+  const X = a => (a - v.a0) / (v.a1 - v.a0) * W;
+  const Y = b => H - (b - v.b0) / (v.b1 - v.b0) * H;
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const path = (pts, attrs) => {
+    if (!pts || pts.length < 2) return "";
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(3)} ${Y(p[1]).toFixed(3)}`).join("");
+    const a = Object.entries(attrs).map(([k, val]) => ` ${k}="${esc(val)}"`).join("");
+    return `  <path d="${d}" fill="none"${a}/>\n`;
+  };
+  const F = S.P.field;
+  const out = [];
+  out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">\n`);
+  out.push(`  <!-- ${esc(els("caseId").textContent)} -->\n`);
+  out.push(`  <!-- view a [${v.a0}, ${v.a1}] b [${v.b0}, ${v.b1}]`
+           + (WALL && S.lastBody ? ` ${WALL.parameter_name} = ${S.lastBody.lam}` : "")
+           + (S.P.status ? ` status ${S.P.status}` : "") + " -->\n");
+  out.push(`  <rect width="${W}" height="${H}" fill="#fff"/>\n`);
+  // backbone, sampled as drawPortrait samples it
+  const M = 1200, bone = [];
+  for (let i = 0; i <= M; i++){
+    const b = v.b0 + i / M * (v.b1 - v.b0), A = evalp(F.A, b);
+    if (!(A > 1e-13)) continue;
+    bone.push([evalp(F.B, b) / A, b]);
+  }
+  out.push(path(bone, { id: "backbone", stroke: css("--backbone"), "stroke-width": 2 }));
+  S.P.branches.forEach((br, i) => {
+    out.push(path(br.points, {
+      id: `branch-${i}`, "data-kind": br.kind,
+      "data-saddle-b": br.saddle_b, "data-direction": br.direction,
+      "data-stable-sign": br.stable_sign, "data-term": br.term,
+      "data-n-traced": br.n_traced,
+      stroke: br.kind === "unstable" ? css("--unstable") : css("--stable"),
+      "stroke-width": 1.7 }));
+  });
+  if (S.P.wall_shot){
+    const sh = S.P.wall_shot;
+    out.push(path(sh.unstable_points, { id: "shot-unstable", "data-saddle-b": sh.source_b,
+      "data-direction": sh.source_direction, "data-delta": sh.delta, "data-level": sh.level,
+      stroke: css("--connection"), "stroke-width": 2.4 }));
+    out.push(path(sh.stable_points, { id: "shot-stable", "data-saddle-b": sh.target_b,
+      "data-direction": sh.target_direction, "data-delta": sh.delta, "data-level": sh.level,
+      stroke: css("--connection"), "stroke-width": 2.4, "stroke-dasharray": "6 4" }));
+  }
+  if (S.P.wall_root){
+    out.push(path(S.P.wall_root.candidate_points, { id: "candidate-at-lambda-star",
+      "data-lam": S.P.wall_root.lam, "data-delta": S.P.wall_root.delta,
+      stroke: css("--connection"), "stroke-width": 1.6, "stroke-dasharray": "2 3" }));
+  }
+  for (const rec of S.P.wall_connections || []){
+    out.push(path(rec.points, { id: "wall-connection", "data-kind": rec.kind,
+      "data-source-b": rec.source_b, "data-target-b": rec.target_b,
+      "data-miss": rec.numerical_miss,
+      stroke: css("--connection"), "stroke-width": 2.2 }));
+  }
+  for (const c of S.P.critical){
+    out.push(`  <circle cx="${X(c.a).toFixed(3)}" cy="${Y(c.b).toFixed(3)}" r="4" `
+             + `fill="${c.kind === "min" ? css("--glyph") : "#fff"}" stroke="${css("--glyph")}" `
+             + `data-kind="${c.kind}" data-source="${c.source}" data-a="${c.a}" data-b="${c.b}" data-loss="${c.loss}"/>\n`);
+  }
+  out.push("</svg>\n");
+  const filename = exportFilename().replace(/\.png$/, ".svg");
+  const blob = new Blob(out, { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = filename;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  status.textContent = `wrote ${filename}`;
+}
+els("exportSvg").onclick = exportSvg;
 
 recompute();
 </script>

@@ -48,10 +48,10 @@ os.environ.setdefault("SPONG_ENGINE", "native")
 os.environ.setdefault("SPONG_WORKERS", "8")
 
 try:
-    from spong import atlas, model, portrait, sturm, zoo
+    from spong import atlas, model, portrait, sturm, wall_shoot, zoo
 except ImportError:                                  # running from a checkout
     sys.path.insert(0, str(REPO / "src"))
-    from spong import atlas, model, portrait, sturm, zoo
+    from spong import atlas, model, portrait, sturm, wall_shoot, zoo
 
 # The allocator experiment remains demo code, but the viewer needs to run it
 # against the exact model behind the active portrait.  A script launched as
@@ -95,6 +95,25 @@ _ENUM_MAX = 8
 # portrait was built from without rebuilding it.
 _MODELS: dict = {}
 _MODELS_MAX = 8
+
+# One Brent solve per wall family (about three seconds at ds = 5e-4),
+# computed on the first wall-limit request and kept for the process.
+_WALL_ROOTS: dict = {}
+WALL_SHOOT_DS = 5e-4
+
+
+def _wall_root(family):
+    """The family's Brent root, or None if shooting is unavailable (no C
+    core) or refuses (no sign change on the bracket) -- callers then fall
+    back to the stored wall_parameter and the older construction."""
+    if family.name in _WALL_ROOTS:
+        return _WALL_ROOTS[family.name]
+    try:
+        root = wall_shoot.find_wall(family, ds=WALL_SHOOT_DS)
+    except (ValueError, ArithmeticError, RuntimeError):
+        root = None
+    _WALL_ROOTS[family.name] = root
+    return root
 
 
 # --------------------------------------------------------------------------
@@ -242,17 +261,20 @@ def _resolve(payload: dict):
         # Lambda in it is "the" wall.
         w = zoo.get_wall_family(wall)
         base = zoo.get(w.base_case)
-        # ``wall_limit`` names the representative geometric wall model, not
-        # merely a nearby slider coordinate.  The browser's range control
-        # round-trips the JSON number a few ulps away from the stored value;
-        # snapping here ensures the model really is the registered wall
-        # member.  Ordinary slider positions continue to use their literal
-        # Lambda below.
-        lam = (w.wall_parameter if payload.get("wall_limit") else
+        # ``wall_limit`` names the wall itself, not a nearby slider
+        # coordinate.  The coordinate used is the Brent root of the
+        # two-sided shooting separation (spong.wall_shoot), which is the
+        # binary64 wall to the integrator's accuracy; the family's stored
+        # ``wall_parameter`` is the older fate-bisection value and can sit
+        # a few 1e-9 away from it.  Ordinary slider positions use their
+        # literal Lambda.
+        wall_root = _wall_root(w) if payload.get("wall_limit") else None
+        lam = (wall_root.lam if wall_root is not None else
+               w.wall_parameter if payload.get("wall_limit") else
                float(payload.get("lam", w.wall_parameter)))
-        root = math.sqrt(lam)
-        f = [float(x) / root for x in base.f]
-        g = [float(x) * root for x in base.g]
+        scale = math.sqrt(lam)
+        f = [float(x) / scale for x in base.f]
+        g = [float(x) * scale for x in base.g]
         view = tuple(float(x) for x in w.default_view)
         spec = {"kind": base.moment_dist}
     elif name:
@@ -274,65 +296,127 @@ def _resolve(payload: dict):
     return f, g, view, spec, key
 
 
-def _geometric_wall_limit(payload: dict, p):
+def _wall_pair(payload: dict, p):
+    """The two continuations a wall family is about, at ANY Lambda.
+
+    The source saddle's unstable branch in the family's direction and the
+    target saddle's stable branch nearest the source, with the closest
+    approach of each to the other's critical point.  At the wall these
+    coincide in the limit; away from it they miss by an amount the viewer
+    should print rather than leave to the eye, since a near-connection at
+    ordinary zoom and a clean miss at deep zoom are the same picture.
+
+    Returns None outside a wall family or when the branches cannot be
+    identified (a refused portrait may lack them).
+    """
+    name = payload.get("wall")
+    if not name:
+        return None
+    family = zoo.get_wall_family(name)
+    try:
+        source = saddle_wall.critical_near(p, family.source_b)
+        target = saddle_wall.critical_near(p, family.target_b)
+    except (LookupError, ValueError):
+        return None
+    unstable = [
+        (index, branch) for index, branch in enumerate(p.branches)
+        if branch.kind == "unstable"
+        and abs(branch.diag.get("saddle_b", math.inf)-source.b) < 1e-7
+        and branch.diag.get("unstable_direction") ==
+        family.unstable_direction]
+    stable = [
+        (index, branch) for index, branch in enumerate(p.branches)
+        if branch.kind == "stable"
+        and abs(branch.diag.get("saddle_b", math.inf)-target.b) < 1e-7]
+    if not unstable or not stable:
+        return None
+    su_index, su = unstable[0]
+    distance_to_target = ((su.Y[:, 0]-target.a)**2
+                          + (su.Y[:, 1]-target.b)**2)
+    target_index = int(distance_to_target.argmin())
+    closest_target = math.sqrt(float(distance_to_target[target_index]))
+
+    def source_distance(branch):
+        return math.sqrt(float(np.min(
+            (branch.Y[:, 0]-source.a)**2 + (branch.Y[:, 1]-source.b)**2)))
+    ts_index, ts = min(stable, key=lambda item: source_distance(item[1]))
+    return {
+        "source_b": float(source.b), "target_b": float(target.b),
+        "source_a": float(source.a), "target_a": float(target.a),
+        "source_unstable": su_index, "target_stable": ts_index,
+        "unstable_to_target": closest_target,
+        "stable_to_source": source_distance(ts),
+        "closest_index": target_index,
+        "unstable_direction": family.unstable_direction,
+    }
+
+
+def _geometric_wall_limit(payload: dict, p, root=None):
     """Dedicated display geometry for the selected saddle-connection wall.
 
     An ordinary portrait at a non-Morse-Smale wall must refuse: its unstable
     and stable numerical continuations are not independently meaningful once
-    they coincide.  Use the same construction as the citable triptych instead:
-    remove those two continuations and insert their independently integrated
-    common geometric limit.
+    they coincide.  Remove those two continuations and insert the connection
+    candidate.
+
+    With ``root`` (a :class:`wall_shoot.WallRoot`) the candidate is the
+    glued two-sided shot at the Brent root: source saddle down to the
+    midlevel, target saddle up to it, meeting there to |delta| at binary64
+    resolution.  Without it -- the older construction, kept for callers
+    that have no root -- the house continuation is truncated at closest
+    approach and its last vertex moved onto the target, and the miss is
+    reported.
     """
     name = payload.get("wall")
     if not name or not payload.get("wall_limit"):
         return p, [], None
 
     family = zoo.get_wall_family(name)
-    source = saddle_wall.critical_near(p, family.source_b)
-    target = saddle_wall.critical_near(p, family.target_b)
-    source_unstable = next(
-        branch for branch in p.branches
-        if branch.kind == "unstable"
-        and abs(branch.diag.get("saddle_b", math.inf)-source.b) < 1e-7
-        and branch.diag.get("unstable_direction") ==
-        family.unstable_direction)
-    distance_to_target = ((source_unstable.Y[:, 0]-target.a)**2
-                          + (source_unstable.Y[:, 1]-target.b)**2)
-    target_index = int(distance_to_target.argmin())
-    closest_target = math.sqrt(float(distance_to_target[target_index]))
-    connection = source_unstable.Y[:target_index+1].copy()
-    # The house continuation gets within its event/chord tolerance and then
-    # continues into one of the adjacent chambers.  At the geometric wall
-    # limit the orbit ends at the exact target critical point.
-    connection[-1] = (target.a, target.b)
+    pair = _wall_pair(payload, p)
+    if pair is None:
+        raise ValueError("wall limit: the source unstable or target stable "
+                         "continuation is missing from this portrait")
+    if root is not None:
+        connection = np.asarray(root.shot.candidate, dtype=float)
+        method = "two-sided shooting, Brent root"
+        gap = abs(root.delta)
+        parameter = root.lam
+    else:
+        source_unstable = p.branches[pair["source_unstable"]]
+        target_index = pair["closest_index"]
+        connection = source_unstable.Y[:target_index+1].copy()
+        # The house continuation gets within its event/chord tolerance and
+        # then continues into one of the adjacent chambers.  At the
+        # geometric wall limit the orbit ends at the exact target critical
+        # point.
+        connection[-1] = (pair["target_a"], pair["target_b"])
+        method = "paired house continuations"
+        gap = pair["unstable_to_target"]
+        parameter = float(family.wall_parameter)
 
-    target_stable = [
-        branch for branch in p.branches
-        if branch.kind == "stable"
-        and abs(branch.diag.get("saddle_b", math.inf)-target.b) < 1e-7]
-    closest_source = min(
-        math.sqrt(float(np.min(
-            (branch.Y[:, 0]-source.a)**2
-            + (branch.Y[:, 1]-source.b)**2)))
-        for branch in target_stable)
     display, surgery = saddle_wall.wall_limit_portrait(
         p, family, connection)
     points = [[float(q[0]), float(q[1])] for q in connection]
     record = {
         "kind": "stable_unstable",
         "label": "saddle connection (Wu = Ws)",
-        "source_b": float(source.b),
-        "target_b": float(target.b),
+        "source_b": pair["source_b"],
+        "target_b": pair["target_b"],
         "n_traced": len(points),
         "points": points,
+        # For the shooting candidate: |delta| at the midlevel where the two
+        # shots meet.  For the older construction: how far the numerical
+        # continuation missed the target before its last vertex was snapped
+        # onto it.  Either way, this number is what binary64 actually did.
+        "numerical_miss": float(gap),
     }
     diagnostics = {
         "geometry_method": "geometric wall limit",
-        "parameter": float(family.wall_parameter),
+        "parameter": parameter,
         "trace": {
-            "method": "paired house continuations",
-            "source_unstable_closest_to_target": closest_target,
-            "target_stable_closest_to_source": closest_source,
+            "method": method,
+            "source_unstable_closest_to_target": pair["unstable_to_target"],
+            "target_stable_closest_to_source": pair["stable_to_source"],
         },
         "surgery": surgery,
     }
@@ -629,6 +713,10 @@ def compute(payload: dict) -> dict:
     stage = payload.get("stage", "final")
 
     display_mode = "wall_limit" if payload.get("wall_limit") else "ordinary"
+    # A response computed before the family's Brent root existed lacks the
+    # root and the candidate overlay; once the root exists, recompute.
+    if _WALL_ROOTS.get(payload.get("wall")) is not None:
+        display_mode += "+root"
     hit = _CACHE.get((key, stage, display_mode))
     if hit is not None:
         return dict(hit, cached=True)
@@ -679,7 +767,40 @@ def compute(payload: dict) -> dict:
     else:
         p = portrait.certified_compute(m, view=trace_view,
                                        _enumeration=enumeration)
-    p, wall_connections, wall_limit = _geometric_wall_limit(payload, p)
+    # The pair a wall family is about, identified on the ORDINARY portrait
+    # before any wall-limit surgery removes one of them.
+    wall_pair = _wall_pair(payload, p)
+    wall_name = payload.get("wall")
+    family = zoo.get_wall_family(wall_name) if wall_name else None
+    root = (_wall_root(family)
+             if family is not None and payload.get("wall_limit") else
+             _WALL_ROOTS.get(wall_name) if wall_name else None)
+    # The two-sided shot at THIS Lambda: source unstable down and target
+    # stable up to the common midlevel, with the signed gap.  Smooth in
+    # Lambda and zero exactly at the wall -- the honest "how close do they
+    # come" number, and what the Brent root is a root of.
+    wall_shot = None
+    if family is not None:
+        shot = wall_shoot.shoot(
+            m, family.source_b, family.unstable_direction, family.target_b,
+            root.target_direction if root is not None else None,
+            ds=WALL_SHOOT_DS, enumeration=enumeration)
+        wall_shot = shot.as_dict() if shot is not None else None
+    p, wall_connections, wall_limit = _geometric_wall_limit(payload, p, root)
+    if wall_limit:
+        # After surgery the branch indices no longer apply; the connection
+        # record carries the distances instead.
+        wall_pair = None
+    wall_root = None if root is None else {
+        "lam": root.lam, "delta": root.delta,
+        "evaluations": root.evaluations, "bracket": list(root.bracket),
+        "stored_wall": float(family.wall_parameter),
+        "stored_bracket": (list(family.wall_bracket)
+                           if family.wall_bracket else None),
+        "ds": WALL_SHOOT_DS,
+        "level": root.shot.level,
+        "candidate_points": root.shot.candidate.tolist(),
+    }
     t3 = time.perf_counter()
     elapsed = t3 - t0
     timing = {"moments": t1 - t0, "build": t2 - t1, "portrait": t3 - t2}
@@ -706,6 +827,9 @@ def compute(payload: dict) -> dict:
         "branches": _branches(p),
         "wall_connections": wall_connections,
         "wall_limit": wall_limit,
+        "wall_pair": wall_pair,
+        "wall_shot": wall_shot,
+        "wall_root": wall_root,
         "box": [float(x) for x in p.box],
         "view": None if p.view is None else [float(x) for x in p.view],
         "enumeration": {

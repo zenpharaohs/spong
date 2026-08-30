@@ -125,7 +125,12 @@ The oracle is deliberately arranged like a future GMP C kernel:
 - fixed integer budgets for reach, slope, section bisection, and endpoint
   bits;
 - an integer status, exact `R`, `K`, three face margins, exact section level,
-  `(b,y)` endpoints, and fixed work counters as output.
+  `(b,y)` endpoints, and fixed work counters as output;
+- after a reach halving, the slope search resumes from the previous closing
+  slope over four rather than from the initial slope (`K` scales like the
+  reach, so the new slope is expected near `K/2`; the extra octave costs
+  one test).  This is a cost policy, not a soundness one: any slope whose
+  face inequalities close is a valid cone.
 
 The C port should preserve these statuses and counters and be differentially
 tested against the `Fraction` oracle before it replaces any production path.

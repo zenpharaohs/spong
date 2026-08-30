@@ -120,9 +120,21 @@ def test_wall_limit_snaps_model_and_serializes_common_orbit(monkeypatch):
         "n_traced": 3,
         "points": [[1.0, wall.source_b], [1.5, 0.0],
                    [2.0, wall.target_b]],
+        "numerical_miss": 0.0,
     }]
     assert diagnostics["geometry_method"] == "geometric wall limit"
     assert diagnostics["parameter"] == wall.wall_parameter
+
+    # At ANY Lambda the pair is identified on the ordinary portrait and the
+    # closest approaches are reported, so the viewer can print how near the
+    # two continuations come rather than leave it to the eye.
+    pair = serve._wall_pair({"wall": wall.name}, original)
+    assert pair["source_unstable"] == 0
+    assert pair["target_stable"] == 1
+    assert pair["unstable_to_target"] == 0.0
+    assert pair["stable_to_source"] == 0.0
+    assert pair["closest_index"] == 2
+    assert serve._wall_pair({}, original) is None
 
 
 def test_allocator_endpoint_uses_active_empirical_portrait_and_visible_view(

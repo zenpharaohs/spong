@@ -365,9 +365,18 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
     # the signal as R, so halving the reach resolves it; pushing the
     # section outward would not.
     section_reason = "no invariant cone closed within budget"
+    slope_start = P.as_fraction(initial_slope)
     for reach_halvings in range(max_reach_halvings+1):
         t = RationalInterval(Fraction(0), reach)
-        slope = P.as_fraction(initial_slope)
+        # Warm start after a halving.  The cone must hold the branch's
+        # curvature s ~ c u^2, so the closing slope scales like c*R and the
+        # slope at R/2 is expected near K/2; starting the doubling search
+        # at K/4 leaves one octave of slack below that and costs two or
+        # three tests instead of ninety.  Starting from a larger slope
+        # never weakens the certificate: any slope whose three face
+        # inequalities close is a valid cone; a smaller one is only a
+        # tighter box.  A GMP C kernel should do the same.
+        slope = slope_start
         accepted = None
         for doubling in range(max_slope_doublings+1):
             if slope > maximum_slope:
@@ -404,8 +413,10 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
             slope *= 2
         if accepted is None:
             section_reason = "no invariant cone closed within budget"
+            slope_start = P.as_fraction(initial_slope)
             reach /= 2
             continue
+        slope_start = max(P.as_fraction(initial_slope), accepted[1]/4)
 
         section = _certify_section(
             accepted, loss, chart_y, ac, bc, critical_loss, chart.frame,
