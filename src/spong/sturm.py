@@ -653,3 +653,31 @@ def materialize_stubs(m: Model, e: Enumeration) -> Enumeration:
         if p.kind == "saddle" else p
         for p in e.points)
     return replace(e, points=points)
+
+
+def materialize_validated_launches(m: Model, e: Enumeration) -> Enumeration:
+    """Attach exact-rational local launch boxes to every saddle stub.
+
+    This is currently the independent Python/Fraction oracle and is kept
+    separate from :func:`materialize_stubs` so ordinary portrait timing still
+    measures the established floating graph transform.  The later GMP C
+    kernel will make this certificate cheap enough to join the default path.
+    """
+    from .local_certificate import certify_poincare_launch
+
+    if any(point.kind == "saddle" and not point.stubs for point in e.points):
+        e = materialize_stubs(m, e)
+    points = []
+    for point in e.points:
+        if point.kind != "saddle":
+            points.append(point)
+            continue
+        charts = {chart.manifold: chart for chart in point.local.poincare}
+        launches = []
+        for stub in point.stubs:
+            chart = charts[stub.manifold]
+            launch = certify_poincare_launch(
+                m, point, chart, stub.orientation)
+            launches.append(replace(stub, validated_launch=launch))
+        points.append(replace(point, stubs=tuple(launches)))
+    return replace(e, points=tuple(points))

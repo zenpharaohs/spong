@@ -1,7 +1,7 @@
 # The wall theory: separatrix handoff via the complex domain
 
 *2026-08-29.  Companion to the level-pencil machinery in
-`scripts/pencil_tree.py`.  Status: derivation complete; phase-1 sweep in
+`scripts/pencil_tree.py`.  Status: working derivation; phase-1 sweep in
 `scripts/wall_sweep.py`; the far-field (small-eps) experiment is phase 2.*
 
 ## Setting and the exact normal form
@@ -11,10 +11,19 @@ profile `u = C - B^2/A`.  With the deviation coordinate `w = a - a*(b)`,
 
     L(a,b) = u(b) + A(b) w^2        -- exactly, no remainder.
 
-The model is its own normal form.  All critical points lie on `w = 0`.
-`A` is simultaneously the transverse stiffness, the denominator of `a*`,
-and the polynomial whose complex zeros are the poles of `u` (the psi
-strip is where the valley walls collapse).
+The model is its own algebraic normal form.  All critical points lie on
+`w = 0`.  In the complex domain four divisors must be kept distinct:
+
+    A                           transverse zero divisor,
+    denominator(B/A)            poles of the valley chart a*,
+    D = denominator(B^2/A)      poles of the reduced backbone u,
+    H = numerator(u')           critical divisor.
+
+Common factors make these genuinely different.  Reporting raw zeros of `A`
+as poles of `u` creates removable ``poles`` and false proximity alarms.
+`spong.complex_structure` reduces first and then uses exact Lehmer-Schur
+(Schur-Cohn) disk counts or a cheaper exact linear Rouche witness; floating
+roots are proposals only.
 
 ## The orbit equation and its singular points
 
@@ -24,41 +33,44 @@ Orbits of the gradient flow, graphed over `b`:
     L_b   = u' + A' w^2 - 2A a*' w,     u' = B N / A^2 .
 
 Quasi-static balance recovers the engine's slaved graph
-`w = a*' u' / (2A)` exactly.  At each critical point `b_c` the equation
-has a regular singular point of Briot-Bouquet type with indicial
-exponents `{analytic, nu_c}`,
+`w = a*' u' / (2A)` exactly.  At each critical point `b_c` the graph
+equation is singular.  The branch slope is fixed by an eigenvector of the
+full Hessian, and the invariant exponent is the ratio of the two
+eigenvalues of the linearized flow (the same spectral ratio used by the
+Poincare chart).  The tempting scalar
 
-    nu_c = 2 A(b_c) / u''(b_c) = (transverse eigenvalue)/(valley
-    eigenvalue) of -Hess L,
+    2 A(b_c) / u''(b_c)
 
-so the Frobenius indicial equation IS the Poincare resonance condition,
-and the analytic Frobenius solution IS the stub germ in graph
-coordinates.  Consequences:
+equals that ratio only when the valley shear `a*'(b_c)` vanishes.  In
+general `(w,b)` is a non-orthogonal shear of `(a,b)`, so the scalar is not a
+spectral invariant.  Frobenius and Poincare describe the same local
+invariant germ only after this metric/shear bookkeeping.  Consequences:
 
-* at its own departure saddle (`nu < 0`) the separatrix is PURELY
-  ANALYTIC: a Taylor series whose coefficients obey a rational
-  recursion -- algebraic jets to all orders;
+* at its own nonresonant departure saddle the selected separatrix has an
+  analytic Taylor germ whose first slope is the unstable Hessian
+  eigenvector and whose later coefficients obey an algebraic recursion;
 * the fractional powers `(b-b_c)^nu` describe the transverse foliation
   (peel-off of neighbouring orbits) and the branch's ARRIVAL at
   downstream critical points (at a minimum it carries
   `(b-b_m)^{nu_m}`, `nu_m > 0`: a funnel);
-* resonance (`nu` a non-negative integer, log terms) is decidable in
-  advance by exact arithmetic;
-* the radius of convergence of the launch series is the distance from
-  `b_c` to the nearest COMPLEX root of `B N` (or zero of `A`): the
-  complex portrait is the certified launch radius;
-* `nu_m > 0` funnels convert capture from a radius heuristic into a
-  theorem: enter the certified disk inside the funnel and termination
-  at the minimum is guaranteed.
+* resonance tests must use the actual spectral ratio, not `2A/u''`;
+* exact complex root disks certify which fixed divisors are absent from a
+  launch disk.  They do **not** by themselves certify convergence of the
+  nonlinear invariant graph: movable complex singularities may occur
+  first.  A coefficient majorant or validated analytic continuation is
+  still required;
+* a downstream funnel can support a capture theorem only after its local
+  invariant sector and the branch's entry into it are both validated.
 
 The linear transport along the valley has integrating factor
 
     mu(b) = exp( - int 2A^3/(BN) db )
           = e^{poly(b)} * prod_r (b - r)^{-rho_r},
 
-the product over ALL roots `r` of `B N` -- real and complex -- with
-exponents the partial-fraction residues.  The complex roots are the
-characteristic exponents and phases of the valley transport.
+where the rational integrand must be reduced before its denominator roots
+`r` are enumerated.  Those real and complex roots, with the
+partial-fraction residues, determine the characteristic exponents and
+phases of the linear valley transport.
 
 ## Wall-blindness of the pointwise algebra (a theorem)
 
@@ -112,6 +124,16 @@ parameter `eps` shrinks in the far field, so the formula is most
 accurate exactly where tracing dies: the horizon saddles are its home
 turf.
 
+The reusable exact layer is now
+`spong.hyperelliptic.certify_genus_zero_integral`: after the conic
+parametrization supplies the reduced rational differential, it certifies the
+complete complex pole
+divisor, records the algebraic residue--log root sum, excludes real path
+poles by Sturm counting, and returns an independent exact-rational enclosure
+of the definite integral.  Constructing and bounding the model-specific
+`L_0+L_1+O(eps^2)` decomposition remains part of the far-field wall proof,
+not something this generic rational-integral certificate assumes.
+
 ## Open care points
 
 (a) the correct `L_0 + L_1` decomposition and smallness parameter for a
@@ -131,12 +153,23 @@ points, monotone-level transport between them -- covers every branch
 with no arclength continuation, leaving the wall integral `M` as the
 only transcendental object in certification.
 
+## The hyperelliptic Smale target
+
+The level pencil is not merely a conditioning diagnostic.  With
+`y=Aa-B`, each regular level is the hyperelliptic curve
+`y^2=B^2+(ell-C)A`, and the gradient defines algebraic level-to-level
+holonomy on the total family.  Stable/unstable incidence should be measured
+as an Abel-coordinate gap on a common fibre.  Static periods alone do not
+decide that gap; their Gauss-Manin transport, the inverse Abel map, and the
+Frobenius endpoint germs do.  The exact equations and certificate contract
+are in `docs/hyperelliptic_smale.md`.
+
 ## Validation plan
 
 Phase 1 (`scripts/wall_sweep.py`, existing certified family): sweep the
 central path `theta(t)`, `t: 1 -> 0`, recording the traced separation
-`delta(t)` (ground truth), the pointwise complex portrait (pole `Im`s,
-N-pair `eps`, the new per-critical-point invariant `nu`), and
+`delta(t)` (ground truth), the validated reduced complex clearances, the
+actual per-critical-point spectral ratio, and
 `Delta K(t)` for the target pair.  Predictions: `delta -> 0` at `t = 0`
 by construction; every pointwise algebraic column varies smoothly and
 without signature through the wall (wall-blindness, confirmed
@@ -151,30 +184,35 @@ formula is the residue-log expression above.
 
 ## First results (2026-08-29)
 
-Phase-1 sweep (`out/wall_sweep-nonnearest-attachment.json`): delta
-reaches -1.1e-8 at t = 0; every pointwise algebraic column (pole Im,
-N-pair eps, nu at both saddles) varies smoothly through the wall with no
-signature -- wall-blindness confirmed.  Delta K trends 37 -> 14.28
+The original phase-1 output in
+`out/wall_sweep-nonnearest-attachment.json` predates the corrections above:
+its `minImA`, `minEpsN`, and `nu` columns came from floating roots of
+unreduced polynomials and the non-invariant `2A/u''` scalar.  It is useful as
+a historical probe, not a complex certificate, and must be regenerated by
+the revised script before quantitative use.  Qualitatively, delta reaches
+-1.1e-8 at t = 0; the pointwise algebraic columns vary smoothly through the
+wall with no signature, consistent with wall-blindness.  Delta K trends
+37 -> 14.28
 without vanishing: the measured eps at O(1) b, and the reason phase 2
-needs a far-field family.  Bonus: |nu_src| collapsed tenfold as the
-connection formed -- not a wall criterion (no zero; the theorem forbids
-it) but a tracing-conditioning predictor: peel-off exponent ~ -0.0035
-means the branch is weakly isolated exactly when connected.
+needs a far-field family.  The old `nu_src` column cannot support its
+reported tracing-conditioning interpretation; that question must be
+retested using the true spectral ratio.
 
 Frobenius launch race (`scripts/frobenius_launch.py`): on tractable
 saddles the jet agrees with the stub germ to ~1e-6..1e-8 and with the
-flow (fine RK referee) to ~1e-9 at TEN TIMES the stub radius
-(555999196, b = -1.284: w ~ 1.0 at the test point) -- the reach claim
-is confirmed, and R_complex from the nearest complex root is consistent
-with R_empirical.  Prototype build cost (~100-230 ms/saddle,
+flow (fine RK referee) to ~1e-9 at ten times the stub radius
+(555999196, b = -1.284: w ~ 1.0 at the test point).  That is evidence of
+reach on those examples, not a convergence certificate.  Prototype build
+cost (~100-230 ms/saddle,
 FD-Jacobian Newton) exceeds stub materialisation; the exact recursion
 is the obvious optimisation.  Open items: (1) the jet Newton fails at
 the B-root saddles of 953953598 (--pow2) -- near-transverse eigenvector
 vs ill-conditioned FD Jacobian, not yet isolated; (2) at the horizon
 saddle b = 196608 the STUB itself is degenerate (zero-length curve --
 the fp64 launch failure that defines the class), so stub-relative radii
-test nothing there; the harness needs absolute radii and a
-series-seeded referee; note R_empirical ~ 5.5e3 << R_complex ~ 2e5 at
-that saddle -- double-precision conditioning at wild scales, or a
-genuine movable singularity of the nonlinear equation.  Worth deciding
-which.
+test nothing there.  The series-seeded comparison is now labelled
+self-consistency because its RK initial value comes from the same series.
+The old gap `R_empirical ~ 5.5e3 << R_fixed ~ 2e5` is exactly why the
+nearest fixed complex root cannot be called a convergence radius: it may
+reflect double-precision conditioning, a movable nonlinear singularity, or
+both.  A majorant calculation is the next certification step.

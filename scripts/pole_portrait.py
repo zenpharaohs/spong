@@ -5,12 +5,12 @@ This probe computes the complex structure of the exact polynomials behind
 u = C - B^2/A and reports the three signatures the real instruments cannot
 see:
 
-  POLES        complex zero pairs of A (A >= 0 on R, so they come in
-               conjugate pairs off the axis).  The psi strip is the
+  POLES        complex zeros of the reduced denominator of B^2/A.  The
+               psi strip is the
                near-real pair: Re = strip location, Im = strip depth,
                |Res u| = -B(z)^2/A'(z) calibrates the a* spike.
 
-  GHOST PAIRS  near-real conjugate roots of N (and B): a complex
+  GHOST PAIRS  near-real conjugate roots of the reduced numerator of u':
                saddle-node just off the axis gives u' ~ c((b-b0)^2+eps^2)
                -- a plateau of width eps and depth eps^2 on the real
                backbone, crawl cost ~1/eps, while every real margin reads
@@ -24,12 +24,10 @@ see:
                off-axis branch points to R over the working l-range is
                the level machinery's true conditioning number.
 
-Coefficients of A, B, C, N are assembled EXACTLY (Fractions) from f, g,
-mu -- no engine internals -- and validated against the Sturm skeleton:
-every enumerated critical b must be a real root of B*N.  Complex roots
-are numpy eigenvalue roots on max-normalised coefficients: adequate for a
-probe at these degrees; exact isolation via resultant pairs is the
-upgrade path if this graduates to certification.
+Coefficients are assembled exactly and common factors are removed before
+classification.  Floating roots only propose disks; exact Lehmer-Schur
+(Schur-Cohn) counts or exact linear Rouche witnesses certify each disk and
+completeness of the divisor.
 
     python scripts/pole_portrait.py 202251424 1198854733 1283395251 \
         953953598 555999196 1785201004 1143710268
@@ -51,6 +49,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 from spong import sturm                                   # noqa: E402
+from spong.complex_structure import certify_backbone      # noqa: E402
 from qualify import directed_model, random_model          # noqa: E402
 
 
@@ -135,53 +134,88 @@ def portrait(seed, mode, degree):
     if built is None or built[0] is None:
         return {"seed": seed, "error": "generator declined"}
     m, spec = built
-    A, B, C, N = exact_ABCN(m)
-    Ap = pderiv(A)
+    D = m.backbone_den
+    Pnum = m.backbone_num
+    H = m.critical_reduced
+    Dp = pderiv(D)
+    certificate = certify_backbone(m)
     out = {"seed": seed, "spec": str(spec),
-           "degA": len(A) - 1, "degB": len(B) - 1, "degN": len(N) - 1}
+           "complex_status": ("validated" if certificate.complete
+                              else "partial"),
+           "complex_certificate": certificate.as_dict(),
+           "deg_transverse_A": len(m.alpha)-1,
+           "deg_valley_den": certificate.valley_denominator.degree,
+           "deg_backbone_den": len(D)-1,
+           "deg_critical": len(H)-1}
 
     # ---- validation against the Sturm skeleton --------------------
     e = sturm.enumerate_critical_points(m)
     skel = sorted(float(q.b) for q in e.points)
-    bn_real = real_of(list(croots(B)) + list(croots(N)), real_tol=1e-7)
-    matched = all(any(abs(b - r) <= 1e-6 * (1 + abs(b)) for r in bn_real)
-                  for b in skel)
-    out["skeleton_matches_BN_real_roots"] = bool(matched)
+    matched = (certificate.critical.complete
+               and all(any(disk.distance_from_real_interval(
+                   q.interval.lo, q.interval.hi) == 0
+                           for disk in certificate.critical.disks)
+                       for q in e.points))
+    out["skeleton_matches_critical_disks[VALIDATED]"] = bool(matched)
 
-    # ---- poles: complex zeros of A --------------------------------
+    # ---- poles: complex zeros of the reduced backbone denominator --
     poles = []
-    for z in pair_rows(croots(A))[:4]:
-        res = peval(B, complex(z)) ** 2 / peval(Ap, complex(z))
-        poles.append({"re": z.real, "im": z.imag, "abs_res_u": abs(res)})
+    for disk in certificate.denominator.disks:
+        if disk.centre_im <= 0:
+            continue
+        z = complex(float(disk.centre_re), float(disk.centre_im))
+        # u=C-P/D, hence Res(u,z)=-P(z)/D'(z).
+        residue = -peval(Pnum, z)/peval(Dp, z)
+        poles.append({"re": z.real, "im": z.imag,
+                      "disk_radius[VALIDATED]": float(disk.radius),
+                      "res_u_re[PROPOSAL]": residue.real,
+                      "res_u_im[PROPOSAL]": residue.imag,
+                      "abs_res_u[PROPOSAL]": abs(residue)})
+    poles.sort(key=lambda row: row["im"])
+    poles = poles[:4]
     out["poles"] = poles
 
-    # ---- ghost pairs: near-real complex roots of N and B ----------
-    def ghosts(p, name):
-        rows = []
-        for z in pair_rows(croots(p))[:4]:
-            b0 = z.real
-            rows.append({"re": b0, "eps": z.imag,
-                         "uprime_at_re": float(
-                             -peval(B, b0) * peval(N, b0)
-                             / peval(A, b0) ** 2)})
-        return rows
-    out["N_pairs"] = ghosts(N, "N")
-    out["B_pairs"] = ghosts(B, "B")
-    nroots = croots(N)
-    out["N_max_abs_root"] = float(max(np.abs(nroots))) if len(nroots) else 0.0
-    out["N_real_roots"] = real_of(nroots, real_tol=1e-7)
-    out["B_real_roots"] = real_of(croots(B), real_tol=1e-7)
+    # ---- ghost pairs: nonreal roots of the reduced critical divisor --
+    critical_pairs = []
+    for disk in certificate.critical.disks:
+        if disk.centre_im <= 0 or disk.real_axis_clearance() <= 0:
+            continue
+        b0 = float(disk.centre_re)
+        critical_pairs.append({
+            "re": b0, "eps_centre": float(disk.centre_im),
+            "real_axis_clearance_lower[VALIDATED]": float(
+                disk.real_axis_clearance()),
+            "disk_radius[VALIDATED]": float(disk.radius),
+            "uprime_at_re[PROPOSAL]": float(
+                peval(H, b0)/peval(D, b0)**2),
+        })
+    critical_pairs.sort(key=lambda row: row[
+        "real_axis_clearance_lower[VALIDATED]"])
+    out["critical_pairs"] = critical_pairs[:4]
+
+    valley_poles = []
+    for disk in certificate.valley_denominator.disks:
+        if disk.centre_im > 0:
+            valley_poles.append({
+                "re": float(disk.centre_re),
+                "im": float(disk.centre_im),
+                "real_axis_clearance_lower[VALIDATED]": float(
+                    disk.real_axis_clearance()),
+                "disk_radius[VALIDATED]": float(disk.radius),
+            })
+    valley_poles.sort(key=lambda row: row[
+        "real_axis_clearance_lower[VALIDATED]"])
+    out["valley_chart_poles"] = valley_poles[:4]
 
     # ---- the level pencil -----------------------------------------
     # critical values u(b*) over the real skeleton, then the off-axis
     # branch-point distance to R over the working l-range
-    Af = np.array([float(c) for c in A])
-    Bf = np.array([float(c) for c in B])
-    B2f = np.array([float(c) for c in pmul(B, B)])
-    Cf = float(C)
+    Df = np.array([float(c) for c in D])
+    Pf = np.array([float(c) for c in Pnum])
+    Cf = float(m.C)
 
     def u_of(b):
-        return Cf - peval(pmul(B, B), b) / peval(A, b)
+        return Cf - peval(Pnum, b) / peval(D, b)
 
     crit_vals = sorted(u_of(b) for b in skel)
     out["critical_values"] = crit_vals
@@ -191,10 +225,10 @@ def portrait(seed, mode, degree):
         grid = np.linspace(lo - pad, hi + pad, 400)
         best = None
         for lv in grid:
-            n = max(len(B2f), len(Af))
+            n = max(len(Pf), len(Df))
             S = np.zeros(n)
-            S[:len(B2f)] += B2f
-            S[:len(Af)] += (lv - Cf) * Af
+            S[:len(Pf)] += Pf
+            S[:len(Df)] += (lv - Cf) * Df
             sc = np.max(np.abs(S))
             if sc == 0:
                 continue
@@ -225,38 +259,47 @@ def main(argv=None):
             print(f"\nseed {seed}: {r['error']}")
             continue
         print(f"\nseed {seed}   {r['spec']}   "
-              f"degA {r['degA']}  degB {r['degB']}  degN {r['degN']}   "
-              f"skeleton-vs-BN "
-              f"{'OK' if r['skeleton_matches_BN_real_roots'] else 'MISMATCH'}")
+              f"degA {r['deg_transverse_A']}  "
+              f"degD {r['deg_backbone_den']}  "
+              f"degH {r['deg_critical']}   "
+              f"exact complex divisor {r['complex_status']}   "
+              f"skeleton-vs-H-disks "
+              f"{'OK' if r['skeleton_matches_critical_disks[VALIDATED]'] else 'MISMATCH'}")
         for p in r["poles"]:
             print(f"  pole pair   re {p['re']:>14.6g}   im {p['im']:>12.6g}"
-                  f"   |Res u| {p['abs_res_u']:>12.6g}")
-        for gp in r["N_pairs"]:
-            print(f"  N pair      re {gp['re']:>14.6g}   "
-                  f"eps {gp['eps']:>12.6g}   u' there "
-                  f"{gp['uprime_at_re']:>12.6g}")
-        for gp in r["B_pairs"]:
-            print(f"  B pair      re {gp['re']:>14.6g}   "
-                  f"eps {gp['eps']:>12.6g}")
-        print(f"  N real roots {['%.6g' % x for x in r['N_real_roots']]}   "
-              f"max |N root| {r['N_max_abs_root']:.6g}")
+                  f"   disk r {p['disk_radius[VALIDATED]']:>10.3g}"
+                  f"   |Res u| {p['abs_res_u[PROPOSAL]']:>12.6g}")
+        for gp in r["critical_pairs"]:
+            print(f"  H pair      re {gp['re']:>14.6g}   "
+                  f"clearance "
+                  f"{gp['real_axis_clearance_lower[VALIDATED]']:>12.6g}"
+                  f"   u' there {gp['uprime_at_re[PROPOSAL]']:>12.6g}")
+        for vp in r["valley_chart_poles"]:
+            print(f"  a* pole     re {vp['re']:>14.6g}   "
+                  f"clearance "
+                  f"{vp['real_axis_clearance_lower[VALIDATED]']:>12.6g}")
         if r.get("pencil"):
             pc = r["pencil"]
             print(f"  pencil      min off-axis |Im| {pc['min_im']:.6g}"
                   f"   at level {pc['at_level']:.6g}   re {pc['re']:.6g}")
 
     # comparison table
-    print(f"\n{'seed':>12} {'min Im(A pair)':>16} {'min eps(N pair)':>17}"
-          f" {'max|N root|':>13} {'pencil min Im':>14}")
-    print("-" * 78)
+    print(f"\n{'seed':>12} {'min u-pole clr':>16} {'min H-pair clr':>17}"
+          f" {'min a*-pole clr':>17} {'pencil min Im':>14}")
+    print("-" * 82)
     for r in results:
         if "error" in r:
             continue
-        min_im = min((p["im"] for p in r["poles"]), default=float("nan"))
-        min_eps = min((p["eps"] for p in r["N_pairs"]), default=float("nan"))
+        min_im = min((p["im"]-p["disk_radius[VALIDATED]"]
+                      for p in r["poles"]), default=float("nan"))
+        min_eps = min((p["real_axis_clearance_lower[VALIDATED]"]
+                       for p in r["critical_pairs"]), default=float("nan"))
+        min_valley = min((p["real_axis_clearance_lower[VALIDATED]"]
+                          for p in r["valley_chart_poles"]),
+                         default=float("nan"))
         pmin = r["pencil"]["min_im"] if r.get("pencil") else float("nan")
         print(f"{r['seed']:>12} {min_im:>16.6g} {min_eps:>17.6g}"
-              f" {r['N_max_abs_root']:>13.6g} {pmin:>14.6g}")
+              f" {min_valley:>17.6g} {pmin:>14.6g}")
 
     Path(args.out).write_text(json.dumps(results, indent=2,
                                          default=str) + "\n")

@@ -1,5 +1,10 @@
 """The merge tree from the level pencil: exact, box-free, no tracing. v3.
 
+SCOPE.  This is the Morse/Reeb tree, not the Smale attaching map.  The real
+branch points of ``y^2=S_ell(b)`` determine sublevel components, but stable
+and unstable separatrix incidence is the level-to-level holonomy on that
+hyperelliptic family.  See ``docs/hyperelliptic_smale.md``.
+
 THEORY.  For psi-nice models the sublevel set {L <= l} fibers in segments
 over {S_l >= 0}, S_l(b) = B^2 + (l - C)A, so pi0(sublevel) = maximal
 intervals of {S_l >= 0} and the 2D merge tree is the merge structure of a
@@ -320,7 +325,10 @@ class LevelOracle:
                 lo = mid
             else:
                 hi = mid
-        return 0                             # indistinguishable: treat as tie
+        # Near-equality after a finite bisection budget is not an equality
+        # certificate.  Only the simultaneous exact side_of()==0 branch
+        # above may return a tie.
+        raise RuntimeError("critical-level comparison undecided at depth cap")
 
 
 # ------------------------------------------------------------------ #

@@ -9,11 +9,11 @@ wall at t = 0.  At every stage it records, alongside delta:
   dK        K(s_src) - K(s_tgt) with K = b^2 - m a^2 (far-field invariant;
             out of regime at O(1) b -- its residual at the wall calibrates
             eps, per docs/wall_theory.md)
-  minImA    nearest pole pair of u to the real axis (psi-strip depth)
-  minEpsN   nearest complex N-pair (ghost-pair depth)
-  nu_src,   the per-critical-point invariant nu = 2A^3/(BN)' at the two
-  nu_tgt    saddles of the target connection (Frobenius index = Hessian
-            eigenvalue ratio)
+  poleClr   exact lower clearance from the real axis to the reduced
+            backbone-pole disks
+  critClr   exact lower clearance to the nonreal reduced critical disks
+  rho_src,  actual Hessian spectral ratios at the two saddles of the target
+  rho_tgt   connection (unlike 2A/u'', these include the valley shear)
 
 Predictions on record: delta -> 0 at t = 0 by construction; every
 pointwise algebraic column varies SMOOTHLY, with no signature at the
@@ -41,28 +41,21 @@ os.environ.setdefault("SPONG_ENGINE", "native")
 
 import connect_saddles as cs                              # noqa: E402
 from spong import sturm, zoo                              # noqa: E402
-from pole_portrait import (exact_ABCN, croots, pair_rows,  # noqa: E402
-                           pmul, pderiv, peval as fpeval)
+from spong.complex_structure import certify_backbone      # noqa: E402
 
 
 def diagnostics(m, src_b, tgt_b):
-    A, B, C, N = exact_ABCN(m)
     m_deg = len(m.g) - 1
-    BNp_B, BNp_N = pderiv(B), pderiv(N)
-
-    def bn_prime(b):
-        return (fpeval(BNp_B, b) * fpeval(N, b)
-                + fpeval(B, b) * fpeval(BNp_N, b))
-
     e = sturm.enumerate_critical_points(m)
+    complex_certificate = certify_backbone(m)
 
     def near(b0):
         return min(e.points, key=lambda q: abs(float(q.b) - b0))
 
-    def nu(b0):
+    def spectral_ratio(b0):
         q = near(b0)
-        b = float(q.b)
-        return 2.0 * fpeval(A, b) ** 3 / bn_prime(b)
+        lm, lp = q.local.spectral.eigenvalues
+        return lp/lm
 
     def K(b0):
         q = near(b0)
@@ -72,13 +65,25 @@ def diagnostics(m, src_b, tgt_b):
         q = near(b0)
         return float(m.L(q.a, q.b))
 
-    a_pairs = pair_rows(croots(A))
-    n_pairs = pair_rows(croots(N))
+    def nonreal_clearance(divisor):
+        if not divisor.complete:
+            return float("nan")
+        values = [disk.real_axis_clearance() for disk in divisor.disks
+                  if disk.real_axis_clearance() > 0]
+        return float(min(values)) if values else float("nan")
+
     return {
         "dK": K(src_b) - K(tgt_b),
-        "minImA": min((z.imag for z in a_pairs), default=float("nan")),
-        "minEpsN": min((z.imag for z in n_pairs), default=float("nan")),
-        "nu_src": nu(src_b), "nu_tgt": nu(tgt_b),
+        "complex_status": ("validated" if complex_certificate.complete
+                           else "partial"),
+        "min_backbone_pole_clearance[VALIDATED]": nonreal_clearance(
+            complex_certificate.denominator),
+        "min_valley_pole_clearance[VALIDATED]": nonreal_clearance(
+            complex_certificate.valley_denominator),
+        "min_critical_complex_clearance[VALIDATED]": nonreal_clearance(
+            complex_certificate.critical),
+        "spectral_ratio_src[HIGH_PRECISION]": spectral_ratio(src_b),
+        "spectral_ratio_tgt[HIGH_PRECISION]": spectral_ratio(tgt_b),
         "u_src": levels(src_b), "u_tgt": levels(tgt_b),
     }
 
@@ -138,12 +143,12 @@ def main(argv=None):
         raise SystemExit("baseline separation failed")
     th = theta0.copy()
     rows = []
-    print(f"{'t':>7}{'delta':>13}{'dK':>12}{'minImA':>10}{'minEpsN':>10}"
-          f"{'nu_src':>11}{'nu_tgt':>11}")
-    print("-" * 76)
+    print(f"{'t':>7}{'delta':>13}{'dK':>12}{'poleClr':>11}{'critClr':>11}"
+          f"{'rho_src':>11}{'rho_tgt':>11}")
+    print("-" * 77)
     for stage in range(args.steps + 1):
         t = 1.0 - stage / args.steps
-        for _ in range(3):
+        for _ in range(8):
             d, _ = delta_vec(th)
             if d is None:
                 break
@@ -164,24 +169,36 @@ def main(argv=None):
                 break
             step = -np.linalg.pinv(J) @ F
             lam = 1.0
+            accepted = False
             for _ in range(24):
                 cand = th + lam * step
                 dc, _ = delta_vec(cand)
                 if dc is not None and np.linalg.norm(dc - t * d0) <= \
                         np.linalg.norm(F) * (1.0 - 1e-4 * lam):
                     th = cand
+                    accepted = True
                     break
                 lam *= 0.5
+            if not accepted:
+                break
         d, m = delta_vec(th)
         if d is None:
             print(f"{t:>7.3f}   FAILED")
             break
+        path_residual = float(np.linalg.norm(d-t*d0))
+        if path_residual >= 1e-10:
+            print(f"{t:>7.3f}   PATH UNCONVERGED "
+                  f"(residual {path_residual:.3e}); not recorded")
+            break
         diag = diagnostics(m, src_b, tgt_b)
         rows.append({"t": t, "theta": [float(x) for x in th],
-                     "delta": [float(x) for x in d], **diag})
+                     "delta": [float(x) for x in d],
+                     "path_residual[RESIDUAL]": path_residual, **diag})
         print(f"{t:>7.3f}{d[0]:>13.4e}{diag['dK']:>12.5g}"
-              f"{diag['minImA']:>10.4g}{diag['minEpsN']:>10.4g}"
-              f"{diag['nu_src']:>11.4g}{diag['nu_tgt']:>11.4g}")
+              f"{diag['min_backbone_pole_clearance[VALIDATED]']:>11.4g}"
+              f"{diag['min_critical_complex_clearance[VALIDATED]']:>11.4g}"
+              f"{diag['spectral_ratio_src[HIGH_PRECISION]']:>11.4g}"
+              f"{diag['spectral_ratio_tgt[HIGH_PRECISION]']:>11.4g}")
 
     out_path = Path(args.out) if args.out else (
         REPO / "out" / f"wall_sweep-{args.case}.json")

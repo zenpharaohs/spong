@@ -238,6 +238,7 @@ class InvariantStub:
     curve: tuple[tuple[float, float], ...]
     preferred_chart: str
     certificates: tuple[tuple[str, float], ...]
+    validated_launch: object | None = None
 
     @property
     def handoff(self):

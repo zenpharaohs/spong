@@ -46,6 +46,22 @@ rendering — spong's own closed-form contour layer (no fcontour, no
 marching squares), house palette, plane and Poincaré-disk views.  First
 portraits: [docs/gallery/](docs/gallery/).
 
+The complex/Smale certificate layer lives in `spong.complex_structure` and
+`spong.hyperelliptic`: complete complex divisors are proved by exact
+Lehmer--Schur/Schur--Cohn disk counts; exact rational fibres expose the
+hyperelliptic pencil; lifted gradient holonomy is enclosed by rational
+trapping tubes; and same-sheet Abel gaps can exclude stable/unstable
+connections.  Genus-zero conic differentials have a separate certified
+residue--logarithm fast path.  `spong.local_certificate` now proves exact
+rational invariant-cone graph launches and hands their `(b,y)` section boxes
+to the holonomy tube in either loss direction.  This Python/Fraction oracle is
+opt-in until its GMP C counterpart is ready for production timing.  The
+portrait ledger keeps the remaining proof boundary explicit: positive-genus
+comparisons spanning a branch point still need unwrapped period/Gauss--Manin
+transport and portrait-wide orchestration.  See
+[`docs/local_graph_certificate.md`](docs/local_graph_certificate.md) and
+[`docs/hyperelliptic_smale.md`](docs/hyperelliptic_smale.md).
+
 Run the fast suite: `PYTHONPATH=src python -m pytest tests` (slow founding
 gates: add `-m slow`).
 
@@ -176,6 +192,9 @@ zoo gate checks that exact connection and the certified topology.
     src/spong/sturm.py      certified enumeration (Sturm-only)              [§4]
     src/spong/gauss.py      IMM, IRK4-GL, richardson3, dense output, events [§10]
     src/spong/charts.py     graph transforms, jet charts, dispatcher        [§6–7]
+    src/spong/local_certificate.py exact invariant-cone launch oracle
+    src/spong/complex_structure.py complete certified complex divisors
+    src/spong/hyperelliptic.py lifted holonomy, Abel gaps, conic integrals
     src/spong/atlas.py      Poincaré disk, rim charts, index bookkeeping    [§8]
     src/spong/portrait.py   assembly + certificate ledger                   [§11]
     src/spong/resolution.py total public three-outcome resolution contract

@@ -157,6 +157,16 @@ data cross as strings, while the map coefficients cross as the exact doubles
 that will map the resulting curve.  The production path uses at least 192 bits
 and is differentially checked against the retained Decimal implementation.
 
+The next local entry point is specified by the independent
+`spong.local_certificate` oracle.  It will consume rectangular GMP rational
+interval-coefficient arrays for the centered two-component field, potential,
+and lifted `y`, together with exact dyadic frame/centre data and fixed work
+budgets.  It will return the stable integer status contract, exact cone and
+face margins, rational section rectangle, and work counters documented in
+`local_graph_certificate.md`.  That entry point is intentionally not declared
+in the public header until differential parity and refusal behavior are fixed;
+the Python oracle is the executable ABI specification.
+
 ## Migration boundary
 
 The present production geometry kernels are already written in C, but some are

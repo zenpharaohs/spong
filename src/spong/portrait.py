@@ -17,7 +17,8 @@ import time
 
 import numpy as np
 
-from . import atlas, charts, engine, sturm, topology
+from . import (atlas, charts, complex_structure, engine, hyperelliptic,
+               sturm, topology)
 from .model import Model
 
 
@@ -362,6 +363,18 @@ def build_ledger(p: Portrait, gen: dict) -> dict:
     """The certificate ledger (SPONG_FOUNDING §11), machine-checkable."""
     e = p.enumeration
     balance = atlas.index_balance(p.model, e)
+    complex_backbone = complex_structure.certify_backbone(p.model)
+    launch_objects = [
+        stub.validated_launch for point in e.saddles for stub in point.stubs
+        if stub.validated_launch is not None]
+    launch_count = len(launch_objects)
+    validated_launch_count = sum(
+        bool(getattr(launch, "validated", False)) for launch in launch_objects)
+    expected_launch_count = 4*len(e.saddles)
+    portrait_launches_validated = (
+        expected_launch_count > 0
+        and launch_count == expected_launch_count
+        and validated_launch_count == expected_launch_count)
     led = {
         "enumeration": {
             "n_critical": len(e.points),
@@ -373,8 +386,71 @@ def build_ledger(p: Portrait, gen: dict) -> dict:
         },
         "genericity[EXACT]": gen,
         "index_balance[EXACT]": balance,
+        "complex_backbone": complex_backbone.as_dict(),
+        "hyperelliptic_pencil": {
+            "generic_genus[EXACT]": hyperelliptic.generic_genus(p.model),
+            "family": "y^2 = B^2 + (ell-C)A",
+            "smale_object": ("validated Abel-coordinate holonomy between "
+                             "regular fibres"),
+            "status": ("portrait local launches validated; "
+                       "holonomy engine available"
+                       if portrait_launches_validated else
+                       "validated certificate engine; portrait launch pending"),
+            "implemented": {
+                "complete_fibre_divisors[VALIDATED]": True,
+                "branch_point_regular_lifted_flow[EXACT]": True,
+                "rational_flow_tubes[VALIDATED]": True,
+                "same_sheet_abel_gap_zero_exclusion[VALIDATED]": True,
+                "genus_zero_residue_log_reduction[EXACT]": True,
+                "genus_zero_definite_integral[VALIDATED]": True,
+                "positive_genus_unwrapped_period_transport": False,
+                "generic_interval_local_launch_certifier[VALIDATED]": True,
+                "portrait_local_launches_materialized[VALIDATED]": (
+                    portrait_launches_validated),
+            },
+            "local_launch_count": launch_count,
+            "validated_local_launch_count": validated_launch_count,
+            "expected_local_launch_count": expected_launch_count,
+            "scope": ("the exact-rational local invariant-cone graph "
+                      "certifier and its tube handoff are implemented; the "
+                      "Python oracle remains opt-in until the GMP C kernel "
+                      "makes launch materialization suitable for the default "
+                      "portrait timing path"),
+        },
+        "local_launches": [],
         "branches": [],
     }
+    for point in e.saddles:
+        local = point.local
+        eigenvalues = local.spectral.eigenvalues if local is not None else None
+        ratio = (eigenvalues[1]/eigenvalues[0]
+                 if eigenvalues is not None and eigenvalues[0] != 0 else None)
+        backbone_clearance = complex_backbone.pole_clearance(point.interval)
+        valley_clearance = complex_backbone.valley_clearance(point.interval)
+        entry = {
+            "b": float(point.b),
+            "poincare_transverse_departure_ratio[HIGH_PRECISION]": ratio,
+            "backbone_pole_clearance_lower[VALIDATED]": (
+                float(backbone_clearance)
+                if backbone_clearance is not None else None),
+            "backbone_pole_clearance_lower_exact": (
+                (backbone_clearance.numerator, backbone_clearance.denominator)
+                if backbone_clearance is not None else None),
+            "valley_chart_pole_clearance_lower[VALIDATED]": (
+                float(valley_clearance)
+                if valley_clearance is not None else None),
+            "valley_chart_pole_clearance_lower_exact": (
+                (valley_clearance.numerator, valley_clearance.denominator)
+                if valley_clearance is not None else None),
+            "scope": ("neither pole clearance is a Frobenius convergence "
+                      "radius; any graph_launch entries below are independent "
+                      "exact-rational invariant-cone certificates"),
+        }
+        launches = [stub.validated_launch.as_dict() for stub in point.stubs
+                    if stub.validated_launch is not None]
+        if launches:
+            entry["graph_launches"] = launches
+        led["local_launches"].append(entry)
     for br in p.branches:
         entry = {
             "kind": br.kind,
