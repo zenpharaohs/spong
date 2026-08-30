@@ -30,7 +30,8 @@ from fractions import Fraction
 from math import factorial
 
 from . import _poly as P
-from .hyperelliptic import RationalInterval, polynomial_interval
+from .hyperelliptic import (RationalInterval, level_transport_interval,
+                            polynomial_interval)
 
 
 class LocalCertificateStatus(IntEnum):
@@ -50,6 +51,7 @@ class LocalCertificateWork:
     slope_doublings: int
     peak_endpoint_bits: int
     section_bisections: int = 0
+    section_retries: int = 0
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,7 @@ class PoincareLaunchCertificate:
                 "slope_doublings": self.work.slope_doublings,
                 "peak_endpoint_bits": self.work.peak_endpoint_bits,
                 "section_bisections": self.work.section_bisections,
+                "section_retries": self.work.section_retries,
             },
             "reason": self.reason,
         }
@@ -336,13 +339,36 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
             None, None, None, empty_work, str(exc))
 
     coefficient_count = len(fu)+len(fs)+len(loss)+len(chart_y)
-    cone_tests = slope_doublings = 0
+    cone_tests = slope_doublings = section_retries = 0
     peak = _peak_bits(ac, bc)
     reach = Fraction(float(chart.desired_reach))
-    accepted = None
+
+    def refusal(status, reason, *, halvings, cone=None, bisections=0):
+        work = LocalCertificateWork(
+            coefficient_count, cone_tests, halvings, slope_doublings, peak,
+            bisections, section_retries)
+        if cone is None:
+            return PoincareLaunchCertificate(
+                int(status), chart.manifold, orientation, time_direction,
+                None, None, None, None, None, None, None, None, work, reason)
+        reach_, slope_, flow_, lower_, upper_ = cone
+        return PoincareLaunchCertificate(
+            int(status), chart.manifold, orientation, time_direction,
+            reach_, slope_, flow_, lower_, upper_, None, None, None, work,
+            reason)
+
+    # The reach loop owns both stages.  The cone can fail to close at a
+    # reach, and the section rectangle it yields can fail to be a flow box:
+    # at a backbone-tangent departure y=A(a-a*) is second order along the
+    # branch, while the cone's transverse slack, thin in (a,b), is stretched
+    # by A into a y-width of the same order.  The slack scales as R^2 and
+    # the signal as R, so halving the reach resolves it; pushing the
+    # section outward would not.
+    section_reason = "no invariant cone closed within budget"
     for reach_halvings in range(max_reach_halvings+1):
         t = RationalInterval(Fraction(0), reach)
         slope = P.as_fraction(initial_slope)
+        accepted = None
         for doubling in range(max_slope_doublings+1):
             if slope > maximum_slope:
                 break
@@ -368,35 +394,76 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
             peak = max(peak, _peak_bits(
                 ft, lower_fs, lower_ft, upper_fs, upper_ft, reach, slope))
             if peak > max_endpoint_bits:
-                work = LocalCertificateWork(
-                    coefficient_count, cone_tests, reach_halvings,
-                    slope_doublings, peak)
-                return PoincareLaunchCertificate(
-                    int(LocalCertificateStatus.WORK_BUDGET), chart.manifold,
-                    orientation, time_direction, None, None, None, None,
-                    None, None, None, None, work,
-                    "local certificate endpoint-bit budget reached")
+                return refusal(
+                    LocalCertificateStatus.WORK_BUDGET,
+                    "local certificate endpoint-bit budget reached",
+                    halvings=reach_halvings)
             if ft.lo > 0 and lower_margin > 0 and upper_margin > 0:
-                accepted = (reach, slope, ft.lo,
-                            lower_margin, upper_margin, reach_halvings)
+                accepted = (reach, slope, ft.lo, lower_margin, upper_margin)
                 break
             slope *= 2
-        if accepted is not None:
-            break
+        if accepted is None:
+            section_reason = "no invariant cone closed within budget"
+            reach /= 2
+            continue
+
+        section = _certify_section(
+            accepted, loss, chart_y, ac, bc, critical_loss, chart.frame,
+            orientation, time_direction, model)
+        peak = max(peak, section.peak)
+        if peak > max_endpoint_bits:
+            return refusal(
+                LocalCertificateStatus.WORK_BUDGET,
+                "local certificate endpoint-bit budget reached",
+                halvings=reach_halvings, cone=accepted,
+                bisections=section.bisections)
+        if section.reason is None:
+            work = LocalCertificateWork(
+                coefficient_count, cone_tests, reach_halvings,
+                slope_doublings, peak, section.bisections, section_retries)
+            reach_, slope_, flow_margin, lower_margin, upper_margin = accepted
+            return PoincareLaunchCertificate(
+                int(LocalCertificateStatus.OK), chart.manifold, orientation,
+                time_direction, reach_, slope_, flow_margin, lower_margin,
+                upper_margin, section.level, section.b_slab, section.y_slab,
+                work)
+        section_reason = section.reason
+        section_retries += 1
         reach /= 2
 
-    if accepted is None:
-        work = LocalCertificateWork(
-            coefficient_count, cone_tests, max_reach_halvings,
-            slope_doublings, peak)
-        return PoincareLaunchCertificate(
-            int(LocalCertificateStatus.CONE_UNRESOLVED), chart.manifold,
-            orientation, time_direction, None, None, None, None, None,
-            None, None, None, work, "no invariant cone closed within budget")
+    return refusal(
+        LocalCertificateStatus.SECTION_UNRESOLVED
+        if section_retries else LocalCertificateStatus.CONE_UNRESOLVED,
+        section_reason+" within the reach budget",
+        halvings=max_reach_halvings)
 
-    reach, slope, flow_margin, lower_margin, upper_margin, halvings = accepted
+
+@dataclass(frozen=True)
+class _Section:
+    level: Fraction | None
+    b_slab: RationalInterval | None
+    y_slab: RationalInterval | None
+    peak: int
+    bisections: int
+    reason: str | None
+
+
+def _certify_section(accepted, loss, chart_y, ac, bc, critical_loss, frame,
+                     orientation: int, time_direction: int, model
+                     ) -> _Section:
+    """Bracket an exact loss level between two transverse cone faces and
+    return the slab's ``(b,y)`` rectangle, or the reason there is none.
+
+    The rectangle is accepted only if it is a flow box for the lifted
+    transport, i.e. ``|grad L|^2`` excludes zero on it, and lies on one
+    sheet, i.e. ``y`` is one-signed.  The first is exactly what
+    :func:`hyperelliptic.certify_flow_tube_from_launch` will demand of its
+    first knot; the second is what a same-sheet comparison downstream means,
+    and is what keeps the first slab's ``y``-radius from inflating.
+    """
+    reach, slope, _flow, _lower, _upper = accepted
     a_outer, b_outer = _physical_box(
-        ac, bc, chart.frame, orientation, RationalInterval.point(reach), slope)
+        ac, bc, frame, orientation, RationalInterval.point(reach), slope)
     loss_outer = critical_loss+_eval_cone_poly(
         loss, RationalInterval.point(reach),
         RationalInterval(-slope, slope), orientation)
@@ -407,8 +474,7 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
     for exponent in range(1, 9):
         inner = reach/Fraction(2**exponent)
         a_inner, b_inner = _physical_box(
-            ac, bc, chart.frame, orientation,
-            RationalInterval.point(inner), slope)
+            ac, bc, frame, orientation, RationalInterval.point(inner), slope)
         loss_inner = critical_loss+_eval_cone_poly(
             loss, RationalInterval.point(inner),
             RationalInterval(-slope, slope), orientation)
@@ -420,14 +486,12 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
             section_level = (loss_outer.hi+loss_inner.lo)/2
         if section_gap > 0:
             break
+    peak = _peak_bits(a_inner, b_inner, a_outer, b_outer,
+                      loss_inner, loss_outer)
     if section_gap <= 0:
-        work = LocalCertificateWork(
-            coefficient_count, cone_tests, halvings, slope_doublings, peak)
-        return PoincareLaunchCertificate(
-            int(LocalCertificateStatus.SECTION_UNRESOLVED), chart.manifold,
-            orientation, time_direction, reach, slope, flow_margin,
-            lower_margin, upper_margin, None, None, None, work,
-            "cone faces do not bracket an exact regular loss section")
+        return _Section(None, None, None, peak, 0,
+                        "cone faces do not bracket an exact regular loss "
+                        "section")
 
     signed_level = (section_level if time_direction > 0
                     else -section_level)
@@ -457,33 +521,28 @@ def certify_poincare_launch(model, point, chart, orientation: int, *,
         else:
             lower_probe = middle
     if not lower_safe < upper_safe:
-        work = LocalCertificateWork(
-            coefficient_count, cone_tests, halvings, slope_doublings,
-            peak, 80)
-        return PoincareLaunchCertificate(
-            int(LocalCertificateStatus.SECTION_UNRESOLVED), chart.manifold,
-            orientation, time_direction, reach, slope, flow_margin,
-            lower_margin, upper_margin, None, None, None, work,
-            "loss-section bisection did not leave an ordered bracket")
+        return _Section(None, None, None, peak, 80,
+                        "loss-section bisection did not leave an ordered "
+                        "bracket")
 
     a_slab, b_slab = _physical_box(
-        ac, bc, chart.frame, orientation,
+        ac, bc, frame, orientation,
         RationalInterval(lower_safe, upper_safe), slope)
     y_slab = _eval_cone_poly(
         chart_y, RationalInterval(lower_safe, upper_safe),
         RationalInterval(-slope, slope), orientation)
-    peak = max(peak, _peak_bits(
-        a_inner, b_inner, a_outer, b_outer, loss_inner, loss_outer,
-        a_slab, b_slab, y_slab, section_level))
-    work = LocalCertificateWork(
-        coefficient_count, cone_tests, halvings, slope_doublings, peak, 80)
-    if peak > max_endpoint_bits:
-        return PoincareLaunchCertificate(
-            int(LocalCertificateStatus.WORK_BUDGET), chart.manifold,
-            orientation, time_direction, reach, slope, flow_margin,
-            lower_margin, upper_margin, None, None, None, work,
-            "local certificate endpoint-bit budget reached")
-    return PoincareLaunchCertificate(
-        int(LocalCertificateStatus.OK), chart.manifold, orientation,
-        time_direction, reach, slope, flow_margin, lower_margin,
-        upper_margin, section_level, b_slab, y_slab, work)
+    peak = max(peak, _peak_bits(a_slab, b_slab, y_slab, section_level))
+    try:
+        level_transport_interval(model, b_slab, y_slab)
+    except (ValueError, ZeroDivisionError) as exc:
+        return _Section(None, None, None, peak, 80,
+                        "section rectangle is not a flow box: "+str(exc))
+    # One sheet: the launch must determine the sign of y.  A rectangle that
+    # straddles y=0 may still be a flow box (L_b can exclude zero on it),
+    # but the 2Ay/|grad L|^2 term of dy/dlevel then straddles with a spread
+    # of order A*width(y), and the tube inflates faster than the branch's
+    # own y grows.  Signal ~R, slack ~R^2: halving the reach resolves it.
+    if y_slab.contains_zero():
+        return _Section(None, None, None, peak, 80,
+                        "section rectangle straddles y=0; sheet undetermined")
+    return _Section(section_level, b_slab, y_slab, peak, 80, None)

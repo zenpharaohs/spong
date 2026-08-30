@@ -15,7 +15,7 @@ def validated_d2(d2):
 
 
 def test_every_degree_two_saddle_branch_gets_an_exact_launch(validated_d2):
-    _m, enumeration = validated_d2
+    m, enumeration = validated_d2
     launches = [stub.validated_launch
                 for point in enumeration.saddles for stub in point.stubs]
 
@@ -32,6 +32,11 @@ def test_every_degree_two_saddle_branch_gets_an_exact_launch(validated_d2):
         assert launch.upper_face_margin > 0
         assert launch.b_interval.width > 0
         assert launch.y_interval.width > 0
+        # The section rectangle is a flow box for the lifted transport: this
+        # is the handoff contract, checked here independently of any tube.
+        hyperelliptic.level_transport_interval(
+            m, launch.b_interval, launch.y_interval)
+        assert not launch.y_interval.contains_zero()
         assert launch.work.cone_tests <= 25*97
         assert launch.work.section_bisections == 80
         assert launch.work.peak_endpoint_bits <= 16384
@@ -109,52 +114,30 @@ def _launch_distance(launch, lifted):
                abs(lifted.y-launch.y_interval.midpoint))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "handoff gap found 2026-08-29: 5/8 close. Both unstable launches at "
-        "the far saddle b=-9.445 fail at every bisection depth because their "
-        "section rectangles contain y=0 (printed: y in [-0.042,0.018] with "
-        "K=2.4e-4, so it is not transverse slack). The branch departs along "
-        "the backbone, so the true y=A(a-a*) is O(0.01) there, the same "
-        "order as the rectangle's interval width; |grad L|^2 then cannot "
-        "exclude the critical point at any slab depth. Fix in "
-        "local_certificate: a tighter y evaluation on the section slab, or a "
-        "section pushed out until |y| dominates its width. The stable +1 "
-        "launch at b=-0.517 hands off and closes 25 slabs from the traced "
-        "branch before the inflating tube meets a critical point: intrinsic "
-        "growth along an increasing-loss (repelling) direction, a tail-length "
-        "choice rather than a certificate defect. Strict: fixing the launch "
-        "must flip this to a pass."))
-def test_d2_launch_hands_off_to_a_real_model_tube(validated_d2):
-    """The fake ``A=1, B=0`` tests in test_hyperelliptic replay the tube
-    mechanics on a model whose flow is known in closed form.  This test
-    exercises the handoff on a real model: validated invariant-cone launch,
-    then floating vertices lifted EXACTLY to their own fibres as centre
-    proposals, then the rational trapping-tube replay.  The stub is tried
-    first; where it is shorter than the cone reach, the traced separatrix
-    of the same saddle (matched by nearness to the launch box) supplies the
-    proposal instead.  Nothing floating is trusted: every face inequality
-    is re-proved in intervals, and failing slabs are bisected.
+def _handoff(m, enumeration, traced, caps: dict):
+    """Run every validated launch into a rational trapping tube.
 
-    On failure ``reasons`` names the mode per launch.
+    Centres are floating vertices lifted EXACTLY to their own fibres: the
+    stub first, else the traced separatrix of the same saddle matched by
+    nearness to the launch box.  Nothing floating is trusted; every face
+    inequality is re-proved in intervals and failing slabs are bisected.
+    Returns ``(closed, refusal_lines)``.
     """
-    m, enumeration = validated_d2
-    traced = portrait.compute(m, _enumeration=enumeration, _skip_audit=True)
     closed = 0
     reasons = []
     for point in enumeration.saddles:
         for stub in point.stubs:
             launch = stub.validated_launch
             assert launch.validated
-            tail = _lifted_tail(m, stub.curve, launch, cap=24)
+            cap = caps[stub.manifold]
+            tail = _lifted_tail(m, stub.curve, launch, cap=cap)
             source = "stub"
             if not tail:
                 candidates = []
                 for br in traced.branches:
                     if br.diag.get("saddle_b") != point.b:
                         continue
-                    branch_tail = _lifted_tail(m, br.Y, launch, cap=24)
+                    branch_tail = _lifted_tail(m, br.Y, launch, cap=cap)
                     if branch_tail:
                         candidates.append(
                             (_launch_distance(launch, branch_tail[0]),
@@ -181,8 +164,54 @@ def test_d2_launch_hands_off_to_a_real_model_tube(validated_d2):
                                 stub.orientation, source, len(tail),
                                 cert.slab_bisections, len(cert.slabs),
                                 cert.reason))
+    lines = ["  b=%.4f %-8s %+d source=%s tail=%d bisections=%d slabs=%d: %s"
+             % row for row in reasons]
+    return closed, lines
+
+
+@pytest.fixture(scope="module")
+def traced_d2(validated_d2):
+    m, enumeration = validated_d2
+    return portrait.compute(m, _enumeration=enumeration, _skip_audit=True)
+
+
+def test_every_d2_launch_hands_off_to_a_real_model_tube(validated_d2,
+                                                         traced_d2):
+    """The fake ``A=1, B=0`` tests in test_hyperelliptic replay the tube
+    mechanics on a model whose flow is known in closed form.  This is the
+    handoff on a real model: each validated cone launch must seed a tube
+    that closes through its first few downstream centres.  Short tails on
+    purpose: the handoff is under test, not how far a level-parametrised
+    tube can follow a separatrix (see the continuation test below).
+
+    History: 2026-08-29 this closed 5/8; the two far-saddle unstable
+    rectangles contained y=0 because the cone's transverse slack, thin in
+    (a,b), is stretched by A into a y-width of the same order as the
+    branch's second-order departure from the backbone.  Halving the reach
+    when the rectangle fails the flow-box contract fixed it (slack ~R^2,
+    signal ~R).
+    """
+    m, enumeration = validated_d2
+    closed, lines = _handoff(m, enumeration, traced_d2,
+                             {"unstable": 3, "stable": 3})
     if closed != 8:
         pytest.fail(f"closed {closed}/8 launches; refusals:\n"
-                    + "\n".join(
-                        "  b=%.4f %-8s %+d source=%s tail=%d bisections=%d "
-                        "slabs=%d: %s" % row for row in reasons))
+                    + "\n".join(lines))
+
+
+def test_d2_tubes_continue_along_the_separatrices(validated_d2, traced_d2):
+    """Same launches, longer tails: the level-parametrised tube follows
+    each separatrix well past the launch neighbourhood.
+
+    History: with the flow-box contract alone this closed 7/8; the unstable
+    -1 branch at b=-9.445 closed six slabs and then inflated onto a critical
+    point, because its rectangle still straddled y=0 and the 2Ay/|grad L|^2
+    term of dy/dlevel straddled with it.  The one-sheet contract (y
+    one-signed on the rectangle) closed all eight, long tails included.
+    """
+    m, enumeration = validated_d2
+    closed, lines = _handoff(m, enumeration, traced_d2,
+                             {"unstable": 24, "stable": 6})
+    if closed != 8:
+        pytest.fail(f"closed {closed}/8 launches; refusals:\n"
+                    + "\n".join(lines))
