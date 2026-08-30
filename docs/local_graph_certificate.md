@@ -83,6 +83,31 @@ The ordinary degree-2 qualification model closes all eight stable/unstable
 oriented launches at `R=0.1`; the test suite replays every positive exact face
 margin and the handoff of a decreasing-loss launch.
 
+The handoff itself (`tests/test_local_certificate.py::
+test_d2_launch_hands_off_to_a_real_model_tube`, strict xfail as of
+2026-08-29) closes five of the eight launches into rational trapping tubes
+seeded from lifted stub or traced-branch vertices.  Two of the three that
+do not close are a statement about the section box, not the tube.  At the far
+saddle `b=-9.445` both unstable section rectangles contain `y=0`
+(`y` in `[-0.042, 0.018]` with cone slope `K=2.4e-4`, so transverse slack
+is not the cause).  The branch departs along the backbone, so the true
+`y=A(a-a*)` is `O(0.01)` there, the same order as the rectangle's interval
+width, and `|grad L|^2>=4y^2` cannot exclude the critical point at any slab
+bisection depth.  A backbone-tangent departure therefore needs either a
+tighter `y` evaluation on the section slab (centred/Taylor form, so the
+width scales with the slab rather than with the coefficient intervals) or a
+section pushed out until `|y|` dominates its width.  This is the dead-neuron
+geometry, which is where the certificate is wanted most.
+
+The third, the stable `+1` launch at `b=-0.517`, hands off correctly and
+closes twenty-five slabs from the traced separatrix before the tube meets a
+critical point.  Along an increasing-loss direction neighbouring orbits
+diverge from a stable separatrix, and tube radii only grow, so a long tail
+fattens until it touches something; that is a tail-length choice in the
+test, not a certificate defect.  A validated tube's terminal box cannot be
+tightened without new information, so the remedy is to stop at the common
+regular fibre where the comparison is made, not to run further.
+
 ## C backend shape and timing boundary
 
 The oracle is deliberately arranged like a future GMP C kernel:

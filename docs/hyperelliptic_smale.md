@@ -99,9 +99,15 @@ slab their order cannot change without such a zero.  The existing
 statement.  `certify_flow_tube` now proves level holonomy by checking exact
 inward inequalities on every lateral face of a piecewise-linear tube in
 `(ell,b,y)`.  `certify_abel_gap` then excludes zero whenever two terminal
-boxes lie on one sheet and the joining chart contains no branch point.  A
-comparison spanning a branch point still needs the unwrapped period
-coordinate described above.
+boxes lie on one sheet and the joining chart contains no branch point.
+On one sheet `db/y` has constant sign, so this is exactly `b`-order
+disjointness of the two crossing boxes; the Abel integral is enclosed for
+continuity with the positive-genus version, not because it decides
+anything the `b` order does not.  The load-bearing fact is simpler: a
+saddle connection is a single trajectory, so it crosses a regular fibre
+once, and two validated tubes whose terminal boxes on one exact fibre are
+disjoint cannot enclose the same trajectory.  A comparison spanning a
+branch point still needs the unwrapped period coordinate described above.
 
 ## Certificate contract
 
@@ -118,10 +124,10 @@ A hyperelliptic Smale certificate should contain:
    plus ball/interval enclosures of periods for comparisons which cannot stay
    in one sheet chart (not yet implemented).
 5. For every candidate stable/unstable pair, an interval enclosure of
-   `Delta_ij`.  Exclusion of zero certifies preserved order and hence absence
-   of a connection.  An exact wall requires interval Newton in the model
-   parameter together with `Delta_ij=0`; a small floating gap is not an
-   equality certificate.
+   `Delta_ij` (on one sheet, presently just the exact `b` gap).  Exclusion
+   of zero certifies preserved order and hence absence of a connection.
+   An exact wall requires interval Newton in the model parameter together
+   with `Delta_ij=0`; a small floating gap is not an equality certificate.
 6. Once an unstable branch enters a one-minimum or one-ended component, the
    existing exact merge-tree terminal certificate supplies its final fate.
 

@@ -424,6 +424,7 @@ class FlowTubeCertificate:
     launch_validated: bool
     reason: str | None = None
     level_direction: int = 1
+    slab_bisections: int = 0
 
     @property
     def status(self) -> str:
@@ -441,6 +442,7 @@ class FlowTubeCertificate:
             "level_direction": self.level_direction,
             "reason": self.reason,
             "slab_count": len(self.slabs),
+            "slab_bisections": self.slab_bisections,
             "terminal_level": (None if terminal is None
                                else float(terminal.level)),
             "terminal_b_interval": (None if terminal is None
@@ -479,7 +481,8 @@ def certify_flow_tube(model, centres: Iterable[LiftedPoint | HolonomyCentre], *,
                       max_radius=None,
                       max_inflations: int = 32,
                       max_endpoint_bits: int = 4096,
-                      radius_round_bits: int = 192
+                      radius_round_bits: int = 192,
+                      max_slab_bisections: int = 10
                       ) -> FlowTubeCertificate:
     """Validate a piecewise-linear trapping tube for lifted holonomy.
 
@@ -488,6 +491,14 @@ def certify_flow_tube(model, centres: Iterable[LiftedPoint | HolonomyCentre], *,
     inward, where ``direction`` is ``+1`` for increasing loss and ``-1`` for
     decreasing loss.  The resulting statement is a genuine flow enclosure
     for *every* lifted trajectory entering the first box.
+
+    A slab whose faces do not close is bisected at the linear midpoint of
+    its two centres, to depth ``max_slab_bisections``.  The inserted centre
+    is a proposal exactly like the supplied ones; nothing about it is
+    trusted.  Bisection is what lets a tiny validated launch box hand off to
+    coarsely spaced downstream centres: a long first slab hulls the box back
+    toward the saddle, and ``|grad L|^2 >= 4y^2`` then cannot exclude the
+    critical point.
 
     ``launch_validated`` must only be true when an independent local
     invariant-manifold theorem proves that the desired separatrix enters that
@@ -515,7 +526,14 @@ def certify_flow_tube(model, centres: Iterable[LiftedPoint | HolonomyCentre], *,
     knots = [TubeKnot(points[0].level, points[0].b, points[0].y,
                       r[0], r[1])]
     slabs = []
-    for first, second in zip(points, points[1:]):
+    bisections = 0
+    # Slabs are processed in level order; a failing slab is split and both
+    # halves pushed back, so the radius state ``r`` always belongs to the
+    # slab about to be examined.
+    stack = [(points[k], points[k+1], 0)
+             for k in range(len(points)-2, -1, -1)]
+    while stack:
+        first, second, depth = stack.pop()
         h = level_direction*(second.level-first.level)
         z0, z1 = (first.b, first.y), (second.b, second.y)
         slope = ((z1[0]-z0[0])/h, (z1[1]-z0[1])/h)
@@ -573,10 +591,19 @@ def certify_flow_tube(model, centres: Iterable[LiftedPoint | HolonomyCentre], *,
                 failure = "tube radius cap exceeded"
                 break
         if accepted is None:
+            if depth < max_slab_bisections:
+                middle = HolonomyCentre((first.level+second.level)/2,
+                                        (first.b+second.b)/2,
+                                        (first.y+second.y)/2)
+                bisections += 1
+                stack.append((middle, second, depth+1))
+                stack.append((first, middle, depth+1))
+                continue
             return FlowTubeCertificate(tuple(knots), tuple(slabs), False,
                                        launch_validated,
                                        failure or "tube inflation did not close",
-                                       level_direction=level_direction)
+                                       level_direction=level_direction,
+                                       slab_bisections=bisections)
         slabs.append(TubeSlab(min(first.level, second.level),
                               max(first.level, second.level),
                               accepted[0], accepted[1], accepted[2]))
@@ -584,7 +611,8 @@ def certify_flow_tube(model, centres: Iterable[LiftedPoint | HolonomyCentre], *,
         knots.append(TubeKnot(second.level, second.b, second.y, r[0], r[1]))
     return FlowTubeCertificate(tuple(knots), tuple(slabs), True,
                                launch_validated,
-                               level_direction=level_direction)
+                               level_direction=level_direction,
+                               slab_bisections=bisections)
 
 
 def certify_flow_tube_from_launch(

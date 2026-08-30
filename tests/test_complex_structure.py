@@ -87,21 +87,21 @@ def test_ledger_uses_the_actual_poincare_spectral_ratio():
     m = model.build([1, 1, 1], [1, 1, 1], model.moments_uniform01(5))
     enumeration = sturm.enumerate_critical_points(m)
     p = portrait.Portrait(m, enumeration, [], (-2, 2, -2, 2), None)
-    ledger = portrait.build_ledger(p, {})
+    ledger = portrait.build_ledger(p, {}, certify_complex=True)
 
     assert ledger["complex_backbone"]["status"] == "validated"
     assert ledger["hyperelliptic_pencil"]["generic_genus[EXACT]"] >= 1
     pencil = ledger["hyperelliptic_pencil"]
     assert pencil["status"] == \
-        "validated certificate engine; portrait launch pending"
-    assert pencil["implemented"][
-        "genus_zero_residue_log_reduction[EXACT]"]
-    assert pencil["implemented"][
-        "rational_flow_tubes[VALIDATED]"]
-    assert pencil["implemented"][
-        "generic_interval_local_launch_certifier[VALIDATED]"]
-    assert not pencil["implemented"][
-        "portrait_local_launches_materialized[VALIDATED]"]
+        "certificate engine present; portrait launch pending"
+    capabilities = pencil["engine_capabilities[STATIC]"]
+    assert capabilities["genus_zero_residue_log_reduction"]
+    assert capabilities["rational_flow_tubes"]
+    assert capabilities["interval_local_launch_certifier"]
+    assert not capabilities["positive_genus_unwrapped_period_transport"]
+    # Static capabilities never carry a per-portrait epistemic tag.
+    assert not any("[" in key for key in capabilities)
+    assert not pencil["portrait_local_launches_materialized[VALIDATED]"]
     assert pencil["validated_local_launch_count"] == 0
     assert len(ledger["local_launches"]) == len(enumeration.saddles)
     for row, saddle in zip(ledger["local_launches"], enumeration.saddles):

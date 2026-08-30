@@ -13,6 +13,7 @@ separatrix may cross the backbone away from a critical point.  Stable branches
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 import time
 
 import numpy as np
@@ -359,11 +360,25 @@ def _max_turn_deg(Y: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(ct, -1.0, 1.0)).max()))
 
 
-def build_ledger(p: Portrait, gen: dict) -> dict:
-    """The certificate ledger (SPONG_FOUNDING §11), machine-checkable."""
+def build_ledger(p: Portrait, gen: dict, *,
+                 certify_complex: bool | None = None) -> dict:
+    """The certificate ledger (SPONG_FOUNDING §11), machine-checkable.
+
+    ``certify_complex`` runs :func:`complex_structure.certify_backbone`,
+    the exact Lehmer-Schur/Rouche divisor of the reduced backbone.  Measured
+    cold by ``scripts/complex_backbone_probe.py``: 5.2 s on tricky-d11 and
+    35.6 s on linear-target-d17-thrash, on the default ledger path of every
+    portrait.  It is therefore opt-in, exactly like
+    :func:`sturm.materialize_validated_launches`; ``None`` reads the
+    ``SPONG_COMPLEX_LEDGER`` environment variable.
+    """
+    if certify_complex is None:
+        certify_complex = os.environ.get(
+            "SPONG_COMPLEX_LEDGER", "") not in ("", "0")
     e = p.enumeration
     balance = atlas.index_balance(p.model, e)
-    complex_backbone = complex_structure.certify_backbone(p.model)
+    complex_backbone = (complex_structure.certify_backbone(p.model)
+                        if certify_complex else None)
     launch_objects = [
         stub.validated_launch for point in e.saddles for stub in point.stubs
         if stub.validated_launch is not None]
@@ -386,28 +401,39 @@ def build_ledger(p: Portrait, gen: dict) -> dict:
         },
         "genericity[EXACT]": gen,
         "index_balance[EXACT]": balance,
-        "complex_backbone": complex_backbone.as_dict(),
+        "complex_backbone": (
+            complex_backbone.as_dict() if complex_backbone is not None else {
+                "status": "not_computed",
+                "scope": ("opt-in: pass certify_complex=True or set "
+                          "SPONG_COMPLEX_LEDGER=1; see "
+                          "scripts/complex_backbone_probe.py for cost"),
+            }),
         "hyperelliptic_pencil": {
             "generic_genus[EXACT]": hyperelliptic.generic_genus(p.model),
             "family": "y^2 = B^2 + (ell-C)A",
-            "smale_object": ("validated Abel-coordinate holonomy between "
-                             "regular fibres"),
+            "smale_object": (
+                "same-fibre crossing disjointness of validated launch + "
+                "trapping-tube holonomy; the one-sheet Abel gap is b-order, "
+                "positive-genus unwrapped period transport pending"),
             "status": ("portrait local launches validated; "
                        "holonomy engine available"
                        if portrait_launches_validated else
-                       "validated certificate engine; portrait launch pending"),
-            "implemented": {
-                "complete_fibre_divisors[VALIDATED]": True,
-                "branch_point_regular_lifted_flow[EXACT]": True,
-                "rational_flow_tubes[VALIDATED]": True,
-                "same_sheet_abel_gap_zero_exclusion[VALIDATED]": True,
-                "genus_zero_residue_log_reduction[EXACT]": True,
-                "genus_zero_definite_integral[VALIDATED]": True,
+                       "certificate engine present; portrait launch pending"),
+            # Engine capabilities are static facts about the code, not
+            # certificates about this portrait.  Only the materialized
+            # flag below carries a per-portrait epistemic tag.
+            "engine_capabilities[STATIC]": {
+                "complete_fibre_divisors": True,
+                "branch_point_regular_lifted_flow": True,
+                "rational_flow_tubes": True,
+                "same_sheet_b_order_gap": True,
+                "genus_zero_residue_log_reduction": True,
+                "genus_zero_definite_integral": True,
                 "positive_genus_unwrapped_period_transport": False,
-                "generic_interval_local_launch_certifier[VALIDATED]": True,
-                "portrait_local_launches_materialized[VALIDATED]": (
-                    portrait_launches_validated),
+                "interval_local_launch_certifier": True,
             },
+            "portrait_local_launches_materialized[VALIDATED]": (
+                portrait_launches_validated),
             "local_launch_count": launch_count,
             "validated_local_launch_count": validated_launch_count,
             "expected_local_launch_count": expected_launch_count,
@@ -425,8 +451,12 @@ def build_ledger(p: Portrait, gen: dict) -> dict:
         eigenvalues = local.spectral.eigenvalues if local is not None else None
         ratio = (eigenvalues[1]/eigenvalues[0]
                  if eigenvalues is not None and eigenvalues[0] != 0 else None)
-        backbone_clearance = complex_backbone.pole_clearance(point.interval)
-        valley_clearance = complex_backbone.valley_clearance(point.interval)
+        backbone_clearance = (
+            complex_backbone.pole_clearance(point.interval)
+            if complex_backbone is not None else None)
+        valley_clearance = (
+            complex_backbone.valley_clearance(point.interval)
+            if complex_backbone is not None else None)
         entry = {
             "b": float(point.b),
             "poincare_transverse_departure_ratio[HIGH_PRECISION]": ratio,
