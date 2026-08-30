@@ -278,6 +278,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     }
     p.ledger["topology"]["geometry_level"] = geometry_level
     p.ledger["summary"]["topology_status"] = p.ledger["topology"]["status"]
+    p.ledger["summary"]["representation_attested"] = (
+        p.ledger["topology"].get("unattested_turn_count", 0) == 0)
     return p
 
 

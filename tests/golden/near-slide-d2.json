@@ -230,6 +230,7 @@
   "summary": {
     "all_branches_clean": true,
     "balanced": true,
+    "representation_attested": true,
     "topology_status": "certified",
     "worst_angle_energy": 3.910496823242886e-09,
     "worst_max_turn_deg": 6.315410309185947

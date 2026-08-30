@@ -75,6 +75,33 @@ def _point_segment_distance(p, a, b):
     return hypot(px-t*dx, py-t*dy)
 
 
+def _segment_turns(Y):
+    """Per-segment chord lengths and worst adjacent turn angles."""
+    points = np.asarray(Y, dtype=float)
+    steps = np.diff(points, axis=0)
+    count = len(steps)
+    chord = np.hypot(steps[:, 0], steps[:, 1]) if count else np.zeros(0)
+    turn = np.zeros(count)
+    if count >= 2:
+        first, second = steps[:-1], steps[1:]
+        cross = first[:, 0]*second[:, 1] - first[:, 1]*second[:, 0]
+        dot = first[:, 0]*second[:, 0] + first[:, 1]*second[:, 1]
+        angle = np.abs(np.arctan2(cross, dot))
+        # Segment k borders the turns at its two endpoints; take the worse.
+        turn[:-1] = np.maximum(turn[:-1], angle)
+        turn[1:] = np.maximum(turn[1:], angle)
+    return chord, turn
+
+
+# The turn attestation bound: a polyline segment whose adjacent turn exceeds
+# this is NOT a representation the chord contract licenses interpolating --
+# about 24 points around a full circle.  With unit-speed steps the turn per
+# step is curvature times chord, so a turn-targeted controller resolves any
+# hairpin in a constant number of vertices regardless of its radius;
+# stiffness is an argument for the controller, not for loosening the gate.
+_TURN_ATTESTATION_DEG = 15.0
+
+
 def _sagitta_bounds(Y):
     """Per-segment deviation of the polyline from the curve it represents.
 
@@ -90,23 +117,18 @@ def _sagitta_bounds(Y):
     attests nothing about the flow.  A crossing DEEPER than that cannot be
     perturbed away and is a genuine violation of uniqueness -- wherever it
     occurs, including inside a certified basin.
+
+    The licence has a ceiling.  Because both quantities are read off the
+    polyline, a segment that turns WILDLY would otherwise claim a huge
+    representation error and discharge exactly the crossings it commits --
+    the defect would attest its own tolerance (observed: a tracer overshoot
+    through a saddle, turn ~ pi, forgave its crossings of the separatrices
+    it jumped).  Beyond the attestation bound the small-sagitta model is
+    void, so the licence is CAPPED there; the audit additionally refuses
+    such segments outright (see the attestation pass in :func:`audit`).
     """
-    points = np.asarray(Y, dtype=float)
-    steps = np.diff(points, axis=0)
-    count = len(steps)
-    if count == 0:
-        return np.zeros(0)
-    chord = np.hypot(steps[:, 0], steps[:, 1])
-    turn = np.zeros(count)
-    if count >= 2:
-        first, second = steps[:-1], steps[1:]
-        cross = first[:, 0]*second[:, 1] - first[:, 1]*second[:, 0]
-        dot = first[:, 0]*second[:, 0] + first[:, 1]*second[:, 1]
-        angle = np.abs(np.arctan2(cross, dot))
-        # Segment k borders the turns at its two endpoints; take the worse.
-        turn[:-1] = np.maximum(turn[:-1], angle)
-        turn[1:] = np.maximum(turn[1:], angle)
-    return chord*turn/8.0
+    chord, turn = _segment_turns(Y)
+    return chord*np.minimum(turn, np.radians(_TURN_ATTESTATION_DEG))/8.0
 
 
 def _crossing_depth(Y1, i, Y2, j):
@@ -1408,6 +1430,8 @@ def audit(m, enumeration, branches, box,
             "pair_contact_policy": pair_contact_policy,
             "forbidden_count": 0,
             "ambiguous_count": 0,
+            "unattested_turn_count": 0,
+            "turn_attestation_deg": _TURN_ATTESTATION_DEG,
             "predicate_tolerance": float(predicate_tol),
             "minimum_basin_radii": [],
             "terminal_suffixes": [],
@@ -1564,6 +1588,94 @@ def audit(m, enumeration, branches, box,
             ambiguous_count += 1
         if len(sample) < event_sample_limit:
             sample.append(item)
+
+    # TURN ATTESTATION.  The sagitta licence above is read off the polyline
+    # itself, so it is only an error model while segments turn modestly; a
+    # junction turning past the attestation bound is not a representation
+    # the chord contract licenses interpolating, and its contacts --
+    # present OR absent -- attest nothing.  Refuse such junctions outright
+    # as ambiguous contacts, which makes the decision refuse with
+    # `topology_contact`, the resolution-sensitive reason certified_compute
+    # escalates on: halving the chord halves the turn, so escalation
+    # genuinely repairs this.
+    #
+    # Discharges, each carried by an independent certificate: the
+    # materialized stub germ, a certified terminal suffix (its polyline is
+    # replaced by an order-preserving arc), the critical balls -- and SEAM
+    # STITCHES.  A chart or phase handoff restarts the trace a certified
+    # lateral offset away (``seam_residual``), leaving a micro-zigzag whose
+    # short side is at the stitch scale while the CURVE is smooth.  Such a
+    # corner is discharged only when the directions on either side of the
+    # two-segment neighbourhood RESUME to within the bound: a stitch is a
+    # jog, and a genuine reversal (the tracer-overshoot defect this pass
+    # exists for) fails the resume test whatever its chord lengths.
+    unattested_turn_count = 0
+    turn_bound = np.radians(_TURN_ATTESTATION_DEG)
+    for i, br in enumerate(branches if not budget_exceeded else ()):
+        Y = np.asarray(br.Y, dtype=float)
+        steps = np.diff(Y, axis=0)
+        if len(steps) < 2:
+            continue
+        chord = np.hypot(steps[:, 0], steps[:, 1])
+        cross = steps[:-1, 0]*steps[1:, 1] - steps[:-1, 1]*steps[1:, 0]
+        dot = steps[:-1, 0]*steps[1:, 0] + steps[:-1, 1]*steps[1:, 1]
+        junction = np.abs(np.arctan2(cross, dot))
+        wild = np.flatnonzero(junction > turn_bound)
+        if not len(wild):
+            continue
+        suffix = terminal_suffixes[i]
+        suffix_start = (suffix["start"]
+                        if suffix["kind"] is not None else None)
+        germ = int(br.diag.get("critical_steps", 0))
+        seam_scale = 8.0*float(br.certs.get("seam_residual") or 0.0)
+
+        def _resumes(j):
+            # Compare the directions with which the trace ENTERS and LEAVES
+            # the certified stitch ball (radius seam_scale about the
+            # corner).  Inside it the polyline may jump, jog, or CRAWL
+            # (observed: ~8000 segments of 1.2e-7 executing a 1e-3 certified
+            # offset), and none of that is evidence about the curve; the
+            # licence is spatial.  Outside it the first segment on each
+            # side carries the direction, meaningful whenever its chord
+            # clears the coordinate noise floor.  A permanent reversal fails
+            # this however its chords are arranged; a stitch resumes.
+            corner = Y[j+1]
+            p = j
+            while p >= 0 and hypot(Y[p][0]-corner[0],
+                                   Y[p][1]-corner[1]) <= seam_scale:
+                p -= 1
+            n = j+1
+            while n < len(steps) and hypot(Y[n+1][0]-corner[0],
+                                           Y[n+1][1]-corner[1]) <= seam_scale:
+                n += 1
+            if p < 0 or n >= len(steps):
+                return False
+            if chord[p] <= allowed_radius or chord[n] <= allowed_radius:
+                return False
+            before, after = steps[p], steps[n]
+            resume = abs(np.arctan2(
+                before[0]*after[1]-before[1]*after[0],
+                before[0]*after[0]+before[1]*after[1]))
+            return resume <= turn_bound
+
+        for j in wild:
+            if j+1 < germ:
+                continue
+            if suffix_start is not None and j >= suffix_start:
+                continue
+            corner = Y[j+1]
+            if len(critical) and float(np.min(_row_norm2(
+                    critical-corner))) <= allowed_radius:
+                continue
+            short = float(min(chord[j], chord[j+1]))
+            if short <= seam_scale and _resumes(j):
+                continue
+            unattested_turn_count += 1
+            record({"branches": (i, i), "segments": (int(j), int(j)+1),
+                    "kind": "unattested_turn",
+                    "turn_deg": float(np.degrees(junction[j])),
+                    "chord": short,
+                    "point": tuple(map(float, corner))}, "ambiguous")
 
     for i, br in enumerate(branches if not budget_exceeded else ()):
         root = None if native_contacts else trees[i]
@@ -1781,6 +1893,8 @@ def audit(m, enumeration, branches, box,
         "pair_contact_policy": pair_contact_policy,
         "forbidden_count": forbidden_count,
         "ambiguous_count": ambiguous_count,
+        "unattested_turn_count": unattested_turn_count,
+        "turn_attestation_deg": _TURN_ATTESTATION_DEG,
         "predicate_tolerance": float(predicate_tol),
         "minimum_basin_radii": [
             {"minimum": key, "radius": float(value)}

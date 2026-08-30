@@ -318,6 +318,7 @@
   "summary": {
     "all_branches_clean": true,
     "balanced": true,
+    "representation_attested": true,
     "topology_status": "certified",
     "worst_angle_energy": 1.1596410887603571e-07,
     "worst_max_turn_deg": 1.9459417443339964

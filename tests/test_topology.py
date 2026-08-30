@@ -83,6 +83,77 @@ def test_bvh_audit_finds_a_forbidden_transverse_crossing(d2):
     assert shadow["pair_order_sweep"]["candidates"] == 1
 
 
+def test_wild_turn_voids_the_sagitta_licence_and_refuses(d2):
+    """A segment turning past the attestation bound is refused outright.
+
+    Found 2026-08-30: a tracer overshoot through a saddle (turn ~ pi)
+    inflated its own sagitta and DISCHARGED the crossings it committed --
+    the defect attested its own tolerance.  The audit must instead treat
+    such a segment as an ambiguous contact (refuse, escalate), and the
+    sagitta licence must be capped at the attestation angle so a wild
+    chord can never forgive a deep crossing.
+    """
+    m, e = d2
+    hairpin = Branch("stable", np.array(
+        [[-1.7, -1.7], [-1.2, -1.2], [-0.7, -0.7],
+         [-0.699, -0.699], [-1.2, -1.1], [-1.7, -1.5]]), "box_exit")
+    smooth = Branch("stable", np.array(
+        [[1.7, -1.7], [1.2, -1.2], [0.7, -0.7],
+         [0.2, -0.2], [-0.3, 0.3], [-0.8, 0.8]]), "box_exit")
+    result = topology.audit(m, e, [hairpin, smooth], (-2., 2., -2., 2.))
+    assert result["turn_attestation_deg"] == topology._TURN_ATTESTATION_DEG
+    assert result["unattested_turn_count"] >= 1
+    assert result["status"] == "fp64_unresolved"
+    kinds = {item["kind"] for item in result["ambiguous_contacts"]}
+    assert "unattested_turn" in kinds
+    worst = max((item for item in result["ambiguous_contacts"]
+                 if item["kind"] == "unattested_turn"),
+                key=lambda item: item["turn_deg"])
+    assert worst["turn_deg"] > 90.0
+    assert worst["branches"] == (0, 0)
+
+    # The smooth control contributes no attestation events.
+    control = topology.audit(m, e, [smooth], (-2., 2., -2., 2.))
+    assert control["unattested_turn_count"] == 0
+
+    # The licence cap: the hairpin's sagitta may not exceed what a
+    # 15-degree turn licenses, however hard the polyline actually turns.
+    sag = topology._sagitta_bounds(hairpin.Y)
+    chord, _turn = topology._segment_turns(hairpin.Y)
+    ceiling = chord*np.radians(topology._TURN_ATTESTATION_DEG)/8.0
+    assert np.all(sag <= ceiling*(1+1e-12))
+
+
+def test_certified_seam_stitch_is_discharged_but_a_reversal_is_not(d2):
+    """A chart handoff restarts the trace a certified lateral offset away
+    (seam_residual), leaving a micro-zigzag: a ~90-degree corner whose
+    short side is at the stitch scale while the directions on either side
+    RESUME.  That corner is attested by the seam certificate.  A genuine
+    reversal is not, whatever its chord lengths: the resume test fails."""
+    m, e = d2
+    stitched = Branch("unstable", np.array(
+        [[-1.7, -1.7], [-1.2, -1.2], [-0.7, -0.7],
+         [-0.7, -0.6999999], [-0.2, -0.2], [0.3, 0.3]]), "box_exit")
+    stitched.certs["seam_residual"] = 1e-6
+    result = topology.audit(m, e, [stitched], (-2., 2., -2., 2.))
+    assert result["unattested_turn_count"] == 0
+
+    # The same stitch without its certificate is refused.
+    bare = Branch("unstable", np.array(stitched.Y), "box_exit")
+    result = topology.audit(m, e, [bare], (-2., 2., -2., 2.))
+    assert result["unattested_turn_count"] >= 1
+
+    # A reversal executed at the stitch scale is refused even WITH the
+    # certificate: the directions do not resume, so the seam cannot carry
+    # it.  This is the tracer-overshoot geometry.
+    reversed_ = Branch("unstable", np.array(
+        [[-1.7, -1.7], [-1.2, -1.2], [-0.7, -0.7],
+         [-0.7, -0.6999999], [-1.2, -1.1], [-1.7, -1.5]]), "box_exit")
+    reversed_.certs["seam_residual"] = 1e-6
+    result = topology.audit(m, e, [reversed_], (-2., 2., -2., 2.))
+    assert result["unattested_turn_count"] >= 1
+
+
 def test_unknown_pair_contact_policy_is_rejected(d2):
     m, e = d2
     with pytest.raises(ValueError, match="unknown pair contact policy"):
