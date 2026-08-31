@@ -26,7 +26,7 @@ setup(
             ["src/spong/_native.c", "src/c/spong_resolution.c",
              "src/c/spong_exact_gmp.c", "src/c/spong_topology.c",
              "src/c/spong_geometry.c", "src/c/spong_local_gmp.c",
-             "src/c/spong_continue.c"],
+             "src/c/spong_continue.c", "src/c/spong_gauss2.c"],
             include_dirs=["include", *gmp_include_dirs],
             library_dirs=gmp_library_dirs,
             libraries=["gmp"],

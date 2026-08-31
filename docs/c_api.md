@@ -167,6 +167,21 @@ face margins, rational section rectangle, and work counters documented in
 in the public header until differential parity and refusal behavior are fixed;
 the Python oracle is the executable ABI specification.
 
+Two-dimensional Gauss--Legendre collocation on the loss field is exposed by
+`include/spong/spong_gauss2.h`.  `spong_field` is the plain-array view of
+the eight ascending coefficient arrays and the loss constant (layout
+identical to `spong_continue_field`); `spong_irk2_step` takes one implicit
+Gauss--Legendre step of order 4, 6 or 8 on any `spong_vec_fj` field with the
+damped Newton stage solve and the equilibrated, backward-error-certified
+small dense solve, and `spong_normalized_step` / `spong_potential_step` are
+the unit-speed and constant-potential-rate fields on the loss.  Loss,
+gradient and Hessian evaluation are provided alongside.  These bodies were
+relocated verbatim from the CPython extension (the goldens are bit-identical
+across the move); the extension's `Kernel.normalized_step`,
+`Kernel.potential_step` and the `LocalKernel` steps are now thin adapters.
+A standalone C test exercises the steps on analytic fields.  This is the
+stepper the potential-rate segment entry point (next) is built on.
+
 ## Migration boundary
 
 The present production geometry kernels are already written in C, but some are
