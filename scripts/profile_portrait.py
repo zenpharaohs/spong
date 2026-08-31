@@ -86,6 +86,13 @@ def _spong_stats(profile: cProfile.Profile, top: int) -> str:
     stats.sort_stats("tottime")
     buffer.write("\n=== own time (all) ===\n")
     stats.print_stats(top)
+    # Who asks for the expensive exact objects: the callers of plan
+    # construction, isolation, refinement and interval-sign queries.
+    buffer.write("\n=== callers of the exact kernels ===\n")
+    stats.sort_stats("cumulative")
+    stats.print_callers(
+        r"_native_sturm_plan|_isolate_cached|_refine_cached|"
+        r"sign_polynomial_at_root|isolate_roots|count_roots")
     return buffer.getvalue()
 
 
@@ -140,6 +147,7 @@ def _report(label, p, profile, elapsed, top, out_dir) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir/f"profile-{label}.txt"
     path.write_text(summary+"\n\n"+_spong_stats(profile, top))
+    profile.dump_stats(str(out_dir/f"profile-{label}.prof"))
     print(summary)
     print(f"  -> {path}")
     return summary

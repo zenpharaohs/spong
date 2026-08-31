@@ -569,9 +569,37 @@ def _strict_level_terms(m, point, shift=48):
 
 
 def _strict_level_at_float_point(m, point, above, shift=48):
-    """Exact level just above/below the loss at a binary64 point."""
+    """Exact level just above/below the loss at a binary64 point.
+
+    The level is rounded OUTWARD to a 64-bit dyadic.  The exact loss at a
+    binary64 point is a rational with thousands of bits (b is a 53-bit
+    dyadic, so b^2d alone carries ~1200 at d = 11), and a level polynomial
+    built from it has coefficients of that size; its GMP Sturm chain then
+    costs ~0.4 s (measured: 5.9 s of plan construction on tricky-d11, all
+    from these levels).  Every certificate that uses this level needs only
+    SOME exact rational strictly on the requested side of the loss by
+    about the slack; the outward-rounded dyadic is such a rational, the
+    claim is unchanged, and the chain is cheap.
+    """
     level, slack = _strict_level_terms(m, point, shift)
-    return level+slack if above else level-slack
+    # Round the level RELATIVE TO C: the level polynomial depends only on
+    # c - C, and every admission decision must be invariant under
+    # L -> L + constant, so the rounding granularity must not see C.
+    offset = (level-m.C)+(slack if above else -slack)
+    return m.C+_round_outward_dyadic(offset, up=above)
+
+
+def _round_outward_dyadic(x: Fraction, up: bool, bits: int = 64) -> Fraction:
+    """Round a rational away from zero-side ``up``/``down`` to a dyadic with
+    ``bits`` significant bits: ceil for ``up``, floor otherwise."""
+    if x == 0:
+        return x
+    magnitude = x.numerator.bit_length()-x.denominator.bit_length()
+    k = bits-magnitude
+    scaled = x*(Fraction(2)**k)
+    num, den = scaled.numerator, scaled.denominator
+    n = -((-num)//den) if up else num//den
+    return Fraction(n)/(Fraction(2)**k)
 
 
 def _finite_float_or_none(value):
@@ -1270,6 +1298,15 @@ def _stable_escape_certificate(m, enumeration, branch, box,
             and not _box_exit_crossing(branch.Y, box, boundary_tolerance)):
         return {"certified": False, "reason": "no_box_boundary_crossing"}
     cache = {}
+    # EXACT upper bound on every finite critical value, once per branch:
+    # u = C - B^2/A on each point's exact isolating interval by rational
+    # interval Horner.  u'(q) = 0, so the enclosure is second order in the
+    # interval width (about 1e-14 relative at the enumeration's 2^-48
+    # refinement).  With it the certificate below is one rational
+    # comparison; the Sturm-plan sign query remains the fallback for a
+    # bound that is not decisive.  (Measured: 28 plan constructions at
+    # 0.23 s each on tricky-d11 came from this certificate alone.)
+    critical_upper = _critical_value_upper_bound(m, enumeration)
 
     def certificate_at(index):
         if index in cache:
@@ -1277,19 +1314,26 @@ def _stable_escape_certificate(m, enumeration, branch, box,
         try:
             lower = _strict_level_at_float_point(
                 m, branch.Y[index], above=False)
-            level_polynomial = P.sub(
-                P.scale(m.alpha, m.C-lower), P.mul(m.beta, m.beta))
-            signs = [_sign_at_critical_point(
-                m, point, level_polynomial) for point in enumeration.points]
+            if critical_upper is not None and lower > critical_upper:
+                method = "exact_superlevel_enclosure"
+                decided = True
+            else:
+                level_polynomial = P.sub(
+                    P.scale(m.alpha, m.C-lower), P.mul(m.beta, m.beta))
+                signs = [_sign_at_critical_point(
+                    m, point, level_polynomial)
+                    for point in enumeration.points]
+                # u(q) < lower exactly when A(q)(C-lower)-B(q)^2 < 0.
+                decided = all(sign == -1 for sign in signs)
+                method = "exact_superlevel_product"
         except (ArithmeticError, OverflowError, ValueError):
             cache[index] = None
             return None
-        # u(q) < lower exactly when A(q)(C-lower)-B(q)^2 < 0.
-        if all(sign == -1 for sign in signs):
+        if decided:
             result = {
                 "certified": True,
                 "reason": None,
-                "method": "exact_superlevel_product",
+                "method": method,
                 "entry_index": index,
                 "level_lower": _finite_float_or_none(lower),
                 "exit_side": (_exit_side(branch.Y[-1], box)
@@ -1327,6 +1371,32 @@ def _stable_escape_certificate(m, enumeration, branch, box,
         return best
     return {"certified": False,
             "reason": "no_exact_superlevel_escape_point"}
+
+
+def _critical_value_upper_bound(m, enumeration):
+    """EXACT rational upper bound on max_q u(q) over the finite critical
+    points, by interval Horner of u = C - B^2/A on each point's exact
+    isolating interval.  None if any enclosure is not decisive (A's
+    enclosure touching zero, or a degenerate point without an interval).
+    """
+    from .hyperelliptic import RationalInterval, polynomial_interval
+    best = None
+    for point in enumeration.points:
+        iv = getattr(point, "interval", None)
+        if iv is None:
+            return None
+        window = RationalInterval(iv.lo, iv.hi)
+        A = polynomial_interval(m.alpha, window)
+        B = polynomial_interval(m.beta, window)
+        if not (A.lo > 0):
+            return None
+        if B.lo <= 0 <= B.hi:
+            b2_lo = Fraction(0)
+        else:
+            b2_lo = min(B.lo*B.lo, B.hi*B.hi)
+        upper = m.C-b2_lo/A.hi
+        best = upper if best is None else max(best, upper)
+    return best
 
 
 def _superlevel_screen_index(m, enumeration, Y):
