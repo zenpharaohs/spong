@@ -1123,6 +1123,14 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
     geometric_ds = 4.0*ds
     critical_capped = 0
     arclength_steps = 0
+    # Step memory.  The nominal arclength is 16 legacy chords, but a step
+    # rejected by the curvature cap or the Richardson/Hermite checks says
+    # the flow is not that tame here; restarting from the full nominal on
+    # the next step and halving down again cost three implicit solves per
+    # rejection (measured 3:1 rejected:accepted on tricky-d11 and the
+    # near-wall case).  Ramp from the last accepted chord instead, 1.5x per
+    # step, as the prefix phase already does.
+    last_arc = None
     term = "budget"
     iteration = 0
     while (iteration < max_steps+critical_capped+arclength_steps
@@ -1134,8 +1142,11 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
         if not (np.isfinite(level) and np.isfinite(ng) and ng > 0.0):
             term = "unresolved_field"
             break
+        nominal_arc = 16.0*geometric_ds
+        if last_arc is not None:
+            nominal_arc = min(nominal_arc, 1.5*last_arc)
         h = max(
-            16.0*geometric_ds*ng,
+            nominal_arc*ng,
             4096*np.finfo(float).eps*(1.0+abs(level)))
         # Near a critical point the loss step is an arclength h/|grad L|;
         # bound it by the flow's local curvature radius (see
@@ -1151,6 +1162,7 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
                 if arc is not None:
                     half, midpoint = arc
                     arclength_steps += 1
+                    last_arc = float(np.hypot(*(half-z)))
                     z = half
                     accepted += 1
                     exited = False
@@ -1213,6 +1225,7 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
         z0 = z
         z = zn
         f0, f1, h_used, chord, interpolation_error = dense_data
+        last_arc = chord
         max_interpolation_error = max(
             max_interpolation_error, interpolation_error)
         subdivisions = max(1, int(np.ceil(chord/geometric_ds)))

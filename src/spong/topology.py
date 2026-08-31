@@ -1307,12 +1307,43 @@ def _stable_escape_certificate(m, enumeration, branch, box,
     # through the monotone-ascent trace, then bisect the transition to retain
     # the earliest sampled point whose loss is *exactly* above every finite
     # critical value.
-    best = _earliest_monotone_certificate(
-        len(branch.Y)-1, certificate_at)
+    #
+    # FLOAT PRE-SCREEN.  Every probe of that search is an exact certificate
+    # -- one GMP interval-sign query per critical point -- and the search made
+    # ~200 probes per branch (measured: 1,672 exact queries, 6 s, on
+    # tricky-d11).  Ascent loss is monotone, so the earliest candidate is
+    # located in floating arithmetic with a margin and confirmed by ONE exact
+    # certificate.  A later entry than the exact earliest is strictly
+    # conservative (a shorter discharged suffix); if the margin is too tight
+    # and the exact check declines, the exact search runs as before.
+    best = None
+    screen_index = _superlevel_screen_index(m, enumeration, branch.Y)
+    if screen_index is not None:
+        best = certificate_at(screen_index)
+    if best is None:
+        best = _earliest_monotone_certificate(
+            len(branch.Y)-1, certificate_at)
     if best is not None:
         return best
     return {"certified": False,
             "reason": "no_exact_superlevel_escape_point"}
+
+
+def _superlevel_screen_index(m, enumeration, Y):
+    """Earliest sample index after which every sample's floating loss
+    clears the highest critical value by a margin, or None."""
+    Y = np.asarray(Y, dtype=float)
+    if len(Y) == 0 or not enumeration.points:
+        return None
+    a, b = Y[:, 0], Y[:, 1]
+    A = np.polyval(np.asarray([float(x) for x in m.alpha])[::-1], b)
+    B = np.polyval(np.asarray([float(x) for x in m.beta])[::-1], b)
+    L = float(m.C)-2.0*a*B+a*a*A
+    u_max = max(float(m.L(float(q.a), float(q.b))) for q in enumeration.points)
+    margin = 1e-7*max(1.0, abs(u_max))
+    not_clear = np.flatnonzero(~(L > u_max+margin))
+    index = int(not_clear[-1])+1 if len(not_clear) else 0
+    return index if index < len(Y) else None
 
 
 def _exit_side(point, box):
