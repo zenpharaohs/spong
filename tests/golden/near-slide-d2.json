@@ -1,7 +1,7 @@
 {
   "branches": [
     {
-      "angle_energy[RESIDUAL]": 4.395966418791746e-15,
+      "angle_energy[RESIDUAL]": 4.395966420913193e-15,
       "angle_resolved": 1678,
       "angle_unresolved": 0,
       "asymptote_residual[RESIDUAL]": 0.6501473331115314,
@@ -13,10 +13,10 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 2.3914866472403866e-15,
+      "angle_energy[RESIDUAL]": 2.3914866474129306e-15,
       "angle_resolved": 6204,
       "angle_unresolved": 0,
-      "asymptote_residual[RESIDUAL]": 0.06476759111836955,
+      "asymptote_residual[RESIDUAL]": 0.0647675911183683,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.008753263966609307,
@@ -25,19 +25,19 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 2.744421890648042e-13,
+      "angle_energy[RESIDUAL]": 2.7444218903617587e-13,
       "angle_resolved": 7212,
       "angle_unresolved": 0,
-      "asymptote_residual[RESIDUAL]": 0.09030161307639802,
+      "asymptote_residual[RESIDUAL]": 0.09030161307641435,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
-      "max_turn_deg[RESIDUAL]": 0.12584176318676576,
+      "max_turn_deg[RESIDUAL]": 0.12584176318097332,
       "n_points": 7727,
       "saddle_b": 0.9842958693832341,
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 1.4858145329344928e-13,
+      "angle_energy[RESIDUAL]": 1.4858145340579232e-13,
       "angle_resolved": 2624,
       "angle_unresolved": 0,
       "asymptote_residual[RESIDUAL]": 0.6904116890323831,
@@ -49,10 +49,10 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 6.392536510123006e-14,
+      "angle_energy[RESIDUAL]": 6.392536510580429e-14,
       "angle_resolved": 1583,
       "angle_unresolved": 0,
-      "asymptote_residual[RESIDUAL]": 0.17633738811768657,
+      "asymptote_residual[RESIDUAL]": 0.17633738811768687,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.1549068961223708,
@@ -61,7 +61,7 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 1.244921441406718e-13,
+      "angle_energy[RESIDUAL]": 1.2449214416093606e-13,
       "angle_resolved": 3434,
       "angle_unresolved": 0,
       "asymptote_residual[RESIDUAL]": 0.444795078561676,
@@ -73,31 +73,31 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 1.2241780898061434e-09,
+      "angle_energy[RESIDUAL]": 1.224178089793814e-09,
       "angle_resolved": 24066,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 2.240607942205736,
+      "max_turn_deg[RESIDUAL]": 2.240607942212895,
       "n_points": 24581,
       "saddle_b": -0.6512326860198213,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 1.4129686857749518e-11,
-      "angle_resolved": 24076,
+      "angle_energy[RESIDUAL]": 1.4277514701545281e-11,
+      "angle_resolved": 24077,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
       "max_turn_deg[RESIDUAL]": 0.11885072403063261,
-      "n_points": 24591,
+      "n_points": 24592,
       "saddle_b": -0.6512326860198213,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 5.111391756075959e-13,
+      "angle_energy[RESIDUAL]": 5.111391689620666e-13,
       "angle_resolved": 24032,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
@@ -109,7 +109,7 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 5.5193514353723035e-15,
+      "angle_energy[RESIDUAL]": 5.519351383731293e-15,
       "angle_resolved": 24053,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
@@ -133,13 +133,13 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 4.725866510781803e-10,
+      "angle_energy[RESIDUAL]": 4.725866510861759e-10,
       "angle_resolved": 24054,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 2.102976560259024,
+      "max_turn_deg[RESIDUAL]": 2.1029765602978543,
       "n_points": 24569,
       "saddle_b": 4.053796081287055,
       "term": "capture"
@@ -232,8 +232,8 @@
     "balanced": true,
     "representation_attested": true,
     "topology_status": "certified",
-    "worst_angle_energy": 1.2241780898061434e-09,
-    "worst_max_turn_deg": 2.240607942205736
+    "worst_angle_energy": 1.224178089793814e-09,
+    "worst_max_turn_deg": 2.240607942212895
   },
   "topology": {
     "ambiguous_count": 0,

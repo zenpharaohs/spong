@@ -1,22 +1,22 @@
 {
   "branches": [
     {
-      "angle_energy[RESIDUAL]": 5.715410775864344e-08,
+      "angle_energy[RESIDUAL]": 5.715410775855983e-08,
       "angle_resolved": 401,
       "angle_unresolved": 0,
-      "asymptote_residual[RESIDUAL]": 0.029893630149316428,
+      "asymptote_residual[RESIDUAL]": 0.029893630149316043,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
-      "max_turn_deg[RESIDUAL]": 1.4055715091925072,
+      "max_turn_deg[RESIDUAL]": 1.4055715091919885,
       "n_points": 916,
       "saddle_b": -1.3093639957004994,
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 3.024578864242653e-09,
+      "angle_energy[RESIDUAL]": 3.02457886424221e-09,
       "angle_resolved": 605,
       "angle_unresolved": 0,
-      "asymptote_residual[RESIDUAL]": 0.007418597076920801,
+      "asymptote_residual[RESIDUAL]": 0.007418597076921955,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.21696061373367023,
@@ -25,10 +25,10 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 5.455871800075866e-11,
+      "angle_energy[RESIDUAL]": 5.455871800065086e-11,
       "angle_resolved": 210,
       "angle_unresolved": 0,
-      "asymptote_residual[RESIDUAL]": 14.180423131581827,
+      "asymptote_residual[RESIDUAL]": 14.180423131581781,
       "backbone_residual[RESIDUAL]": 0.0,
       "kind": "stable",
       "max_turn_deg[RESIDUAL]": 0.03843328051265425,
@@ -37,7 +37,7 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 5.7385443683100653e-11,
+      "angle_energy[RESIDUAL]": 5.7385443683109875e-11,
       "angle_resolved": 306,
       "angle_unresolved": 0,
       "asymptote_residual[RESIDUAL]": 9.02664953392704,
@@ -49,7 +49,7 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 8.57046366875646e-13,
+      "angle_energy[RESIDUAL]": 8.570463670821137e-13,
       "angle_resolved": 24056,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
@@ -61,14 +61,14 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 2.060960779183234e-11,
-      "angle_resolved": 25761,
+      "angle_energy[RESIDUAL]": 2.684040406084324e-10,
+      "angle_resolved": 25593,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
       "max_turn_deg[RESIDUAL]": 0.04025529000596924,
-      "n_points": 26276,
+      "n_points": 26108,
       "saddle_b": -1.3093639957004994,
       "term": "capture"
     },

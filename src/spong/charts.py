@@ -579,7 +579,47 @@ def _critical_arclength_cap(z, critical):
     return 0.25*float(np.min(d))
 
 
-def _step_arclength_cap(m, z, critical, ng: float | None = None):
+def _shared_field(m: Model):
+    """Scalar (L, grad, hess) through the library's Horner kernels.
+
+    The C segment entry point (spong/spong_potential.h) evaluates every
+    quantity with plain Horner on the coefficient arrays.  The model's
+    evaluators switch to range-guarded rational products for |b| > 32, so a
+    loop driven by them can differ from the C by an ulp in the far field —
+    and an ulp flips an accept/reject.  Bit parity must compare LOOP LOGIC,
+    not evaluators: the oracle loops below evaluate through the kernel
+    (Kernel.loss / gradient / hessian — the same arithmetic the segment
+    uses) and fall back to the model only when there is no kernel at all,
+    in which case there is no native segment to compare against either.
+
+    grad returns a (g_a, g_b) float pair and hess an (H11, H12, H22) float
+    triple: the loops consume them SCALAR by scalar, matching the C
+    statement for statement (numpy's small matmul may round differently
+    from written-out scalar expressions).
+    """
+    native = getattr(m, "_native_kernel", None)
+    if native is not None and hasattr(native, "loss"):
+        C = float(m.C)
+        return (lambda a, b: native.loss(float(a), float(b), C),
+                lambda a, b: native.gradient(float(a), float(b)),
+                lambda a, b: native.hessian(float(a), float(b)))
+
+    def _L(a, b):
+        return float(m.L(float(a), float(b)))
+
+    def _grad(a, b):
+        g = m.gradL(float(a), float(b))
+        return float(g[0]), float(g[1])
+
+    def _hess(a, b):
+        H = m.hessL(float(a), float(b))
+        return float(H[0][0]), float(H[0][1]), float(H[1][1])
+
+    return _L, _grad, _hess
+
+
+def _step_arclength_cap(m, z, critical, ng: float | None = None,
+                        grad=None, hess=None):
     """Arclength a potential-rate step may take from z.
 
     The unit-speed field is t = grad L/|grad L|, and along its flow line
@@ -598,23 +638,28 @@ def _step_arclength_cap(m, z, critical, ng: float | None = None):
     kappa at the step's start has not yet seen.
     """
     a, b = float(z[0]), float(z[1])
-    g = np.asarray(m.gradL(a, b), dtype=float)
+    if grad is None or hess is None:
+        _L_, grad, hess = _shared_field(m)
+    g0, g1 = grad(a, b)
     if ng is None:
-        ng = float(np.hypot(*g))
+        ng = float(np.hypot(g0, g1))
     cap = _critical_arclength_cap(z, critical)
     if not (np.isfinite(ng) and ng > 0.0):
         return cap
-    t = g/ng
-    H = np.asarray(m.hessL(a, b), dtype=float)
-    w = H @ t
-    w_perp = w-float(w @ t)*t
-    kappa = float(np.hypot(*w_perp))/ng
+    t0, t1 = g0/ng, g1/ng
+    h11, h12, h22 = hess(a, b)
+    w0 = h11*t0 + h12*t1
+    w1 = h12*t0 + h22*t1
+    wt = w0*t0 + w1*t1
+    p0, p1 = w0-wt*t0, w1-wt*t1
+    kappa = float(np.hypot(p0, p1))/ng
     if np.isfinite(kappa) and kappa > 0.0:
         cap = min(cap, CRITICAL_STEP_FRACTION/kappa)
     return cap
 
 
-def _arclength_step(native, m, z, arclength: float, flow_sign: float):
+def _arclength_step(native, m, z, arclength: float, flow_sign: float,
+                    L=None):
     """One unit-speed step where a loss step could not be resolved.
 
     Constant-potential-rate stepping has a floor: a loss difference below
@@ -628,7 +673,9 @@ def _arclength_step(native, m, z, arclength: float, flow_sign: float):
     """
     if not hasattr(native, "normalized_step"):
         return None
-    L0 = float(m.L(float(z[0]), float(z[1])))
+    if L is None:
+        L = _shared_field(m)[0]
+    L0 = L(float(z[0]), float(z[1]))
     # Roundoff floor for the two-composition agreement: the endpoints sit at
     # coordinates of size |z|, and steps of a few tens of ulps cannot agree
     # to a relative 1e-6 of their own length.
@@ -645,7 +692,7 @@ def _arclength_step(native, m, z, arclength: float, flow_sign: float):
         richardson = float(np.hypot(*(full-half)))
         if richardson > max(1e-6*chord, noise):
             continue
-        L1 = float(m.L(float(half[0]), float(half[1])))
+        L1 = L(float(half[0]), float(half[1]))
         slack = 64.0*np.finfo(float).eps*(1.0+abs(L0))
         if not np.isfinite(L1) or flow_sign*(L1-L0) < -slack:
             continue
@@ -653,10 +700,14 @@ def _arclength_step(native, m, z, arclength: float, flow_sign: float):
     return None
 
 
-def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
-                           box, cap_r: float, engine_diag: dict,
-                           n_levels: int = 12000, critical=None):
+def _potential_rate_prefix_python(m: Model, a0: float, b0: float, target,
+                                  box, cap_r: float, engine_diag: dict,
+                                  n_levels: int = 12000, critical=None):
     """Trace a resolved anisotropic connection by constant loss decrease.
+
+    THE EXECUTABLE SPECIFICATION for spong_potential_rate_segment's prefix
+    mode: the corpus test (scripts/potential_corpus.py) demands bit-identical
+    vertices and counters between this loop and the C entry point.
 
     This owns only the regular prefix.  The vector field
     ``-grad(L)/|grad(L)|^2`` follows the same unparameterized integral curve
@@ -668,9 +719,10 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
     native = getattr(m, "_native_kernel", None)
     if native is None or not hasattr(native, "potential_step"):
         return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
+    L, grad, hess = _shared_field(m)
     at, bt = map(float, target)
-    target_level = float(m.L(at, bt))
-    start_level = float(m.L(a0, b0))
+    target_level = L(at, bt)
+    start_level = L(a0, b0)
     gap0 = start_level-target_level
     if not (np.isfinite(gap0) and gap0 > 0.0):
         return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
@@ -696,7 +748,7 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
     while (iteration < n_levels+1024+critical_capped+arclength_steps
            and iteration < 4*(n_levels+1024)):
         iteration += 1
-        level = float(m.L(float(z[0]), float(z[1])))
+        level = L(float(z[0]), float(z[1]))
         gap = level-target_level
         if gap <= near_gap:
             term = "near_target"
@@ -706,14 +758,16 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
         # step does not outrun the flow's curvature near a critical point.
         # Where that cap falls below the loss floor, the loss cannot
         # resolve the step at all: take it in arclength instead.
-        ng = float(np.hypot(*m.gradL(float(z[0]), float(z[1]))))
-        arc_cap = _step_arclength_cap(m, z, critical, ng)
+        g0, g1 = grad(float(z[0]), float(z[1]))
+        ng = float(np.hypot(g0, g1))
+        arc_cap = _step_arclength_cap(m, z, critical, ng,
+                                      grad=grad, hess=hess)
         cap = arc_cap*ng
         loss_floor = 4096*np.finfo(float).eps*(1.0+abs(level))
         if np.isfinite(cap) and cap > 0.0 and abs(h) > cap:
             critical_capped += 1
             if cap < loss_floor:
-                arc = _arclength_step(native, m, z, arc_cap, -1.0)
+                arc = _arclength_step(native, m, z, arc_cap, -1.0, L=L)
                 if arc is not None:
                     half, midpoint = arc
                     arclength_steps += 1
@@ -761,7 +815,7 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
                 full, midpoint, half = trial
                 chord = float(np.hypot(*(half-z)))
                 richardson = float(np.hypot(*(full-half)))
-                new_level = float(m.L(float(half[0]), float(half[1])))
+                new_level = L(float(half[0]), float(half[1]))
                 loss_error = abs((new_level-level)-h)
                 # Independent curve and parameterization checks.  The
                 # accepted point is the two-half-step value.
@@ -822,19 +876,25 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
     return pts, float(z[1]), float(z[0]-m.s_a_star(z[1])), term
 
 
-def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
-                                box, cap_r: float, engine_diag: dict,
-                                n_levels: int = 2048, critical=None):
-    """Continue to the next minimum-level event without choosing a basin."""
+def _potential_rate_level_event_python(m: Model, a0: float, b0: float,
+                                       targets, box, cap_r: float,
+                                       engine_diag: dict,
+                                       n_levels: int = 2048, critical=None):
+    """Continue to the next minimum-level event without choosing a basin.
+
+    THE EXECUTABLE SPECIFICATION for spong_potential_rate_segment's
+    level-event mode; see _potential_rate_prefix_python.
+    """
     native = getattr(m, "_native_kernel", None)
     if native is None or not hasattr(native, "potential_step"):
         return [(a0, b0)], "unavailable", None
+    L, grad, hess = _shared_field(m)
     z = np.array((a0, b0), dtype=float)
-    level0 = float(m.L(*z))
+    level0 = L(float(z[0]), float(z[1]))
     geometry_floor = 128.0*np.finfo(float).eps*(
         1.0+max(abs(float(x)) for x in box))
     target_levels = [
-        (float(m.L(float(a), float(b))), (float(a), float(b)))
+        (L(float(a), float(b)), (float(a), float(b)))
         for a, b in targets]
     slack0 = 1024*np.finfo(float).eps*(1.0+abs(level0))
     lower = [(v, q) for v, q in target_levels if v < level0-slack0]
@@ -859,7 +919,7 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
     while (iteration < 4*n_levels+critical_capped+arclength_steps
            and iteration < 16*n_levels):
         iteration += 1
-        level = float(m.L(*z))
+        level = L(float(z[0]), float(z[1]))
         gap = level-event_level
         if gap <= -crossing_floor:
             term = "level_event"
@@ -870,14 +930,16 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
         requested = (max(2.0*gap, crossing_floor)
                      if gap <= crossing_floor else
                      min(cur_level_step, 0.5*gap))
-        ng = float(np.hypot(*m.gradL(float(z[0]), float(z[1]))))
-        arc_cap = _step_arclength_cap(m, z, critical, ng)
+        g0, g1 = grad(float(z[0]), float(z[1]))
+        ng = float(np.hypot(g0, g1))
+        arc_cap = _step_arclength_cap(m, z, critical, ng,
+                                      grad=grad, hess=hess)
         cap = arc_cap*ng
         if (np.isfinite(cap) and cap > 0.0 and requested > cap
                 and gap > crossing_floor):
             critical_capped += 1
             if cap < crossing_floor:
-                arc = _arclength_step(native, m, z, arc_cap, -1.0)
+                arc = _arclength_step(native, m, z, arc_cap, -1.0, L=L)
                 if arc is not None:
                     half, midpoint = arc
                     arclength_steps += 1
@@ -916,7 +978,7 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
                 full, midpoint, half = trial
                 chord = float(np.hypot(*(half-z)))
                 richardson = float(np.hypot(*(full-half)))
-                new_level = float(m.L(*half))
+                new_level = L(float(half[0]), float(half[1]))
                 loss_error = abs((new_level-level)-h)
                 if (new_level >= level
                         or richardson > 1e-6*max(chord, 1e-8)
@@ -1102,13 +1164,19 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
     return pts, term
 
 
-def _potential_rate_box_exit(m: Model, start, box, ds: float,
-                             engine_diag: dict, max_steps: int = 100000,
-                             critical=None):
-    """Trace a stable branch outward with constant-potential-rate ascent."""
+def _potential_rate_box_exit_python(m: Model, start, box, ds: float,
+                                    engine_diag: dict,
+                                    max_steps: int = 100000,
+                                    critical=None):
+    """Trace a stable branch outward with constant-potential-rate ascent.
+
+    THE EXECUTABLE SPECIFICATION for spong_potential_rate_segment's ascent
+    mode; see _potential_rate_prefix_python.
+    """
     native = getattr(m, "_native_kernel", None)
     if native is None or not hasattr(native, "potential_step"):
         return [tuple(map(float, start))], "unavailable"
+    L, grad, hess = _shared_field(m)
     z = np.asarray(start, dtype=float)
     pts = [tuple(z)]
     geometry_floor = 128.0*np.finfo(float).eps*(
@@ -1136,9 +1204,9 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
     while (iteration < max_steps+critical_capped+arclength_steps
            and iteration < 4*max_steps):
         iteration += 1
-        level = float(m.L(*z))
-        g = np.asarray(m.gradL(*z), dtype=float)
-        ng = float(np.hypot(*g))
+        level = L(float(z[0]), float(z[1]))
+        g0, g1 = grad(float(z[0]), float(z[1]))
+        ng = float(np.hypot(g0, g1))
         if not (np.isfinite(level) and np.isfinite(ng) and ng > 0.0):
             term = "unresolved_field"
             break
@@ -1152,13 +1220,14 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
         # bound it by the flow's local curvature radius (see
         # CRITICAL_STEP_FRACTION) so the step cannot cross the saddle.
         # Where the cap falls below the loss floor, step in arclength.
-        arc_cap = _step_arclength_cap(m, z, critical, ng)
+        arc_cap = _step_arclength_cap(m, z, critical, ng,
+                                      grad=grad, hess=hess)
         cap = arc_cap*ng
         loss_floor = 4096*np.finfo(float).eps*(1.0+abs(level))
         if np.isfinite(cap) and cap > 0.0 and h > cap:
             critical_capped += 1
             if cap < loss_floor:
-                arc = _arclength_step(native, m, z, arc_cap, +1.0)
+                arc = _arclength_step(native, m, z, arc_cap, +1.0, L=L)
                 if arc is not None:
                     half, midpoint = arc
                     arclength_steps += 1
@@ -1191,14 +1260,14 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
                 full, midpoint, half = trial
                 chord = float(np.hypot(*(half-z)))
                 richardson = float(np.hypot(*(full-half)))
-                new_level = float(m.L(*half))
+                new_level = L(float(half[0]), float(half[1]))
                 loss_error = abs((new_level-level)-h)
-                g1 = np.asarray(m.gradL(*half), dtype=float)
-                q1 = float(g1[0]*g1[0]+g1[1]*g1[1])
+                e0, e1 = grad(float(half[0]), float(half[1]))
+                q1 = e0*e0+e1*e1
                 if not (q1 > 0.0 and np.isfinite(q1)):
                     continue
-                f0 = g/(ng*ng)
-                f1 = g1/q1
+                f0 = np.array([g0/(ng*ng), g1/(ng*ng)])
+                f1 = np.array([e0/q1, e1/q1])
                 hermite_mid = _cubic_hermite(
                     z, half, f0, f1, h, 0.5)
                 interpolation_error = float(
@@ -1253,6 +1322,160 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
         "max_richardson": float(max_richardson),
         "max_interpolation_error": float(max_interpolation_error),
         "geometric_ds": float(geometric_ds),
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    }
+    return pts, term
+
+
+_POTENTIAL_TERM = {
+    0: "near_target", 1: "capture", 2: "box_exit", 3: "level_event",
+    4: "step_failure", 5: "budget", 6: "unresolved_field", 7: "unavailable",
+}
+_POTENTIAL_MODE = {"prefix": 0, "level_event": 1, "ascent": 2}
+
+
+def _potential_native(m: Model):
+    """(native module, kernel) when the C segment entry point should run.
+
+    Same contract as _continue_curve's dispatch: SPONG_ENGINE=native selects
+    the C port, which holds no Python objects and releases the GIL for the
+    whole segment; anything else, or a missing binding, runs the Python
+    loops, which remain the executable specification and the parity
+    oracle (scripts/potential_corpus.py).  Unlike continue_curve there is
+    no DELEGATE path: the three loops carry no corpus-invisible rescues,
+    so the port answers every request it accepts.
+    """
+    from . import engine
+    if engine.active_name() != "native":
+        return None, None
+    kernel = getattr(m, "_native_kernel", None)
+    if kernel is None:
+        return None, None
+    try:
+        from . import _native as native
+    except ImportError:
+        return None, None
+    if not hasattr(native, "potential_rate_segment"):
+        return None, None
+    return native, kernel
+
+
+def _potential_segment(native, kernel, m: Model, mode: str, a0: float,
+                       b0: float, targets, cap_r: float, box, ds: float,
+                       n_levels: int, max_steps: int, critical):
+    """One native constant-potential-rate segment, unpacked."""
+    flat_targets = [float(c) for t in targets for c in t]
+    flat_critical = ([] if critical is None
+                     else [float(c) for c in np.asarray(critical).reshape(-1)])
+    (term_code, a_end, b_end, captured, captured_a, captured_b,
+     event_level, level_step, accepted, rejected, critical_capped,
+     arclength_steps, gl8_attempted, gl8_accepted,
+     max_richardson, max_interpolation_error, blob) = \
+        native.potential_rate_segment(
+            kernel, float(m.C), _POTENTIAL_MODE[mode], float(a0), float(b0),
+            flat_targets, float(cap_r), [float(x) for x in box], float(ds),
+            int(n_levels), int(max_steps), flat_critical,
+            CRITICAL_STEP_FRACTION, GEOMETRIC_IRK_PRIMARY)
+    pts = [tuple(p) for p in
+           np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
+    return (_POTENTIAL_TERM[term_code], pts,
+            ((captured_a, captured_b) if captured else None),
+            {"a_end": float(a_end), "b_end": float(b_end),
+             "event_level": float(event_level),
+             "level_step": float(level_step),
+             "accepted": int(accepted), "rejected": int(rejected),
+             "critical_capped": int(critical_capped),
+             "arclength_steps": int(arclength_steps),
+             "gl8_attempted": int(gl8_attempted),
+             "gl8_accepted": int(gl8_accepted),
+             "max_richardson": float(max_richardson),
+             "max_interpolation_error": float(max_interpolation_error)})
+
+
+def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
+                           box, cap_r: float, engine_diag: dict,
+                           n_levels: int = 12000, critical=None):
+    """Dispatch one prefix segment; see _potential_rate_prefix_python."""
+    native, kernel = _potential_native(m)
+    if native is None:
+        return _potential_rate_prefix_python(
+            m, a0, b0, target, box, cap_r, engine_diag,
+            n_levels=n_levels, critical=critical)
+    term, pts, _captured, r = _potential_segment(
+        native, kernel, m, "prefix", a0, b0,
+        [tuple(map(float, target))], cap_r, box, 0.0, n_levels, 0, critical)
+    if term == "unavailable":
+        return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
+    engine_diag["potential_rate"] = {
+        "accepted_steps": r["accepted"],
+        "rejected_steps": r["rejected"],
+        "critical_capped_steps": r["critical_capped"],
+        "arclength_steps": r["arclength_steps"],
+        "gl8_attempted": r["gl8_attempted"],
+        "gl8_accepted": r["gl8_accepted"],
+        "level_step": r["level_step"],
+        "max_richardson": r["max_richardson"],
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    }
+    return (pts, r["b_end"],
+            float(r["a_end"]-m.s_a_star(r["b_end"])), term)
+
+
+def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
+                                box, cap_r: float, engine_diag: dict,
+                                n_levels: int = 2048, critical=None):
+    """Dispatch one level-event segment; see the _python specification."""
+    native, kernel = _potential_native(m)
+    if native is None:
+        return _potential_rate_level_event_python(
+            m, a0, b0, targets, box, cap_r, engine_diag,
+            n_levels=n_levels, critical=critical)
+    term, pts, captured, r = _potential_segment(
+        native, kernel, m, "level_event", a0, b0,
+        [tuple(map(float, t)) for t in targets], cap_r, box, 0.0,
+        n_levels, 0, critical)
+    if term == "unavailable":
+        return [(float(a0), float(b0))], "unavailable", None
+    engine_diag.setdefault("candidate_level_events", []).append({
+        "event_level": r["event_level"],
+        "accepted_steps": r["accepted"],
+        "rejected_steps": r["rejected"],
+        "critical_capped_steps": r["critical_capped"],
+        "arclength_steps": r["arclength_steps"],
+        "gl8_attempted": r["gl8_attempted"],
+        "gl8_accepted": r["gl8_accepted"],
+        "max_richardson": r["max_richardson"],
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    })
+    return pts, term, captured
+
+
+def _potential_rate_box_exit(m: Model, start, box, ds: float,
+                             engine_diag: dict, max_steps: int = 100000,
+                             critical=None):
+    """Dispatch one ascent segment; see the _python specification."""
+    native, kernel = _potential_native(m)
+    if native is None:
+        return _potential_rate_box_exit_python(
+            m, start, box, ds, engine_diag,
+            max_steps=max_steps, critical=critical)
+    a0, b0 = map(float, start)
+    term, pts, _captured, r = _potential_segment(
+        native, kernel, m, "ascent", a0, b0, [], 0.0, box, ds, 0,
+        max_steps, critical)
+    engine_diag["potential_rate_ascent"] = {
+        "accepted_steps": r["accepted"],
+        "rejected_steps": r["rejected"],
+        "critical_capped_steps": r["critical_capped"],
+        "arclength_steps": r["arclength_steps"],
+        "gl8_attempted": r["gl8_attempted"],
+        "gl8_accepted": r["gl8_accepted"],
+        "max_richardson": r["max_richardson"],
+        "max_interpolation_error": r["max_interpolation_error"],
+        "geometric_ds": float(4.0*ds),
         "term": term,
         "primary_order": GEOMETRIC_IRK_PRIMARY,
     }

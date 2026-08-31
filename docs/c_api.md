@@ -180,7 +180,44 @@ relocated verbatim from the CPython extension (the goldens are bit-identical
 across the move); the extension's `Kernel.normalized_step`,
 `Kernel.potential_step` and the `LocalKernel` steps are now thin adapters.
 A standalone C test exercises the steps on analytic fields.  This is the
-stepper the potential-rate segment entry point (next) is built on.
+stepper the potential-rate segment entry point (below) is built on.
+
+The three constant-potential-rate phases of chart continuation are exposed
+as one entry point by `include/spong/spong_potential.h`.
+`spong_potential_rate_segment` runs a `spong_potential_request` in one of
+three modes -- `SPONG_POT_PREFIX` (descent toward one target minimum),
+`SPONG_POT_LEVEL_EVENT` (descent to the next candidate level, with capture
+against a target list) or `SPONG_POT_ASCENT` (ascent to the box boundary) --
+on a `spong_field`, with the target and critical-point lists as packed
+`(a,b)` arrays, the box, the retry budgets and the step-fraction and
+primary-order policy constants passed in explicitly, so the library holds no
+tunables of its own.  Vertices are written to a caller-supplied packed
+buffer; when it overflows the call returns `SPONG_POT_NEED_CAPACITY` with the
+exact count required in `n_points`, and the caller regrows and retries.  The
+`spong_potential_result` carries the terminal condition (the same eight
+terms the Python loops report, `SPONG_POT_NEAR_TARGET` through
+`SPONG_POT_UNAVAILABLE`), the endpoint, the captured target and event level,
+and every counter of the phase's diagnostics -- accepted, rejected,
+critical-capped and arclength steps, GL8 attempts and acceptances, and the
+maximal Richardson and interpolation errors -- so the extension's engine
+diagnostics are assembled without recomputation.  The GIL is released for
+the whole segment.
+
+Parity is defined by `tests/corpus/potential_rate.json`, recorded by
+`scripts/potential_corpus.py` from the requests the phases receive during
+ordinary zoo portraits and the answers the Python loops give; the check and
+`tests/test_potential_parity.py` demand that both the Python oracle and the
+C entry point reproduce every vertex, endpoint, term and counter to the
+last bit.  This is meaningful only under the shared-arithmetic doctrine now
+in force: the oracle loops (`charts._potential_rate_*_python`, the
+executable specification) evaluate the loss, gradient and Hessian through
+`Kernel.loss`, `Kernel.gradient` and `Kernel.hessian` -- the library's
+Horner kernels, the arithmetic the segment uses -- rather than the model's
+range-guarded evaluators, and the curvature cap is written out scalar by
+scalar rather than through a small NumPy product.  The comparison therefore
+judges loop logic, not evaluator ulps.  Both doctrine changes alter the
+specification itself, not just the port, and may move goldens; such drift
+is engine-agnostic by construction and is re-recorded, not chased.
 
 ## Migration boundary
 

@@ -14,6 +14,7 @@
 #include "spong/spong_local.h"
 #include "spong/spong_continue.h"
 #include "spong/spong_gauss2.h"
+#include "spong/spong_potential.h"
 
 typedef struct {
     PyObject_HEAD
@@ -603,6 +604,35 @@ static PyObject *Kernel_potential_step(Kernel *self, PyObject *args) {
     return Py_BuildValue("dd", out[0], out[1]);
 }
 
+/* Loss, gradient and Hessian by the library's Horner kernels -- the SAME
+ * arithmetic the native steps and segments use.  The Python oracle loops
+ * evaluate through these so that parity compares loop logic, not
+ * evaluators (the model's range-guarded evaluation differs by ulps for
+ * |b| > 32). */
+static PyObject *Kernel_loss(Kernel *self, PyObject *args) {
+    double a, b, C;
+    if (!PyArg_ParseTuple(args, "ddd", &a, &b, &C)) return NULL;
+    spong_field field = kernel_field(self);
+    field.C = C;
+    return PyFloat_FromDouble(spong_field_loss(&field, a, b));
+}
+
+static PyObject *Kernel_gradient(Kernel *self, PyObject *args) {
+    double a, b, g[2];
+    if (!PyArg_ParseTuple(args, "dd", &a, &b)) return NULL;
+    spong_field field = kernel_field(self);
+    spong_field_gradient(&field, a, b, g);
+    return Py_BuildValue("dd", g[0], g[1]);
+}
+
+static PyObject *Kernel_hessian(Kernel *self, PyObject *args) {
+    double a, b, H[2][2];
+    if (!PyArg_ParseTuple(args, "dd", &a, &b)) return NULL;
+    spong_field field = kernel_field(self);
+    spong_field_hessian(&field, a, b, H);
+    return Py_BuildValue("ddd", H[0][0], H[0][1], H[1][1]);
+}
+
 static void LocalKernel_dealloc(LocalKernel *self) {
     for (int d = 0; d < 2; d++) {
         if (self->c[d] != NULL)
@@ -1112,7 +1142,13 @@ static PyMethodDef Kernel_methods[] = {
     {"normalized_step", (PyCFunction)Kernel_normalized_step, METH_VARARGS,
      "One 2D normalized-gradient ascent step by GL4, GL6, or GL8."},
     {"potential_step", (PyCFunction)Kernel_potential_step, METH_VARARGS,
-     "One 2D constant-potential-rate ascent step by GL4, GL6, or GL8."},
+     "One constant-potential-rate Gauss step on the loss field."},
+    {"loss", (PyCFunction)Kernel_loss, METH_VARARGS,
+     "L(a, b) with the given C, by the library's Horner kernels."},
+    {"gradient", (PyCFunction)Kernel_gradient, METH_VARARGS,
+     "grad L(a, b) by the library's Horner kernels."},
+    {"hessian", (PyCFunction)Kernel_hessian, METH_VARARGS,
+     "(H11, H12, H22) at (a, b) by the library's Horner kernels."},
     {"curve_diagnostics", (PyCFunction)Kernel_curve_diagnostics, METH_VARARGS,
      "Batched angle-energy and backbone-tail certificates."},
     {NULL, NULL, 0, NULL}
@@ -2110,6 +2146,112 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     return out;
 }
 
+/*
+ * potential_rate_segment(kernel, C, mode, a0, b0, targets, cap_r, box, ds,
+ *                        n_levels, max_steps, critical, fraction,
+ *                        primary_order)
+ *
+ * One constant-potential-rate segment (spong/spong_potential.h), entirely
+ * in C with the GIL released.  targets and critical are flat sequences of
+ * 2N doubles (either may be empty), box is four.  Points come back as bytes
+ * of packed (a, b) doubles, as continue_curve returns them.  The result
+ * tuple carries every field of spong_potential_result.
+ */
+static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *kobj, *targets_obj, *box_obj, *critical_obj;
+    double C, a0, b0, cap_r, ds, fraction;
+    int mode, primary_order;
+    Py_ssize_t n_levels, max_steps;
+    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi",
+                          &kobj, &C, &mode, &a0, &b0, &targets_obj, &cap_r,
+                          &box_obj, &ds, &n_levels, &max_steps,
+                          &critical_obj, &fraction, &primary_order)) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(kobj, &KernelType)) {
+        PyErr_SetString(PyExc_TypeError, "first argument must be a Kernel");
+        return NULL;
+    }
+    Kernel *k = (Kernel *)kobj;
+    double *targets = NULL, *box = NULL, *critical = NULL;
+    Py_ssize_t n_targets_flat = 0, n_box = 0, n_critical_flat = 0;
+    if (PySequence_Size(targets_obj) > 0) {
+        if (copy_seq(targets_obj, &targets, &n_targets_flat) < 0) return NULL;
+    }
+    if (copy_seq(box_obj, &box, &n_box) < 0) { PyMem_Free(targets); return NULL; }
+    if (n_box != 4) {
+        PyMem_Free(targets); PyMem_Free(box);
+        PyErr_SetString(PyExc_ValueError, "box must have four entries");
+        return NULL;
+    }
+    if (PySequence_Size(critical_obj) > 0) {
+        if (copy_seq(critical_obj, &critical, &n_critical_flat) < 0) {
+            PyMem_Free(targets); PyMem_Free(box);
+            return NULL;
+        }
+    }
+    spong_field field = kernel_field(k);
+    field.C = C;
+    spong_potential_request req;
+    req.mode = mode;
+    req.a0 = a0; req.b0 = b0;
+    req.targets = targets; req.n_targets = (size_t)(n_targets_flat / 2);
+    req.cap_r = cap_r;
+    for (int i = 0; i < 4; i++) req.box[i] = box[i];
+    req.ds = ds;
+    req.n_levels = (size_t)n_levels;
+    req.max_steps = (size_t)max_steps;
+    req.critical = critical; req.n_critical = (size_t)(n_critical_flat / 2);
+    req.critical_step_fraction = fraction;
+    req.primary_order = primary_order;
+
+    spong_potential_result res;
+    double *points = NULL;
+    size_t cap = 4096;
+    int term = SPONG_POT_NEED_CAPACITY;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
+        if (grown == NULL) {
+            PyMem_Free(points); PyMem_Free(targets);
+            PyMem_Free(box); PyMem_Free(critical);
+            return PyErr_NoMemory();
+        }
+        points = grown;
+        Py_BEGIN_ALLOW_THREADS
+        term = spong_potential_rate_segment(&field, &req, points, cap, &res);
+        Py_END_ALLOW_THREADS
+        if (term != SPONG_POT_NEED_CAPACITY) break;
+        cap = res.n_points + 64;
+    }
+    PyMem_Free(targets); PyMem_Free(box); PyMem_Free(critical);
+    if (term < 0) {
+        PyMem_Free(points);
+        PyErr_SetString(PyExc_ValueError, "potential_rate_segment: bad request");
+        return NULL;
+    }
+    if (term == SPONG_POT_NEED_CAPACITY) {
+        PyMem_Free(points);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "potential_rate_segment did not settle on a capacity");
+        return NULL;
+    }
+    PyObject *blob = PyBytes_FromStringAndSize(
+        (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
+    PyMem_Free(points);
+    if (blob == NULL) return NULL;
+    return Py_BuildValue(
+        "(iddiddddKKKKKKddN)", res.term, res.a_end, res.b_end,
+        res.captured, res.captured_a, res.captured_b,
+        res.event_level, res.level_step,
+        (unsigned long long)res.accepted, (unsigned long long)res.rejected,
+        (unsigned long long)res.critical_capped,
+        (unsigned long long)res.arclength_steps,
+        (unsigned long long)res.gl8_attempted,
+        (unsigned long long)res.gl8_accepted,
+        res.max_richardson, res.max_interpolation_error, blob);
+}
+
 static PyMethodDef module_methods[] = {
     {"resolution_preflight", native_resolution_preflight, METH_VARARGS,
      "Apply the shared C resolution policy to exact-Morse measurements."},
@@ -2125,6 +2267,9 @@ static PyMethodDef module_methods[] = {
      "Compose a Poincare chart in high precision and round once."},
     {"continue_curve", native_continue_curve, METH_VARARGS,
      "One engine segment of the continuation dispatcher, GIL released."},
+    {"potential_rate_segment", native_potential_rate_segment, METH_VARARGS,
+     "One constant-potential-rate segment (prefix, level event or ascent), "
+     "GIL released."},
     {NULL, NULL, 0, NULL}
 };
 
