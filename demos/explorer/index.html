@@ -228,6 +228,9 @@
         <button class="tool" id="zoomIn" title="Zoom in">+</button>
         <button class="tool" id="zoomOut" title="Zoom out">−</button>
         <button class="tool" id="reset" title="Reset to the case's default view">reset</button>
+        <label style="margin:0 0 0 6px;text-transform:none;letter-spacing:0"
+               title="Constant pixels per unit in a and in b: the view's a-extent is the canvas aspect times its b-extent, and the zoom box is constrained to that aspect. Switching it on expands the under-scaled axis about the centre, so nothing in view is cropped.">
+          <input id="trueAngle" type="checkbox" style="width:auto;margin-right:4px">true angle</label>
         <span class="gap"></span>
         <label for="levels" style="margin:0 4px 0 0;text-transform:none;letter-spacing:0">contours</label>
         <input id="levels" type="number" value="44" min="4" max="400" step="4"
@@ -616,6 +619,25 @@ const aStar = b => evalp(S.P.field.B, b) / evalp(S.P.field.A, b);
 // panels against temporary 2x backing stores, so line weights and type
 // scale with the geometry instead of staying one device pixel wide.
 let renderScale = 1;
+
+// TRUE ANGLE: constant pixels per model unit in both axes, so the view's
+// a-extent is the canvas aspect times its b-extent and angles on screen are
+// angles in the (a, b) plane.  Applied at draw time, so every route to a new
+// view (rubber band, wheel, pinch, pan, arrows, reset, resize) inherits it.
+// The correction always EXPANDS the under-scaled axis about the centre --
+// switching the option on never crops what was in view, it adds margin.
+const trueAngle = () => { const el = els("trueAngle"); return !!(el && el.checked); };
+function isotropize(v){
+  const r = cP.getBoundingClientRect();
+  if (!(r.width > 0 && r.height > 0)) return v;
+  const sa = (v.a1 - v.a0) / r.width, sb = (v.b1 - v.b0) / r.height;
+  if (!(sa > 0 && sb > 0)) return v;
+  if (Math.abs(sa - sb) <= 1e-12 * Math.max(sa, sb)) return v;
+  const s = Math.max(sa, sb);
+  const ac = (v.a0 + v.a1) / 2, bc = (v.b0 + v.b1) / 2;
+  return { a0: ac - s * r.width / 2, a1: ac + s * r.width / 2,
+           b0: bc - s * r.height / 2, b1: bc + s * r.height / 2 };
+}
 
 // Double-precision windowing of a model-space polyline into the viewport.
 //
@@ -1089,6 +1111,7 @@ function levelValues(uMin, uMaxBone, Lmax, NL, v){
 }
 
 function drawPortrait(){
+  if (trueAngle()) S.view = isotropize(S.view);
   const W = cP.width / renderScale, H = cP.height / renderScale, v = S.view;
   xP.setTransform(renderScale,0,0,renderScale,0,0);
   xP.fillStyle = "#fff"; xP.fillRect(0,0,W,H);
@@ -1935,6 +1958,7 @@ function zoomBy(k, about){
 els("zoomIn").onclick  = () => zoomBy(1 / 1.3);
 els("zoomOut").onclick = () => zoomBy(1.3);
 els("reset").onclick   = () => { S.view = { ...S.home }; draw(); };
+els("trueAngle").addEventListener("change", () => draw());
 
 cP.addEventListener("pointerdown", e => {
   cP.focus();
@@ -1965,7 +1989,20 @@ cP.addEventListener("pointermove", e => {
     draw();
     return;
   }
-  if (mode === "zoom"){ S.rubber.x1 = e.clientX; S.rubber.y1 = e.clientY; draw(); }
+  if (mode === "zoom"){
+    let x1 = e.clientX, y1 = e.clientY;
+    if (trueAngle()){
+      // Constrain the box to the canvas aspect: the larger of the two
+      // drag extents wins, the other follows.  Since the view is already
+      // true-angle, a box of canvas aspect zooms to a true-angle view.
+      const r = cP.getBoundingClientRect(), aspect = r.width / r.height;
+      const dx = x1 - S.rubber.x0, dy = y1 - S.rubber.y0;
+      const w = Math.max(Math.abs(dx), Math.abs(dy) * aspect);
+      x1 = S.rubber.x0 + Math.sign(dx || 1) * w;
+      y1 = S.rubber.y0 + Math.sign(dy || 1) * w / aspect;
+    }
+    S.rubber.x1 = x1; S.rubber.y1 = y1; draw();
+  }
 });
 
 const endDrag = e => {
