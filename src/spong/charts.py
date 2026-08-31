@@ -687,7 +687,15 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
     critical_capped = 0
     arclength_steps = 0
     term = None
-    for _ in range(n_levels+1024):
+    # Capped and arclength steps are extra RESOLUTION, not progress toward
+    # the target; they must not consume the level budget (measured: 888
+    # capped steps exhausted this loop before the target neighbourhood, and
+    # the centered arrival then finished the haul on coarse raw-gradient
+    # steps whose angle energy was 800x the founding parity gate).
+    iteration = 0
+    while (iteration < n_levels+1024+critical_capped+arclength_steps
+           and iteration < 4*(n_levels+1024)):
+        iteration += 1
         level = float(m.L(float(z[0]), float(z[1])))
         gap = level-target_level
         if gap <= near_gap:
@@ -847,7 +855,10 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
     arclength_steps = 0
     captured = None
     term = "budget"
-    for _ in range(4*n_levels):
+    iteration = 0
+    while (iteration < 4*n_levels+critical_capped+arclength_steps
+           and iteration < 16*n_levels):
+        iteration += 1
         level = float(m.L(*z))
         gap = level-event_level
         if gap <= -crossing_floor:
@@ -1113,7 +1124,10 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
     critical_capped = 0
     arclength_steps = 0
     term = "budget"
-    for _ in range(max_steps):
+    iteration = 0
+    while (iteration < max_steps+critical_capped+arclength_steps
+           and iteration < 4*max_steps):
+        iteration += 1
         level = float(m.L(*z))
         g = np.asarray(m.gradL(*z), dtype=float)
         ng = float(np.hypot(*g))

@@ -170,16 +170,15 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 0.00010342694828952635,
-      "angle_resolved": 34330,
+      "angle_energy[RESIDUAL]": 1.1002768325315758e-05,
+      "angle_resolved": 65617,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
       "max_turn_deg[RESIDUAL]": 0.09877622040589468,
-      "n_points": 34845,
+      "n_points": 66132,
       "saddle_b": 1.4162716730603662,
-      "seam_residual[RESIDUAL]": 3.4035356088601643e-12,
       "term": "capture"
     },
     {
@@ -299,7 +298,7 @@
     "balanced": true,
     "representation_attested": true,
     "topology_status": "certified",
-    "worst_angle_energy": 0.00010342694828952635,
+    "worst_angle_energy": 1.1002768325315758e-05,
     "worst_max_turn_deg": 2.257321677633636
   },
   "topology": {
