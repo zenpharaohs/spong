@@ -2495,12 +2495,29 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             # sounding cell spanned about 58,000 units and the old minimum of
             # eight samples necessarily rejected an otherwise smooth slow
             # graph.  Resolve it at the continuation chord scale.
-            zone_span = abs(float(bg[j])-float(b_cur))
+            # The gauge proposes the zone's end, but the gauge knows only
+            # stiffness: on a bottom saddle's descent the shallow stretch can
+            # contain interior critical points of u (measured: a proposed
+            # zone from b = -4.46 to +0.72 across two minima and two
+            # saddles at d_g = 13, kappa_spectral ~ 1e19).  The slaved fixed
+            # point rightly refuses to self-certify across u' roots, and the
+            # rejection fallback then pushes the stiff ODE through the whole
+            # channel -- abort_step_failure was this.  Clamp the zone at the
+            # first candidate ahead: the fixed point certifies on a
+            # monotone stretch and the zone's own capture check fires there.
+            b_end = float(bg[j])
+            ahead = [bt for (_, bt) in targets
+                     if (bt - b_cur) * sgn > 1e-12 * (1.0 + abs(b_cur))]
+            if ahead:
+                b_first = min(ahead, key=lambda bt: (bt - b_cur) * sgn)
+                if (b_end - b_first) * sgn > 0.0:
+                    b_end = float(b_first)
+            zone_span = abs(b_end-float(b_cur))
             n_pts = max(
                 abs(j-i_grid)+1, 8,
                 int(np.ceil(zone_span/max(ds, np.finfo(float).tiny)))+1)
             j = min(j, n_grid - 1)
-            b_zone = np.linspace(b_cur, bg[j], n_pts)
+            b_zone = np.linspace(b_cur, b_end, n_pts)
             w_zone, iters, rel = slow_fixed_point(m, b_zone)
             if rel > 1e-10 or not np.all(np.isfinite(w_zone)):
                 # SELF-CERTIFICATION FAILED: the sounding gauge 2A/|u''|
@@ -2509,8 +2526,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 # engine through the spike with the trigger gated off
                 # until past it.
                 diag["zones"].append(("shallow_rejected", b_cur,
-                                      float(bg[j]), iters))
-                gate_end = float(bg[min(j, n_grid - 1)])
+                                      b_end, iters))
+                gate_end = b_end
                 if (gate_end-b_cur)*sgn <= 0.0:
                     # Continuation has overshot the nominal sounding
                     # interval.  Re-entering with a gate behind the current
@@ -2535,7 +2552,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                     continue
                 term = term_e
                 break
-            diag["zones"].append(("shallow", b_cur, float(bg[j]), iters))
+            diag["zones"].append(("shallow", b_cur, b_end, iters))
             # seam: fixed point vs incoming state at the junction
             certs["seam_residuals"].append(abs(float(w_zone[0]) - w_cur))
             a_zone = m.a_star(b_zone) + w_zone
