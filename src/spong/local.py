@@ -285,6 +285,9 @@ class LocalJet:
 
     def potential(self, da: float, db: float) -> float:
         """Centered potential difference whose gradient is ``gradient``."""
+        native = self.native
+        if native is not None and hasattr(native, "potential"):
+            return native.potential(float(da), float(db))
         # Integrate the a-component from (0, db) to (da, db), then the
         # b-component along a=0 from (0, 0) to (0, db).
         value = 0.0

@@ -18,6 +18,8 @@ add_library(spong_core ${SPONG_LIBRARY_TYPE}
     src/c/spong_continue.c
     src/c/spong_gauss2.c
     src/c/spong_potential.c
+    src/c/spong_jet.c
+    src/c/spong_arrival.c
 )
 add_library(spong::core ALIAS spong_core)
 target_include_directories(spong_core
@@ -39,7 +41,7 @@ set_target_properties(spong_core PROPERTIES
     C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     PUBLIC_HEADER
-        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h"
+        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h"
 )
 if(SPONG_BUILD_SHARED)
     target_compile_definitions(spong_core

@@ -1032,8 +1032,9 @@ def _potential_rate_level_event_python(m: Model, a0: float, b0: float,
     return pts, term, captured
 
 
-def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
-                          engine_diag: dict, max_steps: int = 4096):
+def _centered_raw_arrival_python(start, target, arrival_local,
+                                 cap_r: float, engine_diag: dict,
+                                 max_steps: int = 4096):
     """Finish a known connection with the regular target-centered flow.
 
     Constant-potential-rate and arclength parameterizations are singular at
@@ -1041,6 +1042,12 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
     translated polynomial is already stored in the zero-dimensional Morse
     data, so this phase neither re-expands the model nor evaluates a
     cancellation-prone global gradient.
+
+    THE EXECUTABLE SPECIFICATION for spong_centered_arrival (C); see
+    _potential_rate_prefix_python for the doctrine.  The jet's potential
+    and raw steps are evaluated through the native LocalKernel -- the same
+    arithmetic the C arrival uses -- and the turn cosine is written out
+    scalar by scalar rather than as a NumPy dot product, which may fuse.
     """
     if (arrival_local is None or arrival_local.native is None
             or not hasattr(arrival_local.native, "raw_step")):
@@ -1113,7 +1120,8 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
                     continue
                 direction = half-z
                 if last_direction is not None and chord > 0.0:
-                    cosine = float(direction @ last_direction)/(
+                    cosine = float(direction[0]*last_direction[0]
+                                   + direction[1]*last_direction[1])/(
                         chord*float(np.hypot(*last_direction)))
                     if cosine < turn_reject:
                         turn_rejected += 1
@@ -1157,6 +1165,65 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
         "gl8_accepted": gl8_accepted,
         "max_richardson": float(max_richardson),
         "spectral_ratio": fast/slow,
+        "finish_radius": float(finish_r),
+        "term": term,
+        "primary_order": GEOMETRIC_IRK_PRIMARY,
+    }
+    return pts, term
+
+
+_ARRIVAL_TERM = {0: "capture", 1: "invalid_potential", 2: "step_failure",
+                 3: "budget", 4: "unavailable"}
+
+
+def _arrival_native(arrival_local):
+    """The native module when the C arrival should run; see _potential_native."""
+    from . import engine
+    if engine.active_name() != "native":
+        return None
+    if (arrival_local is None or arrival_local.native is None
+            or not hasattr(arrival_local.native, "potential")):
+        return None
+    try:
+        from . import _native as native
+    except ImportError:
+        return None
+    if not hasattr(native, "centered_arrival"):
+        return None
+    return native
+
+
+def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
+                          engine_diag: dict, max_steps: int = 4096):
+    """Dispatch the centered raw arrival; see _centered_raw_arrival_python."""
+    native = _arrival_native(arrival_local)
+    if native is None:
+        return _centered_raw_arrival_python(
+            start, target, arrival_local, cap_r, engine_diag,
+            max_steps=max_steps)
+    at, bt = map(float, target)
+    lam = np.asarray(arrival_local.spectral.eigenvalues, dtype=float)
+    if not (np.all(np.isfinite(lam)) and np.min(lam) > 0.0):
+        return [tuple(map(float, start))], "unavailable"
+    slow, fast = float(np.min(lam)), float(np.max(lam))
+    turn_reject = float(np.cos(2.0*np.arctan(CRITICAL_STEP_FRACTION)))
+    (term_code, _a_end, _b_end, accepted, rejected, turn_rejected,
+     gl8_attempted, gl8_accepted, max_richardson, finish_r,
+     spectral_ratio, blob) = native.centered_arrival(
+        arrival_local.native, float(start[0]), float(start[1]), at, bt,
+        float(arrival_local.a), float(arrival_local.b), slow, fast,
+        float(cap_r), int(max_steps), turn_reject, GEOMETRIC_IRK_PRIMARY)
+    term = _ARRIVAL_TERM[term_code]
+    pts = [tuple(p) for p in
+           np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
+    engine_diag["centered_arrival"] = {
+        "accepted_steps": int(accepted),
+        "rejected_steps": int(rejected),
+        "turn_rejected_steps": int(turn_rejected),
+        "gl8_attempted": int(gl8_attempted),
+        "gl8_accepted": int(gl8_accepted),
+        "max_richardson": float(max_richardson),
+        "spectral_ratio": float(spectral_ratio),
         "finish_radius": float(finish_r),
         "term": term,
         "primary_order": GEOMETRIC_IRK_PRIMARY,

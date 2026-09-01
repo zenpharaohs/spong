@@ -14,6 +14,8 @@
 #include "spong/spong_local.h"
 #include "spong/spong_continue.h"
 #include "spong/spong_gauss2.h"
+#include "spong/spong_jet.h"
+#include "spong/spong_arrival.h"
 #include "spong/spong_potential.h"
 
 typedef struct {
@@ -22,11 +24,14 @@ typedef struct {
     double *a, *ap, *app, *b, *bp, *bpp, *n, *np;
 } Kernel;
 
+/* Adapter over spong_jet (spong/spong_jet.h): owns the coefficient
+ * storage; the jet view is what the library computes on. */
 typedef struct {
     PyObject_HEAD
     double **c[2];
-    Py_ssize_t *n[2];
+    size_t *n[2];
     int rows[2];
+    spong_jet jet;
 } LocalKernel;
 
 typedef struct {
@@ -674,37 +679,27 @@ static int LocalKernel_init(LocalKernel *self, PyObject *args, PyObject *kwds) {
         }
         self->rows[d] = (int)nr;
         PyObject **ri = PySequence_Fast_ITEMS(rows);
-        for (Py_ssize_t r = 0; r < nr; r++)
-            if (copy_seq(ri[r], &self->c[d][r], &self->n[d][r]) < 0) {
+        for (Py_ssize_t r = 0; r < nr; r++) {
+            Py_ssize_t len = 0;
+            if (copy_seq(ri[r], &self->c[d][r], &len) < 0) {
                 Py_DECREF(rows); Py_DECREF(comps); return -1;
             }
+            self->n[d][r] = (size_t)len;
+        }
         Py_DECREF(rows);
+        self->jet.c[d] = (const double *const *)self->c[d];
+        self->jet.n[d] = self->n[d];
+        self->jet.rows[d] = self->rows[d];
     }
     Py_DECREF(comps);
     return 0;
 }
 
-static void local_poly(LocalKernel *k, const double z[2],
-                       double g[2], double H[2][2]) {
-    double da = z[0], db = z[1];
-    for (int d = 0; d < 2; d++) {
-        double value = 0.0, derivative_a = 0.0, derivative_b = 0.0;
-        for (int r = k->rows[d]; r-- > 0;) {
-            double row = horner(k->c[d][r], k->n[d][r], db);
-            double drow = 0.0;
-            for (Py_ssize_t j = k->n[d][r]; j-- > 1;)
-                drow = drow*db + (double)j*k->c[d][r][j];
-            derivative_a = derivative_a*da + value;
-            value = value*da + row;
-            derivative_b = derivative_b*da + drow;
-        }
-        g[d] = value;
-        if (H != NULL) {
-            H[d][0] = derivative_a;
-            H[d][1] = derivative_b;
-        }
-    }
-}
+/* The centered polynomial now lives in the library (spong_jet_poly);
+ * the remaining callers below -- the curve field and the graph fixed
+ * point, whose scalar GL steppers have not moved yet -- reach it through
+ * the adapter's jet view. */
+#define local_poly(k, z, g, H) spong_jet_poly(&(k)->jet, (z), (g), (H))
 
 typedef struct {
     LocalKernel *kernel;
@@ -725,35 +720,6 @@ static double local_curve_fj(void *opaque, double x, double y, double *jac) {
     return g[d]/g[i];
 }
 
-static int local_normalized_fj(void *ctx, const double z[2],
-                               double f[2], double J[2][2]) {
-    double g[2], H[2][2];
-    local_poly((LocalKernel *)ctx, z, g, J == NULL ? NULL : H);
-    double ng = hypot(g[0], g[1]);
-    if (!(ng > 1e-300) || !isfinite(ng)) return 0;
-    f[0] = g[0]/ng; f[1] = g[1]/ng;
-    if (J != NULL) {
-        /* g^T H columns; do not assume rounded cross-partials are identical. */
-        double Hg[2] = {g[0]*H[0][0] + g[1]*H[1][0],
-                        g[0]*H[0][1] + g[1]*H[1][1]};
-        double ng3 = ng*ng*ng;
-        for (int r = 0; r < 2; r++) for (int c = 0; c < 2; c++)
-            J[r][c] = H[r][c]/ng - g[r]*Hg[c]/ng3;
-    }
-    return isfinite(f[0]) && isfinite(f[1]);
-}
-
-static int local_raw_fj(void *ctx, const double z[2],
-                        double f[2], double J[2][2]) {
-    double H[2][2];
-    local_poly((LocalKernel *)ctx, z, f, J == NULL ? NULL : H);
-    if (J != NULL) {
-        J[0][0] = H[0][0]; J[0][1] = H[0][1];
-        J[1][0] = H[1][0]; J[1][1] = H[1][1];
-    }
-    return isfinite(f[0]) && isfinite(f[1]);
-}
-
 static PyObject *LocalKernel_gradient(LocalKernel *self, PyObject *args) {
     double z[2], g[2];
     if (!PyArg_ParseTuple(args, "dd", &z[0], &z[1])) return NULL;
@@ -767,7 +733,7 @@ static PyObject *LocalKernel_normalized_step(LocalKernel *self, PyObject *args) 
     if (order != 4 && order != 6 && order != 8) {
         PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8"); return NULL;
     }
-    if (!irk2_step(self, local_normalized_fj, z, h, order, out))
+    if (!spong_jet_normalized_step(&self->jet, z, h, order, out))
         return Py_BuildValue("dd", NAN, NAN);
     return Py_BuildValue("dd", out[0], out[1]);
 }
@@ -778,9 +744,18 @@ static PyObject *LocalKernel_raw_step(LocalKernel *self, PyObject *args) {
     if (order != 4 && order != 6 && order != 8) {
         PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8"); return NULL;
     }
-    if (!irk2_step(self, local_raw_fj, z, h, order, out))
+    if (!spong_jet_raw_step(&self->jet, z, h, order, out))
         return Py_BuildValue("dd", NAN, NAN);
     return Py_BuildValue("dd", out[0], out[1]);
+}
+
+/* The centered potential by the library's exact evaluator -- the same
+ * arithmetic the centered arrival uses.  LocalJet.potential dispatches
+ * here when the kernel is present (shared-arithmetic doctrine). */
+static PyObject *LocalKernel_potential(LocalKernel *self, PyObject *args) {
+    double da, db;
+    if (!PyArg_ParseTuple(args, "dd", &da, &db)) return NULL;
+    return PyFloat_FromDouble(spong_jet_potential(&self->jet, da, db));
 }
 
 static PyObject *LocalKernel_curve_step(LocalKernel *self, PyObject *args) {
@@ -1074,6 +1049,8 @@ static PyMethodDef LocalKernel_methods[] = {
      "One centered normalized-gradient GL4, GL6, or GL8 step."},
     {"raw_step", (PyCFunction)LocalKernel_raw_step, METH_VARARGS,
      "One centered unnormalized-gradient GL4, GL6, or GL8 step."},
+    {"potential", (PyCFunction)LocalKernel_potential, METH_VARARGS,
+     "The centered potential difference (exact evaluator)."},
     {"curve_step", (PyCFunction)LocalKernel_curve_step, METH_VARARGS,
      "One centered integral-curve graph GL4 or GL6 step."},
     {"graph_fixed_point", (PyCFunction)LocalKernel_graph_fixed_point,
@@ -2252,6 +2229,72 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
         res.max_richardson, res.max_interpolation_error, blob);
 }
 
+/*
+ * centered_arrival(local_kernel, a0, b0, at, bt, center_a, center_b,
+ *                  slow, fast, cap_r, max_steps, turn_reject,
+ *                  primary_order)
+ *
+ * The centered raw arrival (spong/spong_arrival.h) entirely in C with the
+ * GIL released.  Points come back as bytes of packed (a, b) doubles in
+ * physical coordinates.  The result tuple carries every field of
+ * spong_arrival_result.
+ */
+static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *kobj;
+    spong_arrival_request req;
+    Py_ssize_t max_steps;
+    if (!PyArg_ParseTuple(args, "Odddddddddndi",
+                          &kobj, &req.a0, &req.b0, &req.at, &req.bt,
+                          &req.center_a, &req.center_b, &req.slow, &req.fast,
+                          &req.cap_r, &max_steps, &req.turn_reject,
+                          &req.primary_order)) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(kobj, &LocalKernelType)) {
+        PyErr_SetString(PyExc_TypeError, "first argument must be a LocalKernel");
+        return NULL;
+    }
+    req.max_steps = max_steps < 0 ? 0 : (size_t)max_steps;
+    const spong_jet *jet = &((LocalKernel *)kobj)->jet;
+    spong_arrival_result res;
+    double *points = NULL;
+    size_t cap = 1024;
+    int term = SPONG_ARR_NEED_CAPACITY;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
+        if (grown == NULL) { PyMem_Free(points); return PyErr_NoMemory(); }
+        points = grown;
+        Py_BEGIN_ALLOW_THREADS
+        term = spong_centered_arrival(jet, &req, points, cap, &res);
+        Py_END_ALLOW_THREADS
+        if (term != SPONG_ARR_NEED_CAPACITY) break;
+        cap = res.n_points + 64;
+    }
+    if (term < 0) {
+        PyMem_Free(points);
+        PyErr_SetString(PyExc_ValueError, "centered_arrival: bad request");
+        return NULL;
+    }
+    if (term == SPONG_ARR_NEED_CAPACITY) {
+        PyMem_Free(points);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "centered_arrival did not settle on a capacity");
+        return NULL;
+    }
+    PyObject *blob = PyBytes_FromStringAndSize(
+        (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
+    PyMem_Free(points);
+    if (blob == NULL) return NULL;
+    return Py_BuildValue(
+        "(iddKKKKKdddN)", res.term, res.a_end, res.b_end,
+        (unsigned long long)res.accepted, (unsigned long long)res.rejected,
+        (unsigned long long)res.turn_rejected,
+        (unsigned long long)res.gl8_attempted,
+        (unsigned long long)res.gl8_accepted,
+        res.max_richardson, res.finish_radius, res.spectral_ratio, blob);
+}
+
 static PyMethodDef module_methods[] = {
     {"resolution_preflight", native_resolution_preflight, METH_VARARGS,
      "Apply the shared C resolution policy to exact-Morse measurements."},
@@ -2270,6 +2313,8 @@ static PyMethodDef module_methods[] = {
     {"potential_rate_segment", native_potential_rate_segment, METH_VARARGS,
      "One constant-potential-rate segment (prefix, level event or ascent), "
      "GIL released."},
+    {"centered_arrival", native_centered_arrival, METH_VARARGS,
+     "The centered raw arrival to a target minimum, GIL released."},
     {NULL, NULL, 0, NULL}
 };
 

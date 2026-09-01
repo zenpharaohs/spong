@@ -219,6 +219,43 @@ judges loop logic, not evaluator ulps.  Both doctrine changes alter the
 specification itself, not just the port, and may move goldens; such drift
 is engine-agnostic by construction and is re-recorded, not chased.
 
+The centered critical-point jet is exposed by `include/spong/spong_jet.h`.
+`spong_jet` is the plain-array view of the translated finite gradient (two
+components, rows of ascending coefficient arrays in `db` indexed by the
+power of `da`); `spong_jet_poly` evaluates gradient and Hessian by the
+nested Horner relocated verbatim from the extension's `LocalKernel`,
+`spong_jet_raw_fj` / `spong_jet_normalized_fj` are the unnormalized and
+unit-speed centered flows for `spong_irk2_step`, and `spong_jet_raw_step` /
+`spong_jet_normalized_step` take one Gauss--Legendre step of each.  These
+compile with the platform's default contraction and must stay so: the
+Python oracle reaches them through `LocalKernel`, so what they compute is
+the specification.  `spong_jet_potential` is the exception -- it mirrors
+`LocalJet.potential`, a pure-Python evaluator, in its operation order with
+contraction off (per-function, since the file is otherwise fused), and
+`LocalJet.potential` now dispatches to it.  `LocalKernel` is an adapter
+over this struct; its curve field and graph fixed point remain in the
+extension until their scalar steppers move.
+
+The centered raw arrival is exposed by `include/spong/spong_arrival.h`.
+`spong_centered_arrival` finishes a known connection with the regular
+target-centered gradient flow: from a `spong_arrival_request` (start,
+target, jet centre, the least and greatest Hessian eigenvalues, capture
+radius, step budget, the turn-rejection cosine and the primary order) it
+runs the two-half-step raw flow with Richardson control, potential descent,
+turn rejection and segment capture exactly as
+`charts._centered_raw_arrival_python`, the executable specification, and
+returns the terminal condition (`SPONG_ARR_CAPTURE` through
+`SPONG_ARR_UNAVAILABLE`), the endpoint and every counter of the phase's
+`centered_arrival` diagnostics, with the same caller-grown vertex buffer
+protocol as the potential-rate segment.  The turn-rejection cosine crosses
+as a request field because it is a transcendental the caller computes and
+the library must not re-derive with a different rounding.  The file is
+contract-off throughout, as `spong_potential.c` is.  Parity is defined by
+`tests/corpus/centered_arrival.json` (`scripts/arrival_corpus.py`,
+`tests/test_arrival_parity.py`), each entry identifying its jet by the
+target's coordinates; the oracle's turn cosine is now written scalar by
+scalar rather than as a NumPy dot product, which may fuse.
+
 ## Migration boundary
 
 The present production geometry kernels are already written in C, but some are

@@ -23,6 +23,11 @@ TOLERANT — these are measurements of the same claims:
     RESIDUAL certificates and worst-case rollups   rel 1e-6
     branch vertex counts                       rel 5% (a resolution choice,
                                                 not an assertion)
+    angles the certificate resolved            rel 5% (one per resolvable
+                                                vertex; tracks the count)
+
+angle_unresolved stays EXACT: how many angles binary64 could NOT resolve is
+a claim about the certificate, and it has not moved across any rewrite.
 
 Timing is excluded entirely: it is the thing the migration is meant to change.
 
@@ -145,11 +150,11 @@ EXACT_KEYS = {
     "forbidden_count", "ambiguous_count", "geometry_level", "n_critical",
     "n_min", "n_saddle", "psi_positive[EXACT]", "morse[EXACT]",
     "u2_alternation[EXACT]", "balanced", "all_branches_clean",
-    "angle_resolved", "angle_unresolved", "connection[RESIDUAL]",
+    "angle_unresolved", "connection[RESIDUAL]",
     "reason", "uncertified_ends", "uncertified_tails", "name",
     "moment_dist", "sublevel_unique",
 }
-POINT_KEYS = {"n_points"}
+POINT_KEYS = {"n_points", "angle_resolved"}
 
 
 def _rel(x, y) -> float:
