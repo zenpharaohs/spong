@@ -113,6 +113,60 @@ def _global_minima(p: Portrait) -> set[int]:
     return {i for (i, _q), val in zip(minima, vals) if val <= best + tol}
 
 
+def _turning_b(m: Model, c: float, b_lo: float, b_hi: float):
+    """b in [b_lo, b_hi] with u(b) = c, bisected in closed form."""
+    lo, hi = float(b_lo), float(b_hi)
+    s_lo = float(m.u(lo)) - c
+    if not np.isfinite(s_lo):
+        return None
+    for _ in range(50):
+        mid = 0.5*(lo+hi)
+        sm = float(m.u(mid)) - c
+        if not np.isfinite(sm):
+            return None
+        if (sm < 0.0) == (s_lo < 0.0):
+            lo, s_lo = mid, sm
+        else:
+            hi = mid
+    return 0.5*(lo+hi)
+
+
+def _close_on_backbone(m: Model, c: float, b, arm, i0: int, i1: int,
+                       view, to_px, pts: list) -> None:
+    """Extend a contour run to its turning point on the backbone.
+
+    A level curve's two arms meet where c = u(b); sampled on a b-grid, each
+    arm stops at its last sample with c > u, and the gap between the two
+    ends stays a fixed fraction of the b-range at every zoom.  Where a run
+    ends because the next sample has c <= u (not because it left the view),
+    the exact turning point (a*(b_t), b_t) is appended; likewise prepended
+    where it begins that way.
+    """
+    a_lo, a_hi, b_lo, b_hi = view
+
+    def turning(j0, j1):
+        bt = _turning_b(m, c, b[j0], b[j1])
+        if bt is None:
+            return None
+        at = float(m.a_star(bt))
+        if not (np.isfinite(at) and a_lo <= at <= a_hi and b_lo <= bt <= b_hi):
+            return None
+        return to_px(at, bt)
+
+    def absent(j):
+        return 0 <= j < len(arm) and not np.isfinite(arm[j]) \
+            and float(m.u(float(b[j]))) >= c
+
+    if absent(i1):
+        p = turning(i1-1, i1)
+        if p is not None:
+            pts.append(p)
+    if absent(i0-1):
+        p = turning(i0-1, i0)
+        if p is not None:
+            pts.insert(0, p)
+
+
 def _clip_runs(X, Y, view):
     """Split (X, Y) into runs of points inside the view; NaN-safe."""
     a_lo, a_hi, b_lo, b_hi = view
@@ -344,6 +398,7 @@ def plane_view(p: Portrait, view=None, width=1200, height=900,
         for arm in (lo_arm, hi_arm):
             for i0, i1 in _clip_runs(arm, b, view):
                 pts = [to_px(arm[k], b[k]) for k in range(i0, i1)]
+                _close_on_backbone(m, c, b, arm, i0, i1, view, to_px, pts)
                 svg.polyline(pts, PALETTE["contour"], 0.7)
 
     # ---- backbone ------------------------------------------------------ #

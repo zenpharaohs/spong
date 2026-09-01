@@ -766,21 +766,41 @@ def build_stubs(m: Model, point, minima) -> tuple[InvariantStub, ...]:
                 })
                 return physical, diag
 
-            def evaluate(current_reach, conditioned, coarse_n=257):
+            # Fixed points already solved for this stub, by
+            # (conditioned, n, reach).  The extension loop's grid ladder
+            # asks for the same solve twice -- the fine grid of one rung is
+            # the coarse grid of the next -- and the ladder revisits reaches.
+            # Reusing them changes no number: the solve is deterministic.
+            solved: dict = {}
+
+            def graph_at(conditioned, n, current_reach):
+                key = (bool(conditioned), int(n), float(current_reach))
+                if key not in solved:
+                    if conditioned:
+                        solved[key] = chart.graph(
+                            local, orientation, n=n, reach=current_reach)
+                    else:
+                        solved[key] = centered_graph(n, current_reach)
+                return solved[key]
+
+            def evaluate(current_reach, conditioned, coarse_n=257,
+                         quick=False):
                 fine_n = 2*coarse_n-1
-                if conditioned:
-                    coarse, dc = chart.graph(
-                        local, orientation, n=coarse_n,
-                        reach=current_reach)
-                    fine, df = chart.graph(
-                        local, orientation, n=fine_n,
-                        reach=current_reach)
-                else:
-                    coarse, dc = centered_graph(coarse_n, current_reach)
-                    fine, df = centered_graph(fine_n, current_reach)
+                coarse, dc = graph_at(conditioned, coarse_n, current_reach)
                 if not (np.all(np.isfinite(coarse))
-                        and np.all(np.isfinite(fine))
-                        and np.isfinite(dc["relative_change"])
+                        and np.isfinite(dc["relative_change"])):
+                    raise FloatingPointError("nonfinite invariant graph")
+                if quick:
+                    # A candidate whose coarse change error fails is
+                    # rejected whatever the fine grid says, and a rejected
+                    # candidate's data is discarded: skip the fine solve.
+                    hc_quick = np.asarray(dc["normal_h"])
+                    if not (dc["relative_change"]
+                            * float(np.max(np.abs(hc_quick)))
+                            / max(current_reach, 1e-300) < 1e-12):
+                        return {"accepted": False}
+                fine, df = graph_at(conditioned, fine_n, current_reach)
+                if not (np.all(np.isfinite(fine))
                         and np.isfinite(df["relative_change"])):
                     raise FloatingPointError("nonfinite invariant graph")
                 # Certify the graph before mapping it back into possibly
@@ -1123,7 +1143,8 @@ def build_stubs(m: Model, point, minima) -> tuple[InvariantStub, ...]:
                     for coarse_n in (257, 513, 1025, 2049):
                         try:
                             trial = evaluate(
-                                candidate_reach, conditioned, coarse_n)
+                                candidate_reach, conditioned, coarse_n,
+                                quick=True)
                         except (ValueError, FloatingPointError):
                             break
                         if trial["accepted"]:

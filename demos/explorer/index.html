@@ -1163,18 +1163,62 @@ function drawPortrait(){
   let uMaxBone = uMin;
   for (const u of uv) uMaxBone = Math.max(uMaxBone, u);
   const LEVELS = levelValues(uMin, uMaxBone, Lmax, NL, v);
+  // Where a level curve turns around at the backbone -- c = u(b), the point
+  // where its two branches meet -- the b-grid leaves both branches hanging
+  // at the last sample with c > u, and the gap between their ends is a
+  // fixed fraction of the view's b-range however far one zooms.  So each
+  // branch is closed on the actual turning point: u(b) = c bisected in
+  // closed form between the two grid samples, drawn at a = a*(b).
+  const uAt = b => {
+    const den = evalp(F.backbone_den, b);
+    return Math.abs(den) > 1e-300 ? F.C - evalp(F.backbone_num, b) / den : NaN;
+  };
+  const aStarAt = b => {
+    const A = evalp(F.A, b);
+    return A > 1e-13 ? evalp(F.B, b) / A : NaN;
+  };
+  // b in [bLo, bHi] with u(b) = c, given u(bLo) < c <= u(bHi) or the reverse.
+  const turningB = (bLo, bHi, c) => {
+    let lo = bLo, hi = bHi, sLo = uAt(lo) - c;
+    if (!Number.isFinite(sLo)) return NaN;
+    for (let it = 0; it < 40; it++){
+      const mid = 0.5 * (lo + hi), s = uAt(mid) - c;
+      if (!Number.isFinite(s)) return NaN;
+      if ((s < 0) === (sLo < 0)) { lo = mid; sLo = s; } else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+  };
+  const turnTo = (i0, i1, c, move) => {
+    const bt = turningB(bs[i0], bs[i1], c), at = aStarAt(bt);
+    if (!Number.isFinite(bt) || !Number.isFinite(at)) return false;
+    if (at < v.a0 - margin || at > v.a1 + margin) return false;
+    move ? xP.moveTo(X(at), Y(bt)) : xP.lineTo(X(at), Y(bt));
+    return true;
+  };
   for (let k = 1; k <= NL; k++){
     const c = LEVELS[k - 1];
     for (const sgn of [1, -1]){
       xP.beginPath();
-      let on = false;
+      let on = false, below = false;   // below: last sample had c <= u(b)
       for (let i = 0; i <= M; i++){
         const A = As[i], u = us[i];
-        if (!(A > 1e-13) || !Number.isFinite(u) || c <= u){ on = false; continue; }
+        const ok = (A > 1e-13) && Number.isFinite(u);
+        if (!ok || c <= u){
+          // leaving through the backbone: close on the turning point
+          if (on && ok && i > 0) turnTo(i - 1, i, c, false);
+          on = false; below = ok && c <= u; continue;
+        }
         const a = ast[i] + sgn * Math.sqrt((c - u) / A);
-        if (a < v.a0 - margin || a > v.a1 + margin){ on = false; continue; }
+        if (a < v.a0 - margin || a > v.a1 + margin){ on = false; below = false; continue; }
         const x = X(a), y = Y(bs[i]);
-        on ? xP.lineTo(x, y) : (xP.moveTo(x, y), on = true);
+        if (on) xP.lineTo(x, y);
+        else {
+          // entering from the backbone: start on the turning point
+          const started = below && i > 0 && turnTo(i - 1, i, c, true);
+          started ? xP.lineTo(x, y) : xP.moveTo(x, y);
+          on = true;
+        }
+        below = false;
       }
       xP.stroke();
     }

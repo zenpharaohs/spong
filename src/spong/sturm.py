@@ -171,9 +171,42 @@ def squarefree_part(p: Poly) -> Poly:
     return q
 
 
+def _native_stats(p: Poly):
+    """The plan's exact analysis of p, or None without the C core."""
+    integers = P.int_primitive(P.trim(p))
+    if not integers:
+        return None
+    plan = _native_sturm_plan(integers)
+    if plan is None:
+        return None
+    result = plan.stats()
+    if result["status"] != 0:
+        raise ArithmeticError(
+            f"native exact Sturm analysis refused with status "
+            f"{result['status']}")
+    return result
+
+
 def is_squarefree(p: Poly) -> bool:
-    """EXACT: gcd(p, p') is constant."""
+    """EXACT: gcd(p, p') is constant.
+
+    The persistent GMP plan already computed deg(p / gcd(p, p')) while
+    building its squarefree chain; read it rather than repeating the
+    Euclidean algorithm over Fractions (20 s at degree 66).
+    """
+    stats = _native_stats(p)
+    if stats is not None:
+        return stats["squarefree_degree"] == stats["input_degree"]
     return P.degree(P.gcd_poly(p, P.deriv(p))) <= 0
+
+
+def has_repeated_real_root(p: Poly) -> bool:
+    """EXACT: gcd(p, p') has a real root."""
+    stats = _native_stats(p)
+    if stats is not None:
+        return stats["repeated_real_roots"] > 0
+    g = P.gcd_poly(p, P.deriv(p))
+    return P.degree(g) > 0 and count_roots(g) > 0
 
 
 def is_positive(p: Poly) -> bool:
@@ -526,9 +559,20 @@ def enumerate_critical_points(m: Model) -> Enumeration:
     B_squarefree = is_squarefree(B)
     N_squarefree = is_squarefree(N)
     H = m.critical_reduced
-    repeated_H = P.gcd_poly(H, P.deriv(H))
-    has_repeated_real = (
-        P.degree(repeated_H) > 0 and count_roots(repeated_H) > 0)
+    if P.degree(m.backbone_den) == P.degree(m.alpha):
+        # Trivial reduction (gcd(B^2, A) constant): then
+        #   H = (B^2)' A - B^2 A' = B (2B'A - BA') = B N   exactly,
+        # so a repeated real root of H is a repeated real root of B, one of
+        # N, or a common real root of B and N -- all already in hand.  The
+        # direct gcd(H, H') costs 20 s at degree 66 to learn the same thing.
+        assert P.degree(H) == P.degree(B) + P.degree(N)
+        has_repeated_real = (
+            has_repeated_real_root(B) or has_repeated_real_root(N)
+            or (has_common and count_roots(common) > 0))
+    else:
+        repeated_H = P.gcd_poly(H, P.deriv(H))
+        has_repeated_real = (
+            P.degree(repeated_H) > 0 and count_roots(repeated_H) > 0)
     morse = bool(H) and not has_repeated_real
     # B and N are the cheapest exact factorization in the generic case.
     # Algebraically repeated/common COMPLEX factors do not affect real Morse
