@@ -22,7 +22,8 @@ import potential_corpus as pc                                # noqa: E402
 from potential_corpus import engine, portrait                # noqa: E402
 
 name = sys.argv[1] if len(sys.argv) > 1 else "linear-target-d17-thrash"
-top = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+args = [a for a in sys.argv[2:] if not a.startswith("--")]
+top = int(args[0]) if args else 30
 
 m, e, z = pc.context(name)
 print(f"engine: {engine.active_name()}  case: {name}  workers: "
@@ -37,3 +38,12 @@ print(f"wall: {time.perf_counter()-t0:.1f}s\n")
 stats = pstats.Stats(prof)
 stats.sort_stats("cumulative").print_stats(r"spong", top)
 stats.sort_stats("tottime").print_stats(top)
+
+if "--callers" in sys.argv:
+    # Who is still doing exact rational arithmetic in Python?  The
+    # cumulative table cannot say: Fraction work is spread thin under
+    # many spong frames.  Callers of the primitives can.
+    print("\n=== callers of the residual Fraction/bigint primitives ===")
+    stats.sort_stats("tottime").print_callers(
+        r"math\.gcd|fractions\.py.*(_mul|_add|_sub|_richcmp|__pow__)"
+        r"|_sign_int|_decimal", 12)

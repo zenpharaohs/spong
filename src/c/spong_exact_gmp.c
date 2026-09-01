@@ -1287,3 +1287,36 @@ failure:
     mpq_clears(lo, hi, rel, width, target, scale, temp, mid, NULL);
     return -1;
 }
+
+/* ------------------------------------------------------------------ */
+/* exact planar predicates                                             */
+/* ------------------------------------------------------------------ */
+
+int spong_orient2d_exact(double ax, double ay, double bx, double by,
+                         double cx, double cy) {
+    mpq_t qax, qay, qbx, qby, qcx, qcy, t1, t2;
+    mpq_inits(qax, qay, qbx, qby, qcx, qcy, t1, t2, (mpq_ptr)NULL);
+    mpq_set_d(qax, ax); mpq_set_d(qay, ay);
+    mpq_set_d(qbx, bx); mpq_set_d(qby, by);
+    mpq_set_d(qcx, cx); mpq_set_d(qcy, cy);
+    mpq_sub(qbx, qbx, qax);          /* bx - ax */
+    mpq_sub(qcy, qcy, qay);          /* cy - ay */
+    mpq_sub(qby, qby, qay);          /* by - ay */
+    mpq_sub(qcx, qcx, qax);          /* cx - ax */
+    mpq_mul(t1, qbx, qcy);
+    mpq_mul(t2, qby, qcx);
+    mpq_sub(t1, t1, t2);
+    int sign = mpq_sgn(t1);
+    mpq_clears(qax, qay, qbx, qby, qcx, qcy, t1, t2, (mpq_ptr)NULL);
+    return sign;
+}
+
+int spong_segments_cross_exact(double ax, double ay, double bx, double by,
+                               double cx, double cy, double dx, double dy) {
+    int o1 = spong_orient2d_exact(ax, ay, bx, by, cx, cy);
+    int o2 = spong_orient2d_exact(ax, ay, bx, by, dx, dy);
+    int o3 = spong_orient2d_exact(cx, cy, dx, dy, ax, ay);
+    int o4 = spong_orient2d_exact(cx, cy, dx, dy, bx, by);
+    if (o1 == 0 || o2 == 0 || o3 == 0 || o4 == 0) return -1;
+    return (o1 != o2 && o3 != o4) ? 1 : 0;
+}

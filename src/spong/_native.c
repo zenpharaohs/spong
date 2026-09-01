@@ -2295,7 +2295,29 @@ static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
         res.max_richardson, res.finish_radius, res.spectral_ratio, blob);
 }
 
+static PyObject *native_orient2d_exact(PyObject *self, PyObject *args) {
+    (void)self;
+    double ax, ay, bx, by, cx, cy;
+    if (!PyArg_ParseTuple(args, "dddddd", &ax, &ay, &bx, &by, &cx, &cy))
+        return NULL;
+    return PyLong_FromLong(spong_orient2d_exact(ax, ay, bx, by, cx, cy));
+}
+
+static PyObject *native_segments_cross_exact(PyObject *self, PyObject *args) {
+    (void)self;
+    double ax, ay, bx, by, cx, cy, dx, dy;
+    if (!PyArg_ParseTuple(args, "dddddddd", &ax, &ay, &bx, &by,
+                          &cx, &cy, &dx, &dy))
+        return NULL;
+    return PyLong_FromLong(spong_segments_cross_exact(ax, ay, bx, by,
+                                                      cx, cy, dx, dy));
+}
+
 static PyMethodDef module_methods[] = {
+    {"orient2d_exact", native_orient2d_exact, METH_VARARGS,
+     "Exact sign of the orientation determinant of three binary64 points."},
+    {"segments_cross_exact", native_segments_cross_exact, METH_VARARGS,
+     "Exact segment crossing test: 1 cross, 0 no, -1 degenerate."},
     {"resolution_preflight", native_resolution_preflight, METH_VARARGS,
      "Apply the shared C resolution policy to exact-Morse measurements."},
     {"resolution_finalize", native_resolution_finalize, METH_VARARGS,

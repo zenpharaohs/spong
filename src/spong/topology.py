@@ -333,6 +333,24 @@ def _self_contact_events(Y, root, tol, sag=None):
     yield from _drop_removable(scanner, Y, Y, sag, sag)
 
 
+def _native_predicates():
+    """The C exact predicates (GMP rationals), or None without the core.
+
+    The Fraction implementations below remain the oracle; the signs are
+    exact either way, so this is a cost decision, not an arithmetic one.
+    """
+    try:
+        from . import _native
+    except ImportError:
+        return None
+    if not hasattr(_native, "orient2d_exact"):
+        return None
+    return _native
+
+
+_NATIVE_PREDICATES = _native_predicates()
+
+
 def _exact_orientation(a, b, c):
     """Exact sign of the orientation determinant at binary64 points.
 
@@ -346,6 +364,10 @@ def _exact_orientation(a, b, c):
     Calling that ambiguous is a statement about the predicate, not about
     the flow.
     """
+    if _NATIVE_PREDICATES is not None:
+        return _NATIVE_PREDICATES.orient2d_exact(
+            float(a[0]), float(a[1]), float(b[0]), float(b[1]),
+            float(c[0]), float(c[1]))
     ax, ay = Fraction(float(a[0])), Fraction(float(a[1]))
     bx, by = Fraction(float(b[0])), Fraction(float(b[1]))
     cx, cy = Fraction(float(c[0])), Fraction(float(c[1]))
@@ -358,6 +380,11 @@ def _exact_crossing(Y1, i, Y2, j):
     a determinant vanishes exactly (a real degeneracy, measure zero)."""
     a, b = Y1[i], Y1[i+1]
     c, d = Y2[j], Y2[j+1]
+    if _NATIVE_PREDICATES is not None:
+        decided = _NATIVE_PREDICATES.segments_cross_exact(
+            float(a[0]), float(a[1]), float(b[0]), float(b[1]),
+            float(c[0]), float(c[1]), float(d[0]), float(d[1]))
+        return None if decided < 0 else bool(decided)
     o1 = _exact_orientation(a, b, c)
     o2 = _exact_orientation(a, b, d)
     o3 = _exact_orientation(c, d, a)

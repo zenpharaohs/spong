@@ -188,6 +188,25 @@ SPONG_API int spong_sturm_plan_refine(
     spong_root_interval **interval,
     spong_refinement_work *work);
 
+/*
+ * Exact planar predicates on binary64 points.  Every coordinate is a
+ * dyadic rational, so the orientation determinant
+ *     (bx-ax)(cy-ay) - (by-ay)(cx-ax)
+ * is a finite exact computation; the floating version cancels
+ * catastrophically on nearly collinear input, which is exactly what two
+ * branches present as they enter a minimum along the same eigendirection.
+ * Returns the sign in {-1, 0, +1}.  Evaluated in GMP rationals: exact by
+ * construction and independent of the compiler's contraction policy.
+ */
+SPONG_API int spong_orient2d_exact(double ax, double ay, double bx, double by,
+                                   double cx, double cy);
+
+/* Whether segments (a,b) and (c,d) provably cross: 1 yes, 0 no, -1 when an
+ * orientation determinant vanishes exactly (a real degeneracy). */
+SPONG_API int spong_segments_cross_exact(
+    double ax, double ay, double bx, double by,
+    double cx, double cy, double dx, double dy);
+
 #ifdef __cplusplus
 }
 #endif
