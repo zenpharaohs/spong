@@ -119,6 +119,7 @@ def do_record(argv) -> int:
     entries = record_zoo(names)
     pc.CORPUS.mkdir(parents=True, exist_ok=True)
     path_for().write_text(json.dumps(entries, indent=1, sort_keys=True) + "\n")
+    pc.write_platform_tag(path_for())
     terms: dict = {}
     for entry in entries:
         t = entry["output"]["term"]
@@ -133,6 +134,10 @@ def do_check(argv) -> int:
     if not path_for().exists():
         print("no corpus — run record first")
         return 1
+    mismatch = pc.platform_mismatch(path_for())
+    if mismatch:
+        print(f"NOTE: {mismatch}\n      (differences below are expected "
+              f"platform arithmetic, not regressions)")
     entries = json.loads(path_for().read_text())
     if argv:
         entries = [e for e in entries if e["case"] in set(argv)]

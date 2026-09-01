@@ -38,6 +38,7 @@ CORPUS = REPO / "tests" / "corpus" / "continue_curve.json"
 
 sys.path.insert(0, str(HERE))
 from segment_corpus import context, find_local          # noqa: E402
+from potential_corpus import platform_mismatch           # noqa: E402
 
 TERMS = {
     0: "capture", 1: "box_exit", 2: "enter_shallow",
@@ -157,6 +158,9 @@ def main() -> int:
     if not CORPUS.exists():
         print("no corpus — run scripts/segment_corpus.py record first")
         return 1
+    mismatch = platform_mismatch(CORPUS)
+    if mismatch:
+        print(f"NOTE: {mismatch}")
     entries = json.loads(CORPUS.read_text())
     if len(sys.argv) > 1:
         entries = [x for x in entries if x["case"] in set(sys.argv[1:])]

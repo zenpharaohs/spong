@@ -283,11 +283,57 @@ def path_for() -> Path:
     return CORPUS / "potential_rate.json"
 
 
+# --------------------------------------------------------------------------
+# platform tags
+# --------------------------------------------------------------------------
+#
+# A parity corpus records BIT-IDENTICAL arithmetic, and the shared fused
+# kernels (spong_gauss2, spong_jet) compile with the platform's contraction
+# defaults -- FMA on arm64/clang -- by design: the arithmetic at that level
+# is allowed to be what it is, and useful optimizations that move a few
+# ulps are not forbidden.  The consequence is that bit-parity is defined
+# PER PLATFORM: a corpus recorded on one machine class is not a parity
+# oracle on another (the Python oracle leg itself replays the recording
+# platform's kernel arithmetic).  Each corpus therefore carries a sidecar
+# <name>.platform.json naming where it was recorded; checks elsewhere skip
+# with that reason rather than fail.
+
+def platform_tag() -> dict:
+    import platform as _pf
+    return {"machine": _pf.machine(), "system": _pf.system()}
+
+
+def sidecar_for(corpus_path: Path) -> Path:
+    return corpus_path.with_suffix(".platform.json")
+
+
+def write_platform_tag(corpus_path: Path) -> None:
+    sidecar_for(corpus_path).write_text(
+        json.dumps(platform_tag(), indent=1, sort_keys=True) + "\n")
+
+
+def platform_mismatch(corpus_path: Path) -> str | None:
+    """A skip reason when this machine cannot replay the corpus, else None."""
+    sidecar = sidecar_for(corpus_path)
+    if not sidecar.exists():
+        return None                      # untagged: assume replayable
+    tag = json.loads(sidecar.read_text())
+    here = platform_tag()
+    if (tag.get("machine"), tag.get("system")) == \
+            (here["machine"], here["system"]):
+        return None
+    return (f"corpus recorded on {tag.get('machine')}-{tag.get('system')}, "
+            f"this is {here['machine']}-{here['system']}: the fused kernels "
+            f"round differently across platforms, so bit-parity holds per "
+            f"platform (re-record here to check this platform)")
+
+
 def do_record(argv) -> int:
     names = list(argv) if argv else list(zoo.names())
     entries = record_zoo(names)
     CORPUS.mkdir(parents=True, exist_ok=True)
     path_for().write_text(json.dumps(entries, indent=1, sort_keys=True) + "\n")
+    write_platform_tag(path_for())
     kinds: dict = {}
     for entry in entries:
         kinds[entry["kind"]] = kinds.get(entry["kind"], 0) + 1
@@ -301,6 +347,10 @@ def do_check(argv) -> int:
     if not path_for().exists():
         print("no corpus — run record first")
         return 1
+    mismatch = platform_mismatch(path_for())
+    if mismatch:
+        print(f"NOTE: {mismatch}\n      (differences below are expected "
+              f"platform arithmetic, not regressions)")
     entries = json.loads(path_for().read_text())
     if argv:
         entries = [e for e in entries if e["case"] in set(argv)]

@@ -30,9 +30,14 @@ else:
     ENTRIES, IDS = [], []
 
 
-pytestmark = pytest.mark.skipif(
-    not CORPUS.exists(),
-    reason="no centered-arrival corpus — run scripts/arrival_corpus.py record")
+_MISMATCH = pc.platform_mismatch(CORPUS) if CORPUS.exists() else None
+pytestmark = [
+    pytest.mark.skipif(
+        not CORPUS.exists(),
+        reason="no centered-arrival corpus — run scripts/arrival_corpus.py"
+               " record"),
+    pytest.mark.skipif(_MISMATCH is not None, reason=_MISMATCH or ""),
+]
 
 
 @pytest.fixture(scope="module")

@@ -603,6 +603,49 @@ static int parse_rational(const char *numerator, const char *denominator,
     return 0;
 }
 
+/* Exact polynomial value at a rational (Horner in mpq). */
+static void qpoly_value_at(const qpoly *p, const mpq_t x, mpq_t out) {
+    mpq_set_ui(out, 0, 1);
+    for (size_t i = p->n; i-- > 0; ) {
+        mpq_mul(out, out, x);
+        mpq_add(out, out, p->c[i]);
+    }
+}
+
+/* Which of the N equal cells of [lo, hi] false position predicts the root
+ * to lie in, from EXACT endpoint values -- the brackets here are routinely
+ * far below binary64 resolution, so a double-precision prediction has
+ * nothing to say.  Two exact evaluations, the same cost the caller pays
+ * for one verified cut.  Returns 1 with *cell in [0, n_cells-1], or 0 for
+ * same-sign or zero endpoint values. */
+static int predict_root_cell(const qpoly *p, const mpq_t lo, const mpq_t hi,
+                             uint64_t n_cells, uint64_t *cell) {
+    mpq_t v_lo, v_hi, t;
+    mpq_inits(v_lo, v_hi, t, NULL);
+    qpoly_value_at(p, lo, v_lo);
+    qpoly_value_at(p, hi, v_hi);
+    int ok = 0;
+    if (mpq_sgn(v_lo) != 0 && mpq_sgn(v_hi) != 0
+            && mpq_sgn(v_lo) != mpq_sgn(v_hi)) {
+        mpq_sub(v_hi, v_lo, v_hi);          /* v_lo - v_hi */
+        mpq_div(t, v_lo, v_hi);             /* t in (0, 1) */
+        mpz_mul_ui(mpq_numref(t), mpq_numref(t), (unsigned long)n_cells);
+        mpz_t c;
+        mpz_init(c);
+        mpz_fdiv_q(c, mpq_numref(t), mpq_denref(t));
+        if (mpz_sgn(c) < 0)
+            mpz_set_ui(c, 0);
+        uint64_t k = mpz_fits_ulong_p(c) ? mpz_get_ui(c) : n_cells - 1;
+        if (k >= n_cells)
+            k = n_cells - 1;
+        *cell = k;
+        ok = 1;
+        mpz_clear(c);
+    }
+    mpq_clears(v_lo, v_hi, t, NULL);
+    return ok;
+}
+
 static int qpoly_sign_at(const qpoly *p, const mpq_t x) {
     if (p->n == 0)
         return 0;
@@ -758,8 +801,8 @@ int spong_sturm_plan_sign_polynomial_at_root(
     exact_context context;
     memset(&context, 0, sizeof(context));
     qpoly query = {0};
-    mpq_t lo, hi, mid;
-    mpq_inits(lo, hi, mid, NULL);
+    mpq_t lo, hi, mid, w_old, w_new;
+    mpq_inits(lo, hi, mid, w_old, w_new, NULL);
     if (parse_integer_poly(
             coefficients, coefficient_count, &context, &query) != 0) {
         result->status = context.failed
@@ -788,7 +831,7 @@ int spong_sturm_plan_sign_polynomial_at_root(
         result->resolved = 1;
         result->status = SPONG_EXACT_OK;
         qpoly_clear(&query);
-        mpq_clears(lo, hi, mid, NULL);
+        mpq_clears(lo, hi, mid, w_old, w_new, NULL);
         return 0;
     }
 
@@ -799,6 +842,15 @@ int spong_sturm_plan_sign_polynomial_at_root(
             || qpoly_sign_at(&plan->squarefree, hi) == 0)
         goto failure;
 
+    /* Quadratic interval refinement (Abbott): predict the root's position
+     * as a fraction t of the bracket, verify with exact signs at the two
+     * grid points of the containing cell on an N-cell grid, and on success
+     * collapse the WHOLE bracket to that cell (width/N) and square N; on
+     * failure bisect and reset N.  Every cut is still verified by an exact
+     * sign, so soundness is bisection's; only the width now shrinks
+     * superlinearly -- which is what resolving a nearby query root needs.
+     * Each exact evaluation counts against the bisection budget. */
+    uint64_t qir_n = 4;
     for (;;) {
         int resolved = qpoly_interval_sign(&query, lo, hi, &result->sign);
         if (resolved < 0)
@@ -810,20 +862,82 @@ int spong_sturm_plan_sign_polynomial_at_root(
         if (policy->max_bisections
                 && result->bisections >= policy->max_bisections)
             break;
-        ++result->bisections;
-        mpq_add(mid, lo, hi);
-        mpq_div_2exp(mid, mid, 1);
-        int sign_mid = qpoly_sign_at(&plan->squarefree, mid);
-        if (sign_mid == 0) {
-            result->sign = (int32_t)qpoly_sign_at(&query, mid);
-            result->resolved = 1;
-            break;
+        uint64_t cell = 0;
+        int done_step = 0;
+        if (qir_n > 2
+                && predict_root_cell(&plan->squarefree, lo, hi, qir_n,
+                                     &cell)) {
+            result->bisections += 2;     /* the two exact evaluations */
+            /* cell boundaries: lo + cell*w/N and lo + (cell+1)*w/N */
+            mpq_sub(w_old, hi, lo);
+            int s1 = sign_lo, s2 = -sign_lo, boundary_root = 0;
+            if (cell > 0) {
+                mpq_set_ui(w_new, (unsigned long)cell, (unsigned long)qir_n);
+                mpq_mul(w_new, w_new, w_old);
+                mpq_add(mid, lo, w_new);
+                ++result->bisections;
+                s1 = qpoly_sign_at(&plan->squarefree, mid);
+                if (s1 == 0)
+                    boundary_root = 1;
+            }
+            if (!boundary_root) {
+                mpq_set(w_new, mid);     /* left boundary (or lo) */
+                if (cell == 0)
+                    mpq_set(w_new, lo);
+                mpq_set_ui(mid, 1, 1);   /* rebuild right boundary */
+                {
+                    mpq_t step;
+                    mpq_init(step);
+                    mpq_set_ui(step, (unsigned long)(cell + 1),
+                               (unsigned long)qir_n);
+                    mpq_mul(step, step, w_old);
+                    mpq_add(mid, lo, step);
+                    mpq_clear(step);
+                }
+                if (cell + 1 == qir_n) {
+                    s2 = -sign_lo;       /* right boundary is hi */
+                    mpq_set(mid, hi);
+                } else {
+                    ++result->bisections;
+                    s2 = qpoly_sign_at(&plan->squarefree, mid);
+                    if (s2 == 0)
+                        boundary_root = 1;
+                }
+            }
+            if (boundary_root) {
+                result->sign = (int32_t)qpoly_sign_at(&query, mid);
+                result->resolved = 1;
+                break;
+            }
+            if (s1 == sign_lo && s2 != sign_lo) {
+                /* root is in the predicted cell: collapse to it */
+                if (cell > 0) {
+                    mpq_set(lo, w_new);
+                    sign_lo = s1;
+                }
+                mpq_set(hi, mid);
+                qir_n = qir_n <= (1u << 15) ? qir_n * qir_n : (1u << 30);
+                done_step = 1;
+            } else {
+                qir_n = 4;               /* prediction missed: bisect below */
+            }
         }
-        if (sign_mid == sign_lo) {
-            mpq_set(lo, mid);
-            sign_lo = sign_mid;
-        } else {
-            mpq_set(hi, mid);
+        if (!done_step) {
+            ++result->bisections;
+            mpq_add(mid, lo, hi);
+            mpq_div_2exp(mid, mid, 1);
+            int sign_mid = qpoly_sign_at(&plan->squarefree, mid);
+            if (sign_mid == 0) {
+                result->sign = (int32_t)qpoly_sign_at(&query, mid);
+                result->resolved = 1;
+                break;
+            }
+            if (sign_mid == sign_lo) {
+                mpq_set(lo, mid);
+                sign_lo = sign_mid;
+            } else {
+                mpq_set(hi, mid);
+            }
         }
         lo_bits = rational_bits(lo);
         hi_bits = rational_bits(hi);
@@ -838,14 +952,14 @@ int spong_sturm_plan_sign_polynomial_at_root(
     }
     result->status = SPONG_EXACT_OK;
     qpoly_clear(&query);
-    mpq_clears(lo, hi, mid, NULL);
+    mpq_clears(lo, hi, mid, w_old, w_new, NULL);
     return 0;
 
 allocation_failure:
     result->status = SPONG_EXACT_ALLOCATION_FAILURE;
 failure:
     qpoly_clear(&query);
-    mpq_clears(lo, hi, mid, NULL);
+    mpq_clears(lo, hi, mid, w_old, w_new, NULL);
     return -1;
 }
 
