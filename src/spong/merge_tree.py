@@ -51,9 +51,42 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 import math
+import os
 
 from . import _poly as P
 from . import sturm
+
+
+# --------------------------------------------------------------------- #
+# root engine for the level polynomial                                    #
+# --------------------------------------------------------------------- #
+#
+# SPONG_LEVEL_ROOTS=monotone selects spong.level_roots: the real roots of
+# (C - c)A - B^2 from the signs of u - c at the exact critical points (u is
+# monotone between them), with no Sturm chain of the level polynomial.
+# The default, "sturm", is the persistent-chain path.  Both are exact; the
+# monotone engine is validated against this one by
+# scripts/level_roots_probe.py and refuses (LevelTie, a ValueError) exactly
+# where this path's sign alternation would fail.
+
+_LEVEL_ROOTS_CACHE: dict = {}
+
+
+def _level_roots(m, e):
+    """The monotone root engine for this enumeration, or None (Sturm)."""
+    if os.environ.get("SPONG_LEVEL_ROOTS", "sturm") != "monotone":
+        return None
+    key = (id(m), id(e))
+    entry = _LEVEL_ROOTS_CACHE.get(key)
+    if entry is None or entry[0] is not m or entry[1] is not e:
+        from .level_roots import LevelRoots
+        try:
+            engine = LevelRoots(m, e)
+        except ValueError:           # not psi-nice: keep the Sturm path
+            engine = None
+        entry = (m, e, engine)       # holds both alive for the id() key
+        _LEVEL_ROOTS_CACHE[key] = entry
+    return entry[2]
 
 
 # --------------------------------------------------------------------- #
@@ -84,6 +117,9 @@ def value_sign(m, point, c: Fraction, budget: int = 64):
     R = level_polynomial(m, c)
     iv = point.interval
     root = _root_poly(m, point)
+    native = _native_value_sign(R, root, iv)
+    if native is not NotImplemented:
+        return native
     for _ in range(budget):
         s = sturm.interval_sign(R, iv)
         if s is not None:
@@ -94,6 +130,37 @@ def value_sign(m, point, c: Fraction, budget: int = 64):
         iv = sturm.refine(
             root, iv, rel=(iv.hi - iv.lo) / (1 + abs(iv.mid)) / 4)
     return None
+
+
+def _native_value_sign(R, root, iv):
+    """Sign of R at the algebraic root isolated by iv, by the fused kernel.
+
+    Uses the ROOT polynomial's persistent plan (B, N or H -- already built
+    by the enumeration) with R as the query, so no Sturm chain of the level
+    polynomial is ever constructed: on d17-thrash that was 12 degree-34
+    chains, 3 s, to learn 504 signs.  ``resolved == 0`` (the query may share
+    the root -- the exact ties at level C are the generic case) and a work
+    limit both map to None, the same undecided answer the refinement loop
+    gives up with.  NotImplemented when the C core is absent.
+    """
+    integers = P.int_primitive(P.trim(R))
+    root_integers = P.int_primitive(P.trim(root))
+    if not integers or not root_integers:
+        return NotImplemented
+    plan = sturm._native_sturm_plan(root_integers)
+    if plan is None:
+        return NotImplemented
+    result = plan.sign_polynomial_at_root(
+        integers, iv.lo, iv.hi, iv.exact, max_bisections=160)
+    if result["status"] == 4:            # SPONG_EXACT_WORK_LIMIT
+        return None
+    if result["status"] != 0:
+        raise ArithmeticError(
+            "native algebraic sign evaluation refused with status "
+            f"{result['status']}")
+    if not result["resolved"]:
+        return None
+    return int(result["sign"])
 
 
 def _float_value(m, point):
@@ -259,7 +326,11 @@ def components_at(m, e, c: Fraction) -> tuple[Component, ...]:
     two consecutive gaps with the same sign means a missed root.
     """
     R = level_polynomial(m, c)
-    roots = sorted(sturm.isolate_roots(R), key=lambda iv: (iv.lo, iv.hi))
+    LR = _level_roots(m, e)
+    if LR is not None:
+        roots = LR.roots(c)          # LevelTie (a ValueError) if c is critical
+    else:
+        roots = sorted(sturm.isolate_roots(R), key=lambda iv: (iv.lo, iv.hi))
     edges = [iv.hi if not iv.exact else iv.lo for iv in roots]
     lows = [iv.lo for iv in roots]
 
@@ -296,7 +367,8 @@ def components_at(m, e, c: Fraction) -> tuple[Component, ...]:
             continue
         if value_sign(m, p, c) != -1:
             continue
-        inside[i] = _gap_index(m, R, p)
+        inside[i] = (LR.gap_index(c, p) if LR is not None
+                     else _gap_index(m, R, p))
 
     out: list[Component] = []
     for k, s in enumerate(signs):
@@ -372,7 +444,9 @@ def locate(m, e, c: Fraction, a: float, b: float, components=None):
     bq = Fraction(b)
     if P.eval_at(R, bq) == 0:
         return None                      # exactly on a boundary: undecided
-    k = sturm.count_roots(R, None, bq)
+    LR = _level_roots(m, e)
+    k = (LR.count(c, None, bq) if LR is not None
+         else sturm.count_roots(R, None, bq))
     for comp in (components_at(m, e, c) if components is None
                  else components):
         if comp.gap == k:
@@ -406,7 +480,9 @@ def build(m, e) -> MergeTree:
             parents.append(tuple(None for _ in comps))
             continue
         above = per_level[k + 1]
-        R_above = level_polynomial(m, seq.levels[k + 1])
+        c_above = seq.levels[k + 1]
+        R_above = level_polynomial(m, c_above)
+        LR = _level_roots(m, e)
         row: list[int | None] = []
         for comp in comps:
             # Exact: locate the child's interior sample among the PARENT
@@ -417,7 +493,8 @@ def build(m, e) -> MergeTree:
                 raise ValueError(
                     "component sample lies on a higher level's boundary; "
                     "choose a different interior sample")
-            kp = sturm.count_roots(R_above, None, comp.sample)
+            kp = (LR.count(c_above, None, comp.sample) if LR is not None
+                  else sturm.count_roots(R_above, None, comp.sample))
             row.append(next((j for j, up in enumerate(above)
                              if up.gap == kp), None))
         parents.append(tuple(row))

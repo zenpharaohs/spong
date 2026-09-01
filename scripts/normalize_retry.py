@@ -37,6 +37,13 @@ import sys
 import time
 from pathlib import Path
 
+# The ensembles are certification runs, not oracle checks: use the C
+# continuation unless told otherwise.  (Verified decision-identical to the
+# Python engine on all 200 random models, 2026-09-01; the stall-class
+# directed cases are where it matters, being pure continuation.)
+import os
+os.environ.setdefault("SPONG_ENGINE", "native")
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))

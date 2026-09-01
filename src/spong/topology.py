@@ -665,9 +665,13 @@ def _sublevel_component_inventory(m, enumeration, point, slack_shift=48):
             m, point, above=True, shift=slack_shift)
         level_poly = P.sub(
             P.scale(m.alpha, m.C-c), P.mul(m.beta, m.beta))
-        roots = [
-            sturm.refine(level_poly, iv, Fraction(1, 2**80))
-            for iv in sturm.isolate_roots(level_poly)]
+        LR = merge_tree._level_roots(m, enumeration)
+        if LR is not None:
+            roots = LR.roots(c, width=Fraction(1, 2**80))
+        else:
+            roots = [
+                sturm.refine(level_poly, iv, Fraction(1, 2**80))
+                for iv in sturm.isolate_roots(level_poly)]
     except (ArithmeticError, OverflowError, ValueError):
         return {"certified": False, "reason": "exact_level_failure",
                 "minima": (), "saddles": ()}

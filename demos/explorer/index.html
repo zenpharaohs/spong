@@ -1249,6 +1249,22 @@ function drawPortrait(){
     xP.stroke();
   }
 
+  // Stable branches traced on past the compute box (server: _stable_extensions).
+  // Same ascent phase, same curve; drawn lighter because no certificate
+  // covers it -- the box is where the evidence stops, not where the curve does.
+  const extByBranch = new Map();
+  for (const ext of (S.P.extensions || [])){
+    extByBranch.set(ext.branch, ext);
+    xP.save();
+    xP.strokeStyle = css("--stable");
+    xP.globalAlpha = .5;
+    xP.setLineDash([2, 3]);
+    xP.beginPath();
+    strokeClipped(xP, ext.points, X, Y, v, W, H);
+    xP.stroke();
+    xP.restore();
+  }
+
   // Certified extrapolation beyond the traced box.
   //
   // Interpolation between traced vertices is already certified -- that is what
@@ -1279,9 +1295,13 @@ function drawPortrait(){
     xP.save();
     xP.setLineDash([5, 4]);
     xP.lineWidth = 1.2;
-    for (const br of S.P.branches){
+    for (const [bi, br] of S.P.branches.entries()){
       if (br.term !== "box_exit") continue;
-      const pts = br.points, n = pts.length;
+      // The hyperbola test runs on the extended tail where one exists: the
+      // leading form dominates further out, so K has settled where the
+      // certified box alone could not show it.
+      const ext = extByBranch.get(bi);
+      const pts = ext ? br.points.concat(ext.points) : br.points, n = pts.length;
       if (n < 8) continue;
       const Kof = p => p[1]*p[1] - dEff*p[0]*p[0];
       const rlast = Math.hypot(pts[n-1][0], pts[n-1][1]);

@@ -202,6 +202,54 @@ def _max_chord(Y) -> float:
     return worst
 
 
+def _stable_extensions(m, p, enumeration, factor: float = 3.0,
+                       max_pts: int = 20000):
+    """Display-only continuation of stable box_exit branches past the box.
+
+    The certificate is bound to the compute box; a branch that left it is
+    complete as evidence.  But the page's far-field extrapolation (the
+    K-conserving hyperbola) only engages once the leading form dominates,
+    and on a model whose legal box is a few units tall -- minimal-quartet's
+    is b in +-4.8 with minima out at a ~ 38 -- the stable separatrices reach
+    the wall long before that, and at zoom-out they simply stop.
+
+    So each stable box_exit branch is carried on by the same ascent phase
+    that traced it (constant-potential-rate, C), from its last vertex into
+    a box ``factor`` times the compute box.  Milliseconds per branch.  The
+    result is shipped separately, drawn distinguishably, and never enters a
+    certificate; the hyperbola test then runs on the extended tail, where
+    the drift is far more likely to have settled.
+    """
+    from spong import charts
+    box = p.box
+    ca, cb = (box[0]+box[1])/2, (box[2]+box[3])/2
+    wa, wb = (box[1]-box[0])/2, (box[3]-box[2])/2
+    big = (ca-factor*wa, ca+factor*wa, cb-factor*wb, cb+factor*wb)
+    critical = np.array([[float(q.a), float(q.b)]
+                         for q in enumeration.points], dtype=float)
+    out = []
+    for i, br in enumerate(p.branches):
+        if br.kind != "stable" or br.term != "box_exit" or len(br.Y) == 0:
+            continue
+        ascent = br.diag.get("potential_rate_ascent") or {}
+        ds = (float(ascent["geometric_ds"]) / 4.0 if "geometric_ds" in ascent
+              else math.hypot(box[1]-box[0], box[3]-box[2]) / 30000.0)
+        try:
+            pts, term = charts._potential_rate_box_exit(
+                m, tuple(float(x) for x in br.Y[-1]), big, ds, {},
+                max_steps=200000, critical=critical)
+        except Exception:                  # display only: never fatal
+            continue
+        n = len(pts)
+        step = max(1, n // max_pts)
+        sampled = [[float(pt[0]), float(pt[1])] for pt in pts[::step]]
+        if step > 1 and n:
+            sampled.append([float(pts[-1][0]), float(pts[-1][1])])
+        out.append({"branch": i, "term": term, "points": sampled,
+                    "box": list(big)})
+    return out
+
+
 def _branches(p, max_pts: int = 200000):
     """Branch polylines at full traced resolution.
 
@@ -825,6 +873,8 @@ def compute(payload: dict) -> dict:
         "field": _field_coeffs(m),
         "critical": _critical_points(e, m),
         "branches": _branches(p),
+        # Stable branches traced on past the compute box, for drawing only.
+        "extensions": _stable_extensions(m, p, enumeration),
         "wall_connections": wall_connections,
         "wall_limit": wall_limit,
         "wall_pair": wall_pair,

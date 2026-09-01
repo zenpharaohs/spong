@@ -21,17 +21,42 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import potential_corpus as pc                                # noqa: E402
 from potential_corpus import engine, portrait                # noqa: E402
 
-name = sys.argv[1] if len(sys.argv) > 1 else "linear-target-d17-thrash"
-args = [a for a in sys.argv[2:] if not a.startswith("--")]
-top = int(args[0]) if args else 30
+# Either a zoo case by name, or an ensemble case by seed:
+#     python scripts/profile_case.py --seed 1194542352 --mode random
+argv = sys.argv[1:]
+seed = mode = None
+if "--seed" in argv:
+    i = argv.index("--seed")
+    seed = int(argv[i + 1])
+    del argv[i:i + 2]
+if "--mode" in argv:
+    i = argv.index("--mode")
+    mode = argv[i + 1]
+    del argv[i:i + 2]
+positional = [a for a in argv if not a.startswith("--")]
+name = positional[0] if positional else "linear-target-d17-thrash"
+top = int(positional[1]) if len(positional) > 1 else 30
 
-m, e, z = pc.context(name)
+if seed is not None:
+    import random
+    from qualify import directed_model, random_model
+    from spong import sturm
+    build = random_model if (mode or "random") == "random" else directed_model
+    m, spec = build(random.Random(seed), 5)
+    if m is None:
+        raise SystemExit(f"generator declined seed {seed}")
+    view = None
+    name = f"{spec} (seed {seed})"
+else:
+    m, e, z = pc.context(name)
+    view = z.default_view
+
 print(f"engine: {engine.active_name()}  case: {name}  workers: "
       f"{os.environ['SPONG_WORKERS']}")
 t0 = time.perf_counter()
 prof = cProfile.Profile()
 prof.enable()
-portrait.certified_compute(m, view=z.default_view)
+portrait.certified_compute(m, view=view)
 prof.disable()
 print(f"wall: {time.perf_counter()-t0:.1f}s\n")
 
