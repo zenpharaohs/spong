@@ -127,14 +127,16 @@ def main(argv=None) -> int:
     native = m._native_kernel
 
     for cur in [float(c) for c in args.chords.split(",")]:
+        va = flow*(-2.0*m.sA(b)*w)
+        vp = (vb*vb + va*va)**0.5
         if chart == "slow":
-            h = cur/(1.0 + (vw/vb)**2)**0.5*(1.0 if vb > 0 else -1.0)
+            h = cur*vb/vp
             f, j, x, y, fl = sf, sj, b, w, s_floor
             nat6 = lambda: native.slow_step(b, w, h)
             nat4 = lambda: native.slow_step_gl4(b, w, h)
             ref4 = lambda: gauss.gl4_scalar(sf, sj, b, w, h, floor=s_floor)
         else:
-            h = cur/(1.0 + (vb/vw)**2)**0.5*(1.0 if vw > 0 else -1.0)
+            h = cur*vw/vp
             f, j, x, y, fl = ff, fj, w, b, f_floor
             nat6 = lambda: native.fast_step(w, b, h)
             nat4 = lambda: native.fast_step_gl4(w, b, h)

@@ -91,15 +91,17 @@ def one_attempt(m, b, w, flow, cur, chart):
     native = m._native_kernel
     vb, vw = charts._s_velocities(m, b, w)
     vb, vw = flow*vb, flow*vw
+    va = flow*(-2.0*m.sA(b)*w)
+    vp = (vb*vb + va*va)**0.5
     res = {}
     for method in ("gl6", "gl4"):
         try:
             if chart == "slow":
-                h = cur/(1.0 + (vw/vb)**2)**0.5*(1.0 if vb > 0 else -1.0)
+                h = cur*vb/vp
                 step = native.slow_step if method == "gl6" else native.slow_step_gl4
                 w_new = step(b, w, h); b_new = b + h
             else:
-                h = cur/(1.0 + (vb/vw)**2)**0.5*(1.0 if vw > 0 else -1.0)
+                h = cur*vw/vp
                 step = native.fast_step if method == "gl6" else native.fast_step_gl4
                 b_new = step(w, b, h); w_new = w + h
         except (ZeroDivisionError, FloatingPointError, OverflowError) as ex:

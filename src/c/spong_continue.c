@@ -70,6 +70,7 @@
 #define RETRY_ATTEMPTS  8
 #define STALL_WINDOW    12
 #define NOISE_C         4.0     /* gauss._NOISE_C: evaluation-floor convergence */
+#define TURN_RES_FACTOR 611.0   /* charts.TURN_RES_FACTOR: chord resolution guard */
 
 static const double SQRT15 = 3.87298334620741688517926539978239961;
 static const double SQRT3  = 1.73205080756887729352744634150587237;
@@ -160,7 +161,7 @@ static void grad_loss(const spong_continue_field *f, double a, double b,
 
 /* charts._s_velocities via model.P_of */
 static void velocities(const spong_continue_field *f, double b, double w,
-                       double *vb, double *vw) {
+                       double *vb, double *vw, double *va) {
     SPONG_FP_EXACT
     base k; eval_base_p(f, b, &k);
     double asp = k.Bp / k.A - k.B * k.Ap / (k.A * k.A);
@@ -168,6 +169,7 @@ static void velocities(const spong_continue_field *f, double b, double w,
     double P   = up + k.Ap * w * w - 2.0 * k.A * w * asp;
     *vb = -P;
     *vw = -2.0 * k.A * w + asp * P;
+    *va = -2.0 * k.A * w;          /* physical a-velocity: vw + a*' vb */
 }
 
 /* charts._s_depth_gauge_floor, term for term. */
@@ -490,6 +492,38 @@ static int segment_capture(double a0, double b0, double a1, double b1,
             + (b0 + t * db - bt) * (b0 + t * db - bt)) < radius * radius;
 }
 
+/* The plane's own stepper -- charts._continue_curve_python's plane_step:
+ * one step of length `chord` by arclength in the 2-D normalized gradient
+ * field, orders 8/6/4, under the descent test.  Tried at the FULL chord
+ * whenever a chart step fails there, before any halving.  Returns the
+ * rescue index taken, or -1. */
+static int plane_step(const spong_continue_field *f, const spong_field *gf,
+                      int flow, double b_prev, double w_prev, double chord,
+                      double *b_new, double *w_new) {
+    SPONG_FP_EXACT
+    static const int orders[3] = { 8, 6, 4 };
+    const double eps = DBL_EPSILON;
+    for (int oi = 0; oi < 3; oi++) {
+        double a_prev = a_star(f, b_prev) + w_prev;
+        double z[2] = { a_prev, b_prev }, out[2];
+        if (!spong_normalized_step(gf, z, -flow * chord, orders[oi], out))
+            continue;
+        double a_try = out[0], b_try = out[1];
+        if (!(isfinite(a_try) && isfinite(b_try))) continue;
+        double da = a_try - a_prev, db = b_try - b_prev;
+        double ga, gb;
+        grad_loss(f, a_prev, b_prev, &ga, &gb);
+        double Lp = loss(f, a_prev, b_prev);
+        double expected = flow * (ga * da + gb * db);
+        double actual = flow * (loss(f, a_try, b_try) - Lp);
+        double slack = 64.0 * eps * (1.0 + fabs(Lp));
+        if (expected >= 0.0 || actual > 1e-4 * expected + slack) continue;
+        *b_new = b_try; *w_new = a_try - a_star(f, b_try);
+        return SPONG_RESCUE_NORMALIZED_GL8 + oi;
+    }
+    return -1;
+}
+
 /* ------------------------------------------------------------------ *
  * the segment                                                         *
  * ------------------------------------------------------------------ */
@@ -560,8 +594,8 @@ SPONG_API int spong_continue_curve(
 
     EMIT(a_star(f, b) + w, b);
 
-    double vb, vw;
-    velocities(f, b, w, &vb, &vw);
+    double vb, vw, va0;
+    velocities(f, b, w, &vb, &vw, &va0);
     vb *= flow; vw *= flow;
     int slow = !(fabs(vw) > R_SWITCH * fabs(vb));
 
@@ -573,8 +607,13 @@ SPONG_API int spong_continue_curve(
     size_t n_recent = 0;
 
     for (size_t step = 0; step < max_steps; step++) {
-        velocities(f, b, w, &vb, &vw);
-        vb *= flow; vw *= flow;
+        double va;
+        velocities(f, b, w, &vb, &vw, &va);
+        vb *= flow; vw *= flow; va *= flow;
+        /* THE CHORD IS A PLANE CHORD: h projects a plane chord of length
+         * cur onto the chart's independent variable (charts.py, same
+         * comment).  vp = |grad L|. */
+        double vp = pow(vb * vb + va * va, 0.5);
         double speed = fmax(fabs(vb), fabs(vw));
         if (speed < 1e-300) { b_end = b; w_end = w;
             FINISH(SPONG_CONT_ABORT_STATIONARY, SPONG_DELEGATE_NONE); }
@@ -629,11 +668,11 @@ SPONG_API int spong_continue_curve(
             double h;
             int failed = 0;
             if (slow) {
-                h = cur / sqrt(1.0 + (vw / vb) * (vw / vb)) * (vb > 0 ? 1.0 : -1.0);
+                h = cur * vb / vp;
                 w_new = gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
                 b_new = b_prev + h;
             } else {
-                h = cur / sqrt(1.0 + (vb / vw) * (vb / vw)) * (vw > 0 ? 1.0 : -1.0);
+                h = cur * vw / vp;
                 b_new = gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
                 w_new = w_prev + h;
             }
@@ -660,6 +699,21 @@ SPONG_API int spong_continue_curve(
             }
 
             if (failed) {
+                /* THE PLANE FIRST, AT THE SAME CHORD (charts.py, same
+                 * comment): a chart step that fails at cur may fail because
+                 * the chart is bad here, not because the chord is. */
+                int rescued = 0;
+                {
+                    double bp, wp;
+                    int kind = plane_step(f, gf, flow, b_prev, w_prev, cur, &bp, &wp);
+                    if (kind >= 0) {
+                        a_prev = a_star(f, b_prev) + w_prev;
+                        b_new = bp; w_new = wp;
+                        result->rescues[kind]++;
+                        rescued = 1;
+                    }
+                }
+                if (!rescued) {
                 if (cur > continuation_floor) { cur *= 0.5; rejected++; continue; }
                 /* FLOOR-FALLBACK LADDER.  At the spatial resolution floor,
                  * further halving moves into cancellation.  The two graph
@@ -670,20 +724,17 @@ SPONG_API int spong_continue_curve(
                  * under the same descent-realization test.  Note the test
                  * here is the reference's: no finiteness guard on
                  * expected/actual, just the two inequalities. */
-                int rescued = 0;
                 const int alt_slow[3] = { slow, !slow, !slow };
                 const int alt_gl6[3]  = { 0, 1, 0 };
                 for (int alt = 0; alt < 3 && !rescued; alt++) {
                     double bn, wn;
                     if (alt_slow[alt]) {
-                        h = cur / sqrt(1.0 + (vw / vb) * (vw / vb))
-                            * (vb > 0 ? 1.0 : -1.0);
+                        h = cur * vb / vp;
                         wn = alt_gl6[alt] ? gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h)
                                           : gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
                         bn = b_prev + h;
                     } else {
-                        h = cur / sqrt(1.0 + (vb / vw) * (vb / vw))
-                            * (vw > 0 ? 1.0 : -1.0);
+                        h = cur * vw / vp;
                         bn = alt_gl6[alt] ? gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h)
                                           : gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
                         wn = w_prev + h;
@@ -706,36 +757,9 @@ SPONG_API int spong_continue_curve(
                         : (alt_gl6[alt] ? SPONG_RESCUE_FAST_GL6 : SPONG_RESCUE_FAST_GL4)]++;
                     rescued = 1;
                 }
-                /* Both graph parameterizations can become singular at the
-                 * same geometric point (most commonly on arrival).  The curve
-                 * itself is still regular there: continue it by arclength in
-                 * the 2-D normalized-gradient field, orders 8, 6, 4, with the
-                 * same expected-change check selecting the local stage
-                 * root. */
-                if (!rescued) {
-                    static const int orders[3] = { 8, 6, 4 };
-                    for (int oi = 0; oi < 3 && !rescued; oi++) {
-                        a_prev = a_star(f, b_prev) + w_prev;
-                        double z[2] = { a_prev, b_prev }, out[2];
-                        if (!spong_normalized_step(gf, z, -flow * cur,
-                                                   orders[oi], out))
-                            continue;
-                        double a_try = out[0], b_try = out[1];
-                        if (!(isfinite(a_try) && isfinite(b_try))) continue;
-                        double da = a_try - a_prev, db = b_try - b_prev;
-                        double ga, gb;
-                        grad_loss(f, a_prev, b_prev, &ga, &gb);
-                        double Lp = loss(f, a_prev, b_prev);
-                        double expected = flow * (ga * da + gb * db);
-                        double actual = flow * (loss(f, a_try, b_try) - Lp);
-                        double slack = 64.0 * eps * (1.0 + fabs(Lp));
-                        if (expected >= 0.0 || actual > 1e-4 * expected + slack)
-                            continue;
-                        b_new = b_try; w_new = a_try - a_star(f, b_try);
-                        result->rescues[SPONG_RESCUE_NORMALIZED_GL8 + oi]++;
-                        rescued = 1;
-                    }
-                }
+                /* The plane step was already tried at this chord above (it
+                 * is tried before every halving, the floor included), so the
+                 * only rung left is the centered chart. */
                 if (!rescued) {
                     b_end = b_prev; w_end = w_prev;
                     if (centered_available) {
@@ -749,6 +773,7 @@ SPONG_API int spong_continue_curve(
                     result->fail_slow = slow; result->fail_retry = retry;
                     FINISH(SPONG_CONT_ABORT_STEP_FAILURE, SPONG_DELEGATE_NONE);
                 }
+                }   /* !rescued by the plane */
                 failed = 0;
             }
 
@@ -758,7 +783,11 @@ SPONG_API int spong_continue_curve(
                 double d2a = a_new - prev1_a, d2b = b_new - prev1_b;
                 double nn1 = sqrt(d1a * d1a + d1b * d1b);
                 double nn2 = sqrt(d2a * d2a + d2b * d2b);
-                if (nn1 > 1e-14 && nn2 > 1e-14
+                /* a chord is a direction only when it is long against the
+                 * rounding of its endpoints; charts.TURN_RES_FACTOR */
+                double res = TURN_RES_FACTOR * DBL_EPSILON
+                             * (fabs(a_star(f, b_new)) + fabs(w_new) + fabs(b_new));
+                if (nn1 > res && nn2 > res
                     && (d1a * d2a + d1b * d2b) / (nn1 * nn2) < TMAX
                     && cur > continuation_floor) {
                     cur *= 0.5; rejected++; continue;

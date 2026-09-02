@@ -2210,8 +2210,7 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     static const char *rescue_names[SPONG_RESCUE_COUNT] = {
         "floor_fallback_slow_gl4", "floor_fallback_slow_gl6",
         "floor_fallback_fast_gl4", "floor_fallback_fast_gl6",
-        "floor_fallback_normalized_gl8", "floor_fallback_normalized_gl6",
-        "floor_fallback_normalized_gl4",
+        "normalized_gl8", "normalized_gl6", "normalized_gl4",
     };
     PyObject *diag = PyDict_New();
     if (diag == NULL) { Py_DECREF(blob); return NULL; }

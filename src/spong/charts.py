@@ -49,6 +49,14 @@ MAX_SWITCHES = 12
 # is an abort_max_steps that arrives earlier.
 STEP_CEILING = 5000000
 TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
+# The turn test compares two chord directions; a chord is only a direction
+# if it is long against the rounding of its endpoints.  A 0.75 degree budget
+# needs the chord to be ~8/theta = 611 times the endpoint noise
+# eps*(|a*| + |w| + |b|) -- the chart's own resolution in (a, b) -- before
+# a measured turn means anything.  Below that the test is skipped, not
+# failed.  (Was an absolute 1e-14, which let chords of two ulps of a 1e4
+# backbone pass as directions: directed seed 639780423.)
+TURN_RES_FACTOR = 611.0
 UNSTABLE_LAUNCH_REL = 1e-6
 STABLE_LAUNCH_DELTA = 1e-4
 GEOMETRIC_IRK_PRIMARY = 8
@@ -1774,6 +1782,46 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
     native = getattr(m, "_native_kernel", None)
     b, w = float(b0), float(w0)
     pts = [(m.s_a_star(b) + w, b)]
+
+    def plane_step(b_prev, w_prev, chord):
+        """One step of length `chord` by arclength in the 2-D normalized
+        gradient field, orders 8/6/4, under the descent test.  Returns
+        (b_new, w_new, diag_key) or None.  Representation-independent:
+        this is the plane's own stepper, and it is tried at the FULL chord
+        whenever a chart step fails there, BEFORE the chord is reduced --
+        at every chord level down to and including the floor.  Measured
+        (directed seed 639780423): a straight vertical branch at a ~ -5e5,
+        b ~ 5e-6, where the deviation chart's f = db/dw has a feature
+        ~1e-7 wide in b (h*J from -8e6 at the base point to +8e2, +15, +4
+        at the three stage points): no stage root at ds, halved to 5% of
+        ds, 1.5M steps.  The plane step at ds is trivial there.  It used to
+        be the last rung of the floor ladder, reachable only after seven
+        halvings."""
+        if native is None:
+            return None
+        for order in (*_geometric_orders(), 4):
+            a_prev = m.s_a_star(b_prev) + w_prev
+            try:
+                a_try, b_try = native.normalized_step(
+                    a_prev, b_prev, -flow*chord, order)
+            except (ArithmeticError, ValueError,
+                    FloatingPointError, OverflowError):
+                continue
+            if not (np.isfinite(a_try) and np.isfinite(b_try)):
+                continue
+            da, db = a_try-a_prev, b_try-b_prev
+            expected = flow * float(
+                m.gradL(a_prev, b_prev) @ np.array([da, db]))
+            actual = flow * float(
+                m.L(a_try, b_try) - m.L(a_prev, b_prev))
+            descent_slack = 64.0*np.finfo(float).eps * (
+                1.0 + abs(float(m.L(a_prev, b_prev))))
+            if (expected >= 0.0
+                    or actual > 1e-4*expected + descent_slack):
+                continue
+            return (float(b_try), float(a_try-m.s_a_star(b_try)),
+                    f"normalized_gl{order}")
+        return None
     # Budget the DISTANCE TRAVELLED, not the step count.  A step budget is not
     # invariant under the halving below: the turn budget and the
     # descent-realization test drive `cur` down to continuation_floor =
@@ -1856,6 +1904,18 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
     for _ in range(max_steps):
         vb, vw = _s_velocities(m, b, w)
         vb, vw = flow * vb, flow * vw
+        # THE CHORD IS A PLANE CHORD.  The step h is chosen so the (a, b)
+        # displacement has length cur, not the (b, w) one: with the physical
+        # a-velocity va = vw + a*'vb = -2Aw the plane speed is
+        # vp = sqrt(vb^2 + va^2) = |grad L|, and the chart step is the
+        # projection of a plane chord of length cur onto the chart's
+        # independent variable: h = cur*vb/vp (slow), cur*vw/vp (fast).
+        # Measured in chart units, a chord of ds on a branch far from the
+        # backbone (a*' ~ 6e5, directed seed 639780423) was 1e-6 ds in the
+        # plane -- the work bound, ds, ds0 and the box are all plane
+        # quantities, and were being spent a million times over.
+        va = flow * (-2.0 * m.sA(b) * w)
+        vp = (vb * vb + va * va) ** 0.5
         speed = max(abs(vb), abs(vw))
         if speed < 1e-300:
             return pts, "abort_stationary", switches, (b, w)
@@ -1916,16 +1976,14 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
             h = np.nan
             try:
                 if chart == "slow":
-                    h = cur / (1.0 + (vw / vb) ** 2) ** 0.5 * (
-                        1.0 if vb > 0 else -1.0)
+                    h = cur * vb / vp
                     w_new = native.slow_step(b_prev, w_prev, h) \
                         if native is not None else \
                         gauss.gl6_scalar(sf, sj, b_prev, w_prev, h,
                                          floor=s_floor)
                     b_new = b_prev + h
                 else:
-                    h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
-                        1.0 if vw > 0 else -1.0)
+                    h = cur * vw / vp
                     b_new = native.fast_step(w_prev, b_prev, h) \
                         if native is not None else \
                         gauss.gl6_scalar(ff, fj, w_prev, b_prev, h,
@@ -1966,26 +2024,39 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
             # where GL4 silently proceeds; without halving that showed up out
             # of sample as abort_nonfinite on branches GL4 captured.
             if step_failed or not (np.isfinite(b_new) and np.isfinite(w_new)):
-                if cur > retry_floor:
-                    cur *= 0.5
-                    continue
+                # THE PLANE FIRST, AT THE SAME CHORD.  A chart step that
+                # fails at `cur` may fail because the chart is bad here, not
+                # because the chord is: try the representation-independent
+                # step before shrinking anything.
+                plane = plane_step(b_prev, w_prev, cur)
+                if plane is not None:
+                    a_prev = m.s_a_star(b_prev) + w_prev
+                    b_new, w_new, key = plane
+                    if engine_diag is not None:
+                        engine_diag[key] = engine_diag.get(key, 0) + 1
+                    step_failed = False
+                    rescued = True
+                    alternatives = []
+                else:
+                    if cur > retry_floor:
+                        cur *= 0.5
+                        continue
+                    rescued = False
+                    alternatives = [
+                        (chart, "gl4"),
+                        ("fast" if chart == "slow" else "slow", "gl6"),
+                        ("fast" if chart == "slow" else "slow", "gl4"),
+                    ]
                 # At the spatial resolution floor, further halving moves into
                 # cancellation.  The two graph charts describe the same curve,
                 # and GL4 has a different stage system, so exhaust those
                 # equivalent representations before declaring the state
                 # numerically undefined.  GL6 remains the normal engine; this
                 # ladder is reached only after its retry budget is exhausted.
-                rescued = False
-                alternatives = [
-                    (chart, "gl4"),
-                    ("fast" if chart == "slow" else "slow", "gl6"),
-                    ("fast" if chart == "slow" else "slow", "gl4"),
-                ]
                 for alt_chart, method in alternatives:
                     try:
                         if alt_chart == "slow":
-                            h = cur / (1.0 + (vw / vb) ** 2) ** 0.5 * (
-                                1.0 if vb > 0 else -1.0)
+                            h = cur * vb / vp
                             if native is not None:
                                 step = native.slow_step if method == "gl6" \
                                     else native.slow_step_gl4
@@ -1997,8 +2068,7 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                                              floor=s_floor)
                             b_new = b_prev + h
                         else:
-                            h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
-                                1.0 if vw > 0 else -1.0)
+                            h = cur * vw / vp
                             if native is not None:
                                 step = native.fast_step if method == "gl6" \
                                     else native.fast_step_gl4
@@ -2029,40 +2099,9 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                             engine_diag[key] = engine_diag.get(key, 0) + 1
                         rescued = True
                         break
-                # Both graph parameterizations can become singular at the
-                # same geometric point (most commonly on arrival).  The curve
-                # itself is still regular there.  Continue it by arclength in
-                # the native 2-D normalized-gradient field before declaring
-                # FP64 defeat; this is representation-independent and its
-                # Armijo expected-change check selects the local stage root.
-                if not rescued and native is not None:
-                    for order in (*_geometric_orders(), 4):
-                        a_prev = m.s_a_star(b_prev) + w_prev
-                        try:
-                            a_try, b_try = native.normalized_step(
-                                a_prev, b_prev, -flow*cur, order)
-                        except (ArithmeticError, ValueError,
-                                FloatingPointError, OverflowError):
-                            continue
-                        if not (np.isfinite(a_try) and np.isfinite(b_try)):
-                            continue
-                        da, db = a_try-a_prev, b_try-b_prev
-                        expected = flow * float(
-                            m.gradL(a_prev, b_prev) @ np.array([da, db]))
-                        actual = flow * float(
-                            m.L(a_try, b_try) - m.L(a_prev, b_prev))
-                        descent_slack = 64.0*np.finfo(float).eps * (
-                            1.0 + abs(float(m.L(a_prev, b_prev))))
-                        if (expected >= 0.0
-                                or actual > 1e-4*expected + descent_slack):
-                            continue
-                        b_new, w_new = float(b_try), float(
-                            a_try-m.s_a_star(b_try))
-                        if engine_diag is not None:
-                            key = f"floor_fallback_normalized_gl{order}"
-                            engine_diag[key] = engine_diag.get(key, 0) + 1
-                        rescued = True
-                        break
+                # The plane step was already tried at this chord above (it
+                # is tried before every halving, the floor included), so the
+                # only rung left is the centered chart.
                 if not rescued:
                     a_prev = m.s_a_star(b_prev)+w_prev
                     centered = centered_trial(a_prev, b_prev, cur)
@@ -2091,7 +2130,9 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                 d2a, d2b = a_new - p1[0], b_new - p1[1]
                 n1 = (d1a * d1a + d1b * d1b) ** 0.5
                 n2 = (d2a * d2a + d2b * d2b) ** 0.5
-                if (n1 > 1e-14 and n2 > 1e-14
+                res = TURN_RES_FACTOR * np.finfo(float).eps * (
+                    abs(m.s_a_star(b_new)) + abs(w_new) + abs(b_new))
+                if (n1 > res and n2 > res
                         and (d1a * d2a + d1b * d2b) / (n1 * n2) < TURN_MAX
                         and cur > retry_floor):
                     cur *= 0.5

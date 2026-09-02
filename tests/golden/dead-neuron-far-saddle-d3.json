@@ -82,14 +82,14 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 2.6210946829463215e-06,
-      "angle_resolved": 3867,
+      "angle_energy[RESIDUAL]": 2.5727574333614944e-06,
+      "angle_resolved": 3877,
       "angle_unresolved": 48,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 2.8788485208167804,
-      "n_points": 4430,
+      "max_turn_deg[RESIDUAL]": 2.867167211936682,
+      "n_points": 4440,
       "saddle_b": 50.72904421595301,
       "seam_residual[RESIDUAL]": 9.1464941721842e-24,
       "term": "capture"
@@ -175,8 +175,8 @@
     "balanced": true,
     "representation_attested": true,
     "topology_status": "certified",
-    "worst_angle_energy": 2.6210946829463215e-06,
-    "worst_max_turn_deg": 2.8788485208167804
+    "worst_angle_energy": 2.5727574333614944e-06,
+    "worst_max_turn_deg": 2.867167211936682
   },
   "topology": {
     "ambiguous_count": 0,

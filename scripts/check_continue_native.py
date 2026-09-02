@@ -51,8 +51,7 @@ REASONS = {0: "none", 1: "floor_ladder", 2: "stall_trim", 3: "centered_chart"}
 RESCUE_NAMES = (
     "floor_fallback_slow_gl4", "floor_fallback_slow_gl6",
     "floor_fallback_fast_gl4", "floor_fallback_fast_gl6",
-    "floor_fallback_normalized_gl8", "floor_fallback_normalized_gl6",
-    "floor_fallback_normalized_gl4",
+    "normalized_gl8", "normalized_gl6", "normalized_gl4",
 )
 
 

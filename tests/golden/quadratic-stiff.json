@@ -115,14 +115,14 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 4.106741396295691e-19,
-      "angle_resolved": 9498,
+      "angle_energy[RESIDUAL]": 3.9804828113631533e-19,
+      "angle_resolved": 9566,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
       "max_turn_deg[RESIDUAL]": 0.0908810456046069,
-      "n_points": 10013,
+      "n_points": 10081,
       "saddle_b": 2.007082718864143,
       "term": "box_exit"
     },
