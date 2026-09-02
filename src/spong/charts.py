@@ -2255,17 +2255,59 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 "fp64_spectral_resolved":
                     sc.get("fp64_spectral_resolved"),
             }
+            if not saddle_mild and len(local_Y) < 2:
+                # BACKBONE LAUNCH (the March design, ported at last).  A
+                # single-vertex stub used to be refused: no chord, no launch
+                # scale, nothing for the fixed point to continue from.  But
+                # in the not-mild case the sounding already says the
+                # transverse separation is below the roundoff floor -- the
+                # unstable manifold IS the backbone, and its two branches
+                # leave along the backbone (the transverse direction is
+                # strongly stable, so u has a maximum here on the backbone).
+                # So the missing chord can be manufactured ON the backbone:
+                # b0 = b_s + db0, a0 = a*(b0), v0 = 0 -- the committed
+                # transverse error is below anything representable, and the
+                # zone loop below (post-clamp) owns everything after.  The
+                # census measured 60 branches (12% of aborts on the d1/13
+                # legal-box population) refused for want of exactly this
+                # chord.
+                b0 = float(b_saddle + db0)
+                a_s = float(m.a_star(b_saddle))
+                a0 = float(m.a_star(b0))
+                # No float descent test: this is an enumerated SADDLE of L
+                # with the transverse direction strongly stable (2A > 0), so
+                # u has a maximum here on the backbone and BOTH backbone
+                # directions descend -- structurally, from the enumeration.
+                # A float L-difference at launch scale cancels to exactly 0.0
+                # when db0 is span-limited by a nearby feature (measured:
+                # u'' ~ -2e-9, db0 ~ 1e-4, dL ~ 1e-17 under ulp(L)), and
+                # refusing on that is refusing on roundoff.  Finiteness of
+                # the backbone evaluations is the only float question.
+                launchable = (np.isfinite(a_s) and np.isfinite(a0)
+                              and np.isfinite(m.L(a0, b0)))
+                if launchable:
+                    local_Y = np.asarray([[a_s, b_saddle], [a0, b0]])
+                    if len(pts) == 1:
+                        pts.append((a0, b0))
+                    else:
+                        pts[:] = [(a_s, b_saddle), (a0, b0)]
+                    b_cur = b0
+                    w_cur = 0.0
+                    launch_scale = max(
+                        float(np.hypot(a0 - a_s, b0 - b_saddle)),
+                        np.finfo(float).tiny)
+                    certs["handoff_certified"] = False
+                    diag["shallow_launch"] = "backbone"
+                    diag["backbone_launch"] = {
+                        "b0": b0, "a0": a0, "db0": float(db0)}
             if saddle_mild or len(local_Y) < 2:
                 # A mild saddle whose stub cannot reach the global field has
                 # no second owner -- the sounding says deep water, where the
                 # continuation engine is the only candidate and it is exactly
                 # the field that failed to condition.  The refusal stands.
-                #
-                # A single-vertex stub is refused for a different reason:
-                # there is no chord, hence no launch scale and nothing for the
-                # fixed point to continue from.  Falling through on one
-                # produced a one-vertex branch whose certificate call then
-                # failed outright (seed 2149547, b* = -16384).
+                # (A not-mild single-vertex stub only reaches here when the
+                # backbone launch above was not able to evaluate the backbone
+                # finitely -- then the honest answer is still the refusal.)
                 return Branch(
                     "unstable", local_Y, "abort_conditioning_handoff",
                     {"handoff_certified": False}, diag)
