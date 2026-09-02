@@ -51,22 +51,51 @@ def test_connections_are_discovered_and_certified(tricky_portrait):
             assert b["connection[RESIDUAL]"]
 
 
-def test_asymptote_certificates_present(tricky_portrait):
-    """Certificates exist on all separatrices; residuals are meaningful
-    (small) only where the exit radius is genuinely asymptotic — the
-    certificate must be honest about pre-asymptotic exits, not silent."""
+def test_stable_terminals_certified_by_kind(tricky_portrait):
+    """Every stable separatrix ends one of two certified ways.
+
+    A branch that left the trace box carries the sqrt(d_eff) asymptote
+    certificate, whose residual is meaningful (small) only where the exit
+    radius is genuinely asymptotic -- honest about pre-asymptotic exits,
+    not silent.  A branch stopped at the LEVEL BAR is pre-asymptotic by
+    design: above the highest saddle loss U* there is no critical point
+    and no possible connection, so tracing on certifies nothing.  Such a
+    branch carries NO asymptote certificate; its verdict is the audit's
+    exact superlevel enclosure, which must be present and certified.  The
+    float bar is inflated so a stop is only ever late: the loss at the
+    stop clears every saddle loss in floating arithmetic too.
+    """
     p = tricky_portrait
-    stables = [(br, b) for br, b in zip(p.branches, p.ledger["branches"])
+    m = p.model
+    u_star = max(float(m.L(float(m.a_star(q.b)), q.b))
+                 for q in p.enumeration.saddles)
+    tails = {t["branch"]: t for t in p.ledger["topology"]["stable_tails"]}
+    stables = [(i, br, b)
+               for i, (br, b) in enumerate(zip(p.branches,
+                                                p.ledger["branches"]))
                if b["kind"] == "stable"]
     assert len(stables) == 8
-    n_asymptotic = 0
-    for br, b in stables:
-        assert "asymptote_residual[RESIDUAL]" in b
-        r_exit = float(np.hypot(*br.Y[-1]))
-        if r_exit > 8.0:                       # genuinely toward the rim
-            assert b["asymptote_residual[RESIDUAL]"] < 0.2
-            n_asymptotic += 1
-    assert n_asymptotic >= 2                   # the tricky saddle's pair
+    n_barred = 0
+    for i, br, b in stables:
+        assert b["term"] in ("box_exit", "level_bar")
+        tail = tails[i]
+        assert tail["certified"], tail
+        if b["term"] == "level_bar":
+            n_barred += 1
+            assert "asymptote_residual[RESIDUAL]" not in b
+            assert tail["method"] == "exact_superlevel_enclosure"
+            assert not tail["box_exit"]
+            assert float(m.L(float(br.Y[-1, 0]), float(br.Y[-1, 1]))) >= u_star
+        else:
+            assert "asymptote_residual[RESIDUAL]" in b
+            r_exit = float(np.hypot(*br.Y[-1]))
+            if r_exit > 8.0:                   # genuinely toward the rim
+                assert b["asymptote_residual[RESIDUAL]"] < 0.2
+    # Measured under the bar: every stable branch of tricky-d11 stops at
+    # U* well inside the trace box (514 vertices where the box exit took
+    # thousands).  A box exit reappearing here would mean the bar stopped
+    # firing, which is worth noticing.
+    assert n_barred == 8
 
 
 def test_render_svg(tricky_portrait, tmp_path):
@@ -147,12 +176,21 @@ def test_default_display_view_is_smaller_than_trace_box():
     assert p.view is not None
     assert p.box[0] < p.view[0] and p.box[1] > p.view[1]
     assert p.box[2] < p.view[2] and p.box[3] > p.view[3]
-    assert any(
-        br.kind == "stable"
-        and (np.min(br.Y[:, 0]) < p.view[0] or np.max(br.Y[:, 0]) > p.view[1]
-             or np.min(br.Y[:, 1]) < p.view[2] or np.max(br.Y[:, 1]) > p.view[3])
-        for br in p.branches
-    )
+    # Formerly this asserted that some stable branch left the display view,
+    # the trace box existing so that re-entry chords were traced.  Under
+    # the level bar a stable branch stops where its loss clears the highest
+    # saddle loss, which may be INSIDE the view: the box bounds the trace
+    # and no longer promises the picture reaches the rim -- that is the
+    # display extensions' job.  What remains guaranteed: every stable
+    # branch ends at a certified terminal, and a barred one ends above U*.
+    stables = [br for br in p.branches if br.kind == "stable"]
+    assert stables
+    assert all(br.term in ("box_exit", "level_bar") for br in stables)
+    u_star = max(float(m.L(float(m.a_star(q.b)), q.b))
+                 for q in p.enumeration.saddles)
+    for br in stables:
+        if br.term == "level_bar":
+            assert float(m.L(float(br.Y[-1, 0]), float(br.Y[-1, 1]))) >= u_star
 
 
 def test_backbone_sampling_is_adaptive_in_screen_space():
@@ -375,7 +413,8 @@ def test_stiff_stub_extends_before_global_handoff():
     unstable = [stub for stub in saddle.stubs
                 if stub.manifold == "unstable"]
     assert any(dict(stub.certificates)["centered_extension"] for stub in unstable)
-    assert all(br.term in ("capture", "box_exit") for br in p.branches)
+    assert all(br.term in ("capture", "box_exit", "level_bar")
+               for br in p.branches)
 
 
 def test_d2_end_to_end():

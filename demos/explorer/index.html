@@ -1296,7 +1296,10 @@ function drawPortrait(){
     xP.setLineDash([5, 4]);
     xP.lineWidth = 1.2;
     for (const [bi, br] of S.P.branches.entries()){
-      if (br.term !== "box_exit") continue;
+      // Both certified stable terminals: the box exit, and the level bar
+      // (stopped above the highest saddle loss, usually well inside the
+      // box -- its display tail is the extension).
+      if (br.term !== "box_exit" && br.term !== "level_bar") continue;
       // The hyperbola test runs on the extended tail where one exists: the
       // leading form dominates further out, so K has settled where the
       // certified box alone could not show it.
@@ -1634,7 +1637,7 @@ function drawPortrait(){
       + `${br.points[br.points.length-1][1].toFixed(6)}) `
       + `start=(${br.points[0][0].toFixed(6)},${br.points[0][1].toFixed(6)})`
     ).join("\n")
-    + (extDiag.length ? "\n\nbox_exit tails:\n" + extDiag.join("\n") : "");
+    + (extDiag.length ? "\n\nstable tails:\n" + extDiag.join("\n") : "");
   drawFates();
 }
 
@@ -1665,7 +1668,8 @@ function drawFates(){
     const dirn = br.kind === "unstable"
       ? (br.direction > 0 ? "b↑" : "b↓")
       : (br.stable_sign > 0 ? "+" : "−");
-    const bad = br.term !== "capture" && br.term !== "box_exit";
+    const bad = br.term !== "capture" && br.term !== "box_exit"
+              && br.term !== "level_bar";
     rows.push(
       `<tr class="pick" data-a="${last[0]}" data-b="${last[1]}"`
       + `${bad ? ' style="color:var(--stable)"' : ""}>`
@@ -1684,7 +1688,8 @@ function drawFates(){
     };
   }
   const aborted = S.P.branches.filter(
-    b => b.term !== "capture" && b.term !== "box_exit").length;
+    b => b.term !== "capture" && b.term !== "box_exit"
+      && b.term !== "level_bar").length;
   els("fatesInfo").textContent =
     `${S.P.branches.length} branches`
     + (aborted ? `, ${aborted} did not finish` : ", all finished");

@@ -204,18 +204,24 @@ def _max_chord(Y) -> float:
 
 def _stable_extensions(m, p, enumeration, factor: float = 3.0,
                        max_pts: int = 20000):
-    """Display-only continuation of stable box_exit branches past the box.
+    """Display-only continuation of stable branches past their terminal.
 
-    The certificate is bound to the compute box; a branch that left it is
-    complete as evidence.  But the page's far-field extrapolation (the
+    A stable branch is complete as evidence at either certified terminal:
+    it left the compute box (box_exit), or it climbed past the highest
+    saddle loss (level_bar), above which nothing remains to certify.  The
+    bar stops most branches well INSIDE the box -- hundreds of vertices
+    where the exit took thousands -- so without this continuation the
+    picture would end mid-plane.  But the page's far-field extrapolation (the
     K-conserving hyperbola) only engages once the leading form dominates,
     and on a model whose legal box is a few units tall -- minimal-quartet's
     is b in +-4.8 with minima out at a ~ 38 -- the stable separatrices reach
     the wall long before that, and at zoom-out they simply stop.
 
-    So each stable box_exit branch is carried on by the same ascent phase
-    that traced it (constant-potential-rate, C), from its last vertex into
-    a box ``factor`` times the compute box.  Milliseconds per branch.  The
+    So each terminated stable branch is carried on by the same ascent phase
+    that traced it (constant-potential-rate, C, with no level stop), from
+    its last vertex into a box ``factor`` times the compute box.
+    Milliseconds per branch on the fine ds; a barred branch has further to
+    go and its extension is proportionally longer, still display-only.  The
     result is shipped separately, drawn distinguishably, and never enters a
     certificate; the hyperbola test then runs on the extended tail, where
     the drift is far more likely to have settled.
@@ -229,7 +235,8 @@ def _stable_extensions(m, p, enumeration, factor: float = 3.0,
                          for q in enumeration.points], dtype=float)
     out = []
     for i, br in enumerate(p.branches):
-        if br.kind != "stable" or br.term != "box_exit" or len(br.Y) == 0:
+        if (br.kind != "stable" or br.term not in ("box_exit", "level_bar")
+                or len(br.Y) == 0):
             continue
         ascent = br.diag.get("potential_rate_ascent") or {}
         ds = (float(ascent["geometric_ds"]) / 4.0 if "geometric_ds" in ascent
