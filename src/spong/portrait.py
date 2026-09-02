@@ -130,6 +130,19 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     # branch from stepping through a saddle onto the wrong ray.
     critical_points = [(float(q.a), float(q.b)) for q in e.points]
 
+    # THE LEVEL BAR.  A bounded ascent orbit converges to a critical point,
+    # and every critical point has L = u(b*) <= U* (the highest saddle
+    # loss; ascent cannot converge to a minimum).  So a stable branch that
+    # has climbed past U* can never reach a critical point again: escape is
+    # already certain, connections are already impossible (they live in
+    # {L <= u(s')} <= U*), and the contact scan has nothing left to inspect
+    # up there.  Stop tracing at the bar; the audit certifies the stop with
+    # exact per-saddle comparisons, and rendering past it belongs to the
+    # display extensions.  The float bar is inflated so a stop is only ever
+    # LATE, never early -- the exact certificate does the deciding.
+    _saddle_u = [float(m.L(float(m.a_star(q.b)), q.b)) for q in e.saddles]
+    stop_loss = (max(_saddle_u)*(1.0 + 1e-9) + 1e-12) if _saddle_u else None
+
     def _stable_branch(task):
         t0 = time.perf_counter()
         s, sign = task
@@ -138,7 +151,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             ds=span_scale/(30000.0*resolution_divisor),
             critical_local=s.local,
             critical_stub=_stable_stub(s, sign, m),
-            critical_points=critical_points)
+            critical_points=critical_points,
+            stop_loss=stop_loss)
         br.diag["saddle_b"] = s.b
         br.diag["stable_sign"] = sign
         if br.term == "box_exit" and len(br.Y) > 50:
@@ -240,7 +254,7 @@ def compute(m: Model, view=None, geometry_level: int = 0,
                 br.certs["connection_ok"] = False
         else:
             br.diag["target"] = None
-            br.certs["connection_ok"] = br.term == "box_exit"
+            br.certs["connection_ok"] = br.term in ("box_exit", "level_bar")
         br.diag["saddle_b"] = s.b
         br.diag["unstable_direction"] = direction
         br.diag["branch_sec"] = time.perf_counter() - t0
@@ -514,7 +528,8 @@ def build_ledger(p: Portrait, gen: dict, *,
 
     led["summary"] = {
         "all_branches_clean": all(
-            b["term"] in ("capture", "box_exit") for b in led["branches"]),
+            b["term"] in ("capture", "box_exit", "level_bar")
+            for b in led["branches"]),
         "worst_angle_energy": max(
             (b["angle_energy[RESIDUAL]"] or 0.0) for b in led["branches"])
         if led["branches"] else 0.0,

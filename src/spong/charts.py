@@ -1234,7 +1234,8 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
 def _potential_rate_box_exit_python(m: Model, start, box, ds: float,
                                     engine_diag: dict,
                                     max_steps: int = 100000,
-                                    critical=None):
+                                    critical=None,
+                                    stop_loss: float | None = None):
     """Trace a stable branch outward with constant-potential-rate ascent.
 
     THE EXECUTABLE SPECIFICATION for spong_potential_rate_segment's ascent
@@ -1274,6 +1275,11 @@ def _potential_rate_box_exit_python(m: Model, start, box, ds: float,
         level = L(float(z[0]), float(z[1]))
         g0, g1 = grad(float(z[0]), float(z[1]))
         ng = float(np.hypot(g0, g1))
+        if stop_loss is not None and level >= stop_loss \
+                and np.isfinite(level):
+            # The level bar (mirrors the C kernel's SPONG_POT_LEVEL_STOP).
+            term = "level_bar"
+            break
         if not (np.isfinite(level) and np.isfinite(ng) and ng > 0.0):
             term = "unresolved_field"
             break
@@ -1398,6 +1404,7 @@ def _potential_rate_box_exit_python(m: Model, start, box, ds: float,
 _POTENTIAL_TERM = {
     0: "near_target", 1: "capture", 2: "box_exit", 3: "level_event",
     4: "step_failure", 5: "budget", 6: "unresolved_field", 7: "unavailable",
+    8: "level_bar",
 }
 _POTENTIAL_MODE = {"prefix": 0, "level_event": 1, "ascent": 2}
 
@@ -1430,7 +1437,8 @@ def _potential_native(m: Model):
 
 def _potential_segment(native, kernel, m: Model, mode: str, a0: float,
                        b0: float, targets, cap_r: float, box, ds: float,
-                       n_levels: int, max_steps: int, critical):
+                       n_levels: int, max_steps: int, critical,
+                       stop_level: float = float("inf")):
     """One native constant-potential-rate segment, unpacked."""
     flat_targets = [float(c) for t in targets for c in t]
     flat_critical = ([] if critical is None
@@ -1443,7 +1451,8 @@ def _potential_segment(native, kernel, m: Model, mode: str, a0: float,
             kernel, float(m.C), _POTENTIAL_MODE[mode], float(a0), float(b0),
             flat_targets, float(cap_r), [float(x) for x in box], float(ds),
             int(n_levels), int(max_steps), flat_critical,
-            CRITICAL_STEP_FRACTION, GEOMETRIC_IRK_PRIMARY)
+            CRITICAL_STEP_FRACTION, GEOMETRIC_IRK_PRIMARY,
+            float(stop_level))
     pts = [tuple(p) for p in
            np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
     return (_POTENTIAL_TERM[term_code], pts,
@@ -1522,17 +1531,18 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
 
 def _potential_rate_box_exit(m: Model, start, box, ds: float,
                              engine_diag: dict, max_steps: int = 100000,
-                             critical=None):
+                             critical=None, stop_loss: float | None = None):
     """Dispatch one ascent segment; see the _python specification."""
+    stop_level = float("inf") if stop_loss is None else float(stop_loss)
     native, kernel = _potential_native(m)
     if native is None:
         return _potential_rate_box_exit_python(
             m, start, box, ds, engine_diag,
-            max_steps=max_steps, critical=critical)
+            max_steps=max_steps, critical=critical, stop_loss=stop_loss)
     a0, b0 = map(float, start)
     term, pts, _captured, r = _potential_segment(
         native, kernel, m, "ascent", a0, b0, [], 0.0, box, ds, 0,
-        max_steps, critical)
+        max_steps, critical, stop_level=stop_level)
     engine_diag["potential_rate_ascent"] = {
         "accepted_steps": r["accepted"],
         "rejected_steps": r["rejected"],
@@ -2765,7 +2775,8 @@ def trace_valley_exit(m: Model, b_saddle: float, b_exit: float,
 def trace_stable(m: Model, b_saddle: float, sign: int,
                  box=(-25.0, 25.0, -12.0, 16.0), ds: float | None = None,
                  delta: float | None = None, critical_local=None,
-                 critical_stub=None, critical_points=None) -> Branch:
+                 critical_stub=None, critical_points=None,
+                 stop_loss: float | None = None) -> Branch:
     """Stable branch (separatrix): saddle → box exit, ascent flow.
 
     Fast-graph launch from the exact eigenvector jet; the continuation
@@ -2844,15 +2855,16 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
                 "global_field_ready", 0.0)):
         potential_pts, potential_term = _potential_rate_box_exit(
             m, (m.a_star(b0)+w0, b0), box, ds, diag,
-            critical=_critical_array(critical_points))
+            critical=_critical_array(critical_points),
+            stop_loss=stop_loss)
         if prefix:
             prefix.extend(potential_pts[1:])
         else:
             prefix = potential_pts
         b0 = float(potential_pts[-1][1])
         w0 = float(potential_pts[-1][0]-m.a_star(b0))
-    if potential_term == "box_exit":
-        engine_pts, term, sw = [prefix[-1]], "box_exit", 0
+    if potential_term in ("box_exit", "level_bar"):
+        engine_pts, term, sw = [prefix[-1]], potential_term, 0
     else:
         engine_pts, term, sw, _ = _continue_curve(
             m, b0, w0, -1, [], box, ds, ds0=launch_scale,

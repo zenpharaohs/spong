@@ -56,6 +56,7 @@ typedef enum {
     SPONG_POT_BUDGET           = 5,   /* "budget"                         */
     SPONG_POT_UNRESOLVED_FIELD = 6,   /* "unresolved_field" (ascent)      */
     SPONG_POT_UNAVAILABLE      = 7,   /* "unavailable"                    */
+    SPONG_POT_LEVEL_STOP       = 8,   /* "level_bar": loss ceiling reached */
     /* points buffer too small; n_points holds the count required */
     SPONG_POT_NEED_CAPACITY    = 101
 } spong_potential_term;
@@ -76,6 +77,9 @@ typedef struct {
     size_t n_critical;
     double critical_step_fraction;   /* charts.CRITICAL_STEP_FRACTION */
     int    primary_order;            /* charts.GEOMETRIC_IRK_PRIMARY */
+    double stop_level;               /* ascent: stop once loss >= this
+                                        (+INFINITY: never -- the recorded
+                                        corpus behaviour) */
 } spong_potential_request;
 
 typedef struct {

@@ -2138,12 +2138,14 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *kobj, *targets_obj, *box_obj, *critical_obj;
     double C, a0, b0, cap_r, ds, fraction;
+    double stop_level = INFINITY;
     int mode, primary_order;
     Py_ssize_t n_levels, max_steps;
-    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi",
+    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi|d",
                           &kobj, &C, &mode, &a0, &b0, &targets_obj, &cap_r,
                           &box_obj, &ds, &n_levels, &max_steps,
-                          &critical_obj, &fraction, &primary_order)) {
+                          &critical_obj, &fraction, &primary_order,
+                          &stop_level)) {
         return NULL;
     }
     if (!PyObject_TypeCheck(kobj, &KernelType)) {
@@ -2182,6 +2184,7 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     req.critical = critical; req.n_critical = (size_t)(n_critical_flat / 2);
     req.critical_step_fraction = fraction;
     req.primary_order = primary_order;
+    req.stop_level = stop_level;
 
     spong_potential_result res;
     double *points = NULL;

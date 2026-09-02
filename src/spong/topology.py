@@ -245,7 +245,7 @@ _STEP_BUDGET_TERMS = ("abort_max_steps",)
 
 def _representable(branch):
     """Whether this branch is a usable representation of its manifold."""
-    if branch.term in ("capture", "box_exit"):
+    if branch.term in ("capture", "box_exit", "level_bar"):
         return True
     return branch.term in _STEP_BUDGET_TERMS
 

@@ -512,6 +512,15 @@ static void run_ascent(segment *s) {
         if (!(isfinite(level) && isfinite(ng) && ng > 0.0)) {
             term = SPONG_POT_UNRESOLVED_FIELD; break;
         }
+        if (level >= r->stop_level) {
+            /* The level bar: above it there are no critical points and no
+             * possible connections, so the certificate is already decided
+             * (one exact comparison at the audit).  Everything the census
+             * measured beyond this line -- 400k-vertex crawls, ridge
+             * stalls, overflow at |b| ~ 1e6 -- was tracing with nothing
+             * left to certify. */
+            term = SPONG_POT_LEVEL_STOP; break;
+        }
         double nominal_arc = 16.0*geometric_ds;
         if (last_arc >= 0.0) nominal_arc = fmin(nominal_arc, 1.5*last_arc);
         double h = fmax(nominal_arc*ng, 4096*DBL_EPSILON*(1.0+fabs(level)));
