@@ -20,15 +20,27 @@
  * handle, matching spong_curve_diagnostics in spong_geometry.h.  The library
  * then depends on nothing defined in the extension module.
  *
- * DELEGATION IS WHOLE-SEGMENT.  tests/corpus/continue_curve.json records
+ * DELEGATION IS THE LAST RUNG ONLY.  tests/corpus/continue_curve.json records
  * every engine segment the zoo produces, and across all 45 of them not one
  * reached the floor-fallback ladder, the normalized-arclength rescue, or the
- * stall trim.  Those paths exist because branches outside the zoo provoked
- * them, so a port of them could not be judged by anything we have.  Rather
- * than reimplement uncovered logic in a certificate path, this entry point
- * stops and returns SPONG_CONT_DELEGATE, and the caller re-runs the ENTIRE
- * segment in the reference implementation from the original arguments,
- * discarding whatever was written here.
+ * stall trim.  The port originally returned SPONG_CONT_DELEGATE at any of
+ * those and the caller re-ran the ENTIRE segment in the reference
+ * implementation -- "free in a case that never occurs".  It occurred:
+ * directed seed 1414065525 (2026-09-02) reached the floor ladder after 3.5M
+ * native steps and the Python replay cost an hour.  The ladder, the
+ * normalized rescue and the stall trim are now ported here, statement for
+ * statement, with corpus entries recorded from the segments that reach them.
+ *
+ * What remains delegated is the centered-chart rescue, tried only after both
+ * ladders fail and only when the caller HAS a centered local jet (the
+ * reference's centered_local).  `centered_available` says whether it does:
+ * with it the port returns DELEGATE(CENTERED_CHART) at exactly the point the
+ * reference would try the jet; without it the port returns
+ * ABORT_STEP_FAILURE itself, as the reference does.  Passing the jet through
+ * this ABI retires that last rung.
+ *
+ * Delegation, where it survives, is still whole-segment: the caller discards
+ * whatever was written here and re-runs from the original arguments.
  *
  * Resuming mid-segment was considered and rejected.  The loop state is not
  * (b, w): it also carries the active chart, the current chord `cur` with its
@@ -66,15 +78,25 @@ typedef enum {
     SPONG_CONT_NEED_CAPACITY       = 101
 } spong_continue_term;
 
-/* Why a call delegated.  Diagnostic only -- the caller re-runs identically
- * whatever the reason -- but it tells us which uncovered path a portrait
- * outside the zoo actually exercises, which is how the corpus grows. */
+/* Why a call delegated.  Only CENTERED_CHART is still issued; the other two
+ * are retained so old diagnostics and the ctypes checker keep their names. */
 typedef enum {
     SPONG_DELEGATE_NONE            = 0,
-    SPONG_DELEGATE_FLOOR_LADDER    = 1,  /* halving reached continuation_floor */
-    SPONG_DELEGATE_STALL_TRIM      = 2,  /* hover two-cycle over the floor */
+    SPONG_DELEGATE_FLOOR_LADDER    = 1,  /* historical: now ported */
+    SPONG_DELEGATE_STALL_TRIM      = 2,  /* historical: now ported */
     SPONG_DELEGATE_CENTERED_CHART  = 3   /* centered rescue required */
 } spong_continue_delegate_reason;
+
+/* Floor-ladder rescues, in the order the reference tries them.  Counts of
+ * each go to the caller's diagnostics under the reference's
+ * floor_fallback_* keys. */
+typedef enum {
+    SPONG_RESCUE_SLOW_GL4 = 0, SPONG_RESCUE_SLOW_GL6 = 1,
+    SPONG_RESCUE_FAST_GL4 = 2, SPONG_RESCUE_FAST_GL6 = 3,
+    SPONG_RESCUE_NORMALIZED_GL8 = 4, SPONG_RESCUE_NORMALIZED_GL6 = 5,
+    SPONG_RESCUE_NORMALIZED_GL4 = 6,
+    SPONG_RESCUE_COUNT = 7
+} spong_continue_rescue;
 
 /* The eight ascending coefficient arrays, plus the loss constant.
  *
@@ -99,6 +121,12 @@ typedef struct {
     size_t   n_points;             /* vertices written, or required */
     uint64_t steps_taken;          /* accepted steps */
     uint64_t steps_rejected;       /* halvings, for step-control diagnosis */
+    uint64_t rescues[SPONG_RESCUE_COUNT];   /* floor-ladder rescues by kind */
+    /* On ABORT_STEP_FAILURE: the reference's engine_diag["step_failure"]
+     * record -- state and step at the failed attempt. */
+    double   fail_b, fail_w, fail_cur, fail_h, fail_vb, fail_vw;
+    int      fail_slow;            /* chart at failure: 1 slow, 0 fast */
+    int      fail_retry;           /* halvings taken before the ladder */
 } spong_continue_result;
 
 /*
@@ -120,6 +148,9 @@ typedef struct {
  * chord is then ds.  continuation_floor is cur/128 taken from the LAUNCH
  * chord, not from ds -- a port deriving it from ds takes a different number
  * of halvings on branches with a materialized stub.
+ *
+ * centered_available is nonzero when the caller holds a centered local jet
+ * for this segment; see DELEGATION above.
  */
 SPONG_API int spong_continue_curve(
     const spong_continue_field *field,
@@ -131,6 +162,7 @@ SPONG_API int spong_continue_curve(
     double ds, double ds0,
     const double *shallow_gate,              /* may be NULL */
     size_t max_steps,
+    int centered_available,
     double *points, size_t point_capacity,
     spong_continue_result *result);
 

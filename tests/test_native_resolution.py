@@ -36,7 +36,11 @@ def test_native_policy_matches_python_oracle_across_margin_combinations():
 
 
 def test_native_exact_and_geometry_terminal_states_are_stable():
-    assert _native.SPONG_ABI_VERSION == 2
+    # 3: spong_continue_curve gained centered_available and its result the
+    # floor-ladder rescue counts (2026-09-02).  The resolution enums below
+    # are unchanged across that bump; this pin exists so an ABI change is
+    # a deliberate edit here, not a silent drift.
+    assert _native.SPONG_ABI_VERSION == 3
     none = 0.0
     exact_non_morse = _native.resolution_preflight(
         False, True, True, False, none, False, none, False, none,

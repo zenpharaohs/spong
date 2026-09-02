@@ -32,7 +32,8 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-SRC = REPO / "src" / "c" / "spong_continue.c"
+SRC = [REPO / "src" / "c" / "spong_continue.c",
+       REPO / "src" / "c" / "spong_gauss2.c"]     # the normalized rescue
 INC = REPO / "include"
 CORPUS = REPO / "tests" / "corpus" / "continue_curve.json"
 
@@ -47,6 +48,12 @@ TERMS = {
     100: "DELEGATE", 101: "NEED_CAPACITY",
 }
 REASONS = {0: "none", 1: "floor_ladder", 2: "stall_trim", 3: "centered_chart"}
+RESCUE_NAMES = (
+    "floor_fallback_slow_gl4", "floor_fallback_slow_gl6",
+    "floor_fallback_fast_gl4", "floor_fallback_fast_gl6",
+    "floor_fallback_normalized_gl8", "floor_fallback_normalized_gl6",
+    "floor_fallback_normalized_gl4",
+)
 
 
 class Field(ctypes.Structure):
@@ -65,6 +72,11 @@ class Result(ctypes.Structure):
         ("b_end", ctypes.c_double), ("w_end", ctypes.c_double),
         ("n_points", ctypes.c_size_t),
         ("steps_taken", ctypes.c_uint64), ("steps_rejected", ctypes.c_uint64),
+        ("rescues", ctypes.c_uint64 * len(RESCUE_NAMES)),
+        ("fail_b", ctypes.c_double), ("fail_w", ctypes.c_double),
+        ("fail_cur", ctypes.c_double), ("fail_h", ctypes.c_double),
+        ("fail_vb", ctypes.c_double), ("fail_vw", ctypes.c_double),
+        ("fail_slow", ctypes.c_int), ("fail_retry", ctypes.c_int),
     ]
 
 
@@ -76,7 +88,7 @@ def build() -> ctypes.CDLL:
     # last-bit divergence.
     extra = os.environ.get("SPONG_CFLAGS", "-O3").split()
     cmd = ["cc", *extra, "-shared", "-fPIC", f"-I{INC}",
-           str(SRC), "-o", str(out), "-lm"]
+           *[str(s) for s in SRC], "-o", str(out), "-lm"]
     print(" ".join(cmd))
     subprocess.run(cmd, check=True)
     lib = ctypes.CDLL(str(out))
@@ -88,6 +100,7 @@ def build() -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_double),
         ctypes.c_double, ctypes.c_double,
         ctypes.POINTER(ctypes.c_double), ctypes.c_size_t,
+        ctypes.c_int,
         ctypes.POINTER(ctypes.c_double), ctypes.c_size_t,
         ctypes.POINTER(Result),
     ]
@@ -130,14 +143,14 @@ def run(lib, entry):
 
     res = Result()
     cap = 0
-    # max_steps is DERIVED in charts._continue_curve -- a runaway guard at
-    # max(200000, 128*diagonal/ds), now that the operative limit is the
-    # arclength budget inside the engine.  Hard-coding 200000 here made the C
-    # abort where the reference did not, which reads as a parity failure and
-    # is not one.
+    # max_steps is DERIVED in charts._continue_curve; use its formula, not a
+    # copy of it, so this checker cannot abort where the reference does not.
+    from spong import charts
     diagonal = ((i["box"][1] - i["box"][0]) ** 2
                 + (i["box"][3] - i["box"][2]) ** 2) ** 0.5
-    max_steps = int(max(200000.0, 128.0 * diagonal / max(i["ds"], 1e-300)))
+    max_steps = int(min(charts.STEP_CEILING,
+                        max(200000.0, 8.0 * diagonal / max(i["ds"], 1e-300))))
+    centered_available = int(i.get("centered_local_at") is not None)
     for _attempt in range(4):
         pts = (ctypes.c_double * max(2 * cap, 2))()
         lib.spong_continue_curve(
@@ -145,7 +158,8 @@ def run(lib, entry):
             tgt_buf, len(i["targets"]),
             0.0 if i["cap_r"] is None else i["cap_r"],
             box_buf, i["ds"], -1.0 if i["ds0"] is None else i["ds0"],
-            gate_buf, max_steps, pts, cap, ctypes.byref(res))
+            gate_buf, max_steps, centered_available,
+            pts, cap, ctypes.byref(res))
         if res.term != 101:
             break
         cap = res.n_points + 64
@@ -169,9 +183,13 @@ def main() -> int:
     print()
     ok = delegated = bad = 0
     reasons: dict = {}
+    rescues: dict = {}
     for entry in entries:
         want = entry["output"]
         res, arr = run(lib, entry)
+        for name, n in zip(RESCUE_NAMES, res.rescues):
+            if n:
+                rescues[name] = rescues.get(name, 0) + int(n)
         term = TERMS.get(res.term, str(res.term))
         if term == "DELEGATE":
             delegated += 1
@@ -208,6 +226,10 @@ def main() -> int:
     if reasons:
         print("delegation reasons:")
         for key, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            print(f"   {n:5d}  {key}")
+    if rescues:
+        print("floor-ladder rescues taken by the C:")
+        for key, n in sorted(rescues.items(), key=lambda kv: -kv[1]):
             print(f"   {n:5d}  {key}")
     return 1 if bad else 0
 

@@ -27,7 +27,10 @@
 extern "C" {
 #endif
 
-#define SPONG_ABI_VERSION UINT32_C(2)
+/* 3: spong_continue_curve gained centered_available and
+ *    spong_continue_result gained rescue counts and the step-failure
+ *    record (2026-09-02, floor-ladder port). */
+#define SPONG_ABI_VERSION UINT32_C(3)
 
 typedef enum {
     SPONG_RESOLUTION_PROCEED = 0,

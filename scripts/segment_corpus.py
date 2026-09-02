@@ -2,8 +2,19 @@
 """Record and check a corpus of _continue_curve calls — the segment tier.
 
     python scripts/segment_corpus.py record
+    python scripts/segment_corpus.py record tricky-d11 directed:1414065525
     python scripts/segment_corpus.py check
     python scripts/segment_corpus.py check tricky-d11
+
+Case names are zoo names, or ensemble seeds as ``directed:<seed>`` /
+``random:<seed>`` (degree 5, the ensemble default; ``:<degree>`` may be
+appended).  The seed cases exist because the zoo never reaches the
+floor-fallback ladder, the normalized rescue or the stall trim, and a port
+of those rungs needs segments that do.
+
+Recording always runs the REFERENCE engine (Python) whatever SPONG_ENGINE
+says: the corpus is what the reference answered, and the C is judged
+against it.  Checking runs the selected engine.
 
 WHY A SEGMENT TIER
 ------------------
@@ -57,10 +68,10 @@ REPO = HERE.parent
 CORPUS = REPO / "tests" / "corpus"
 
 try:
-    from spong import charts, model, portrait, sturm, zoo
+    from spong import charts, engine, model, portrait, sturm, zoo
 except ImportError:
     sys.path.insert(0, str(REPO / "src"))
-    from spong import charts, model, portrait, sturm, zoo
+    from spong import charts, engine, model, portrait, sturm, zoo
 
 sys.path.insert(0, str(HERE))
 import potential_corpus as pc                                # noqa: E402
@@ -73,14 +84,32 @@ import potential_corpus as pc                                # noqa: E402
 _CONTEXT: dict = {}
 
 
+class _SeedCase:
+    """The zoo-case shape (default_view) for an ensemble seed."""
+    default_view = None
+
+
 def context(name: str):
-    """(model, enumeration) for a zoo case, built once."""
+    """(model, enumeration, case) for a zoo case or an ensemble seed,
+    built once."""
     if name not in _CONTEXT:
-        z = zoo.get(name)
-        f, g = list(z.f), list(z.g)
-        mu = (model.moments_normal01 if z.moment_dist == "normal01"
-              else model.moments_uniform01)(2 * max(len(f), len(g)) - 1)
-        m = model.build(f, g, mu)
+        if name.startswith(("directed:", "random:")):
+            import random
+            from qualify import directed_model, random_model
+            parts = name.split(":")
+            mode, seed = parts[0], int(parts[1])
+            degree = int(parts[2]) if len(parts) > 2 else 5
+            generate = directed_model if mode == "directed" else random_model
+            m, _spec = generate(random.Random(seed), degree)
+            if m is None:
+                raise ValueError(f"{name}: the generator declined this seed")
+            z = _SeedCase()
+        else:
+            z = zoo.get(name)
+            f, g = list(z.f), list(z.g)
+            mu = (model.moments_normal01 if z.moment_dist == "normal01"
+                  else model.moments_uniform01)(2 * max(len(f), len(g)) - 1)
+            m = model.build(f, g, mu)
         e = sturm.materialize_stubs(m, sturm.enumerate_critical_points(m))
         _CONTEXT[name] = (m, e, z)
     return _CONTEXT[name]
@@ -169,11 +198,14 @@ def record_zoo(names) -> list[dict]:
 
     charts._continue_curve = recording
     try:
-        for name in names:
-            active["case"] = name
-            m, e, z = context(name)
-            portrait.certified_compute(m, view=z.default_view)
-            print(f"recorded {name:<38s} {len(entries)} segments so far")
+        # The reference answers; whatever engine the process selected is
+        # not what a corpus records.
+        with engine.using("python"):
+            for name in names:
+                active["case"] = name
+                m, e, z = context(name)
+                portrait.certified_compute(m, view=z.default_view)
+                print(f"recorded {name:<38s} {len(entries)} segments so far")
     finally:
         charts._continue_curve = original
     return entries
@@ -189,13 +221,17 @@ def replay(entry: dict):
     local = (None if i["centered_local_at"] is None
              else find_local(e, *i["centered_local_at"]))
     diag: dict = {}
+    # cap_r is recorded as None when the caller left it defaulted (stable
+    # segments never pass it); replay must let the default apply rather
+    # than hand None to the native dispatch.
     pts, term, switches, (b_end, w_end) = charts._continue_curve(
         m, i["b"], i["w"], i["flow"],
         [tuple(t) for t in i["targets"]], tuple(i["box"]), i["ds"],
-        cap_r=i["cap_r"], ds0=i["ds0"],
+        ds0=i["ds0"],
         shallow_gate=(None if i["shallow_gate"] is None
                       else tuple(i["shallow_gate"])),
-        engine_diag=diag, centered_local=local)
+        engine_diag=diag, centered_local=local,
+        **({} if i["cap_r"] is None else {"cap_r": i["cap_r"]}))
     return {"term": term, "switches": int(switches),
             "b_end": float(b_end), "w_end": float(w_end),
             "n_points": int(len(pts)), "sha256": _digest(pts),
@@ -232,6 +268,14 @@ def do_record(argv) -> int:
     names = list(argv) if argv else list(zoo.names())
     entries = record_zoo(names)
     CORPUS.mkdir(parents=True, exist_ok=True)
+    if argv and path_for().exists():
+        # Named cases are ADDED: re-record replaces their entries, other
+        # cases keep theirs.  A bare `record` still rewrites the zoo.
+        kept = [x for x in json.loads(path_for().read_text())
+                if x["case"] not in set(names)]
+        entries = kept + entries
+        for k, x in enumerate(entries):
+            x["index"] = k
     path_for().write_text(json.dumps(entries, indent=1, sort_keys=True) + "\n")
     pc.write_platform_tag(path_for())
 

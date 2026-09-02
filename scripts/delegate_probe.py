@@ -53,12 +53,12 @@ def main(argv=None) -> int:
     def logged_native(*a, **k):
         t = time.perf_counter()
         out = orig_native(*a, **k)
-        term_code, reason, switches, b_end, w_end, taken, rejected, _ = out
+        term_code, reason, switches, b_end, w_end, taken, rejected, _, diag = out
         native_calls.append({
             "term_code": term_code, "reason": reason, "taken": taken,
-            "rejected": rejected, "max_steps": a[-1],
+            "rejected": rejected, "max_steps": a[-2],
             "b0": a[2], "w0": a[3], "flow": a[4], "b_end": b_end,
-            "sec": time.perf_counter()-t})
+            "rescues": dict(diag), "sec": time.perf_counter()-t})
         return out
     _native.continue_curve = logged_native
 
@@ -99,6 +99,12 @@ def main(argv=None) -> int:
                   f" max_steps={c['max_steps']} flow={c['flow']}"
                   f" b0={c['b0']:.6g} -> b_end={c['b_end']:.6g}"
                   f" ({c['sec']:.2f}s in C)")
+    print("native rescues by segment:")
+    for c in native_calls:
+        r = {k: v for k, v in c["rescues"].items() if k != "step_failure"}
+        if r:
+            print(f"  flow={c['flow']} b0={c['b0']:.6g} taken={c['taken']}"
+                  f" {r}")
     print(f"\n{len(python_calls)} Python replays (capped at {args.cap}):")
     for c in python_calls:
         print(f"  flow={c['flow']} b0={c['b0']:.6g} -> b_end={c['b_end']:.6g}"

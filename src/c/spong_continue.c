@@ -1,18 +1,22 @@
 /*
- * spong_continue.c -- native engine segment.  Milestone 2, ordinary path.
+ * spong_continue.c -- native engine segment.  Milestone 2, ordinary path,
+ * plus the floor-fallback ladder, the normalized-arclength rescue and the
+ * stall trim (2026-09-02; see the header for why).
  *
- * A line-by-line port of charts._continue_curve, with every path the segment
- * corpus does not cover returning SPONG_CONT_DELEGATE instead of being
- * reimplemented.  The reference implementation stays authoritative; this is
- * the fast path, and tests/corpus/continue_curve.json judges it.
+ * A line-by-line port of charts._continue_curve.  The reference
+ * implementation stays authoritative; this is the fast path, and
+ * tests/corpus/continue_curve.json judges it.
  *
  * STATUS
- *   covered here : chart switching, the shallow handoff (healthy case),
- *                  step halving, the descent-realization test, the turn
- *                  budget, the 1.06 chord ramp, capture, box exit,
- *                  stationary / switch-limit / nonfinite / max-steps exits
- *   delegated    : the floor-fallback ladder, the normalized-arclength
- *                  rescue, the centered-chart rescue, the stall trim
+ *   covered here : chart switching, the shallow handoff (healthy case and
+ *                  the stall trim), step halving, the descent-realization
+ *                  test, the turn budget, the 1.06 chord ramp, capture, box
+ *                  exit, stationary / switch-limit / nonfinite / max-steps /
+ *                  step-failure exits, the floor-fallback ladder (GL4 on the
+ *                  active chart, GL6 and GL4 on the other), the
+ *                  normalized-arclength rescue at orders 8, 6, 4
+ *   delegated    : the centered-chart rescue, and only when the caller has
+ *                  a centered local jet (centered_available)
  *
  * DUPLICATED CODE, DELIBERATELY AND TEMPORARILY
  *   slow_fj, fast_fj and gl6_step below are verbatim copies of the statics in
@@ -25,10 +29,12 @@
  */
 
 #include "spong/spong_continue.h"
+#include "spong/spong_gauss2.h"
 
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
+#include <string.h>
 
 /*
  * FLOATING-POINT CONTRACTION IS MIXED, DELIBERATELY, AND PER FUNCTION.
@@ -65,6 +71,7 @@
 #define STALL_WINDOW    12
 
 static const double SQRT15 = 3.87298334620741688517926539978239961;
+static const double SQRT3  = 1.73205080756887729352744634150587237;
 static const double STAGE_GUARD = 1e-6;
 static const double NEWTON_TOL = 1e-13;
 static const int NEWTON_MAX = 30;
@@ -223,6 +230,57 @@ static double fast_fj(const spong_continue_field *f, double w, double b,
 }
 
 typedef double (*FJ)(const spong_continue_field *, double, double, double *);
+
+/* 2-stage Gauss (IRK4-GL), verbatim from _native.c's gl4_step (which is
+ * what Kernel.slow_step_gl4 / fast_step_gl4 call): the floor ladder's first
+ * rung.  Fused, as _native.c is built. */
+static double gl4_step(const spong_continue_field *ctx, FJ fj,
+                       double x, double y, double h) {
+    SPONG_FP_FUSED
+    const double c1 = 0.5 - SQRT3 / 6.0;
+    const double c2 = 0.5 + SQRT3 / 6.0;
+    const double a11 = 0.25;
+    const double a12 = 0.25 - SQRT3 / 6.0;
+    const double a21 = 0.25 + SQRT3 / 6.0;
+    const double a22 = 0.25;
+    double x1 = x + c1 * h;
+    double x2 = x + c2 * h;
+    double K1 = fj(ctx, x, y, NULL);
+    double K2 = K1;
+    int converged = 0;
+    for (int it = 0; it < NEWTON_MAX; it++) {
+        double Y1 = y + h * (a11 * K1 + a12 * K2);
+        double Y2 = y + h * (a21 * K1 + a22 * K2);
+        double f1 = fj(ctx, x1, Y1, NULL);
+        double f2 = fj(ctx, x2, Y2, NULL);
+        double r1 = K1 - f1;
+        double r2 = K2 - f2;
+        double m = fabs(K1) > fabs(K2) ? fabs(K1) : fabs(K2);
+        double r = fabs(r1) > fabs(r2) ? fabs(r1) : fabs(r2);
+        if (r < NEWTON_TOL * (1.0 + m)) {
+            converged = 1;
+            break;
+        }
+        double J1, J2;
+        (void)fj(ctx, x1, Y1, &J1);
+        (void)fj(ctx, x2, Y2, &J2);
+        double m11 = 1.0 - h * a11 * J1;
+        double m12 = -h * a12 * J1;
+        double m21 = -h * a21 * J2;
+        double m22 = 1.0 - h * a22 * J2;
+        double det = m11 * m22 - m12 * m21;
+        double d1 = (-m22 * r1 + m12 * r2) / det;
+        double d2 = (m21 * r1 - m11 * r2) / det;
+        K1 += d1;
+        K2 += d2;
+        if (fmax(fabs(d1), fabs(d2)) < NEWTON_TOL * (1.0 + m)) {
+            converged = 1;
+            break;
+        }
+    }
+    if (!converged) return NAN;
+    return y + h * 0.5 * (K1 + K2);
+}
 
 static double gl6_step(const spong_continue_field *ctx, FJ fj,
                        double x, double y, double h) {
@@ -392,10 +450,16 @@ SPONG_API int spong_continue_curve(
         const double *targets, size_t n_targets, double cap_r,
         const double box[4], double ds, double ds0,
         const double *shallow_gate, size_t max_steps,
+        int centered_available,
         double *points, size_t point_capacity,
         spong_continue_result *result) {
 
     SPONG_FP_EXACT
+    memset(result, 0, sizeof *result);
+    /* spong_field and spong_continue_field have identical layout by design
+     * (spong_gauss2.h); the normalized-arclength rescue reads the field
+     * through that view. */
+    const spong_field *gf = (const spong_field *)f;
     const double TMAX = turn_max();
     const double eps = DBL_EPSILON;
     // Budget the DISTANCE TRAVELLED, not the step count.  A step budget is
@@ -451,18 +515,29 @@ SPONG_API int spong_continue_curve(
                     b_end = b; w_end = w;
                     FINISH(SPONG_CONT_ENTER_SHALLOW, SPONG_DELEGATE_NONE);
                 }
-                /* not slaved: the reference now watches for a hover
-                 * two-cycle and TRIMS the stalled tail.  Uncovered by the
-                 * corpus, so hand the whole segment back rather than guess. */
+                /* not slaved: watch for the hover two-cycle -- the
+                 * discrete freeze of a non-L-stable method over shallow
+                 * water -- and TRIM the stalled tail: it is a discrete
+                 * artifact, and its hover altitude becomes the seam
+                 * residual.  The window holds the last STALL_WINDOW
+                 * values; the reference appends, pops the oldest, then
+                 * compares against the (new) oldest. */
                 recent[n_recent++] = b;
                 if (n_recent > STALL_WINDOW) {
-                    if (fabs(b - recent[0]) < 1.0 * ds) {
-                        b_end = b; w_end = w;
-                        FINISH(SPONG_CONT_DELEGATE, SPONG_DELEGATE_STALL_TRIM);
-                    }
                     for (size_t i = 1; i <= STALL_WINDOW; i++)
                         recent[i - 1] = recent[i];
                     n_recent = STALL_WINDOW;
+                    if (fabs(b - recent[0]) < 1.0 * ds) {
+                        if (overflow) { b_end = b; w_end = w;
+                            FINISH(SPONG_CONT_ENTER_SHALLOW, SPONG_DELEGATE_NONE); }
+                        size_t n_trim = (n_pts - 1 < STALL_WINDOW)
+                                        ? n_pts - 1 : STALL_WINDOW;
+                        n_pts -= n_trim;
+                        double a_bk = points[2 * (n_pts - 1)];
+                        double b_bk = points[2 * (n_pts - 1) + 1];
+                        b_end = b_bk; w_end = a_bk - a_star(f, b_bk);
+                        FINISH(SPONG_CONT_ENTER_SHALLOW, SPONG_DELEGATE_NONE);
+                    }
                 }
             } else {
                 n_recent = 0;
@@ -509,9 +584,95 @@ SPONG_API int spong_continue_curve(
 
             if (failed) {
                 if (cur > continuation_floor) { cur *= 0.5; rejected++; continue; }
-                /* floor-fallback ladder: uncovered */
-                b_end = b_prev; w_end = w_prev;
-                FINISH(SPONG_CONT_DELEGATE, SPONG_DELEGATE_FLOOR_LADDER);
+                /* FLOOR-FALLBACK LADDER.  At the spatial resolution floor,
+                 * further halving moves into cancellation.  The two graph
+                 * charts describe the same curve and GL4 has a different
+                 * stage system, so exhaust those equivalent representations
+                 * before declaring the state numerically undefined: (active
+                 * chart, GL4), (other chart, GL6), (other chart, GL4), each
+                 * under the same descent-realization test.  Note the test
+                 * here is the reference's: no finiteness guard on
+                 * expected/actual, just the two inequalities. */
+                int rescued = 0;
+                const int alt_slow[3] = { slow, !slow, !slow };
+                const int alt_gl6[3]  = { 0, 1, 0 };
+                for (int alt = 0; alt < 3 && !rescued; alt++) {
+                    double bn, wn;
+                    if (alt_slow[alt]) {
+                        h = cur / sqrt(1.0 + (vw / vb) * (vw / vb))
+                            * (vb > 0 ? 1.0 : -1.0);
+                        wn = alt_gl6[alt] ? gl6_step(f, slow_fj, b_prev, w_prev, h)
+                                          : gl4_step(f, slow_fj, b_prev, w_prev, h);
+                        bn = b_prev + h;
+                    } else {
+                        h = cur / sqrt(1.0 + (vb / vw) * (vb / vw))
+                            * (vw > 0 ? 1.0 : -1.0);
+                        bn = alt_gl6[alt] ? gl6_step(f, fast_fj, w_prev, b_prev, h)
+                                          : gl4_step(f, fast_fj, w_prev, b_prev, h);
+                        wn = w_prev + h;
+                    }
+                    if (!(isfinite(bn) && isfinite(wn))) continue;
+                    a_prev = a_star(f, b_prev) + w_prev;
+                    double a_test = a_star(f, bn) + wn;
+                    double da = a_test - a_prev, db = bn - b_prev;
+                    double ga, gb;
+                    grad_loss(f, a_prev, b_prev, &ga, &gb);
+                    double Lp = loss(f, a_prev, b_prev);
+                    double expected = flow * (ga * da + gb * db);
+                    double actual = flow * (loss(f, a_test, bn) - Lp);
+                    double slack = 64.0 * eps * (1.0 + fabs(Lp));
+                    if (expected >= 0.0 || actual > 1e-4 * expected + slack)
+                        continue;
+                    b_new = bn; w_new = wn;
+                    result->rescues[alt_slow[alt]
+                        ? (alt_gl6[alt] ? SPONG_RESCUE_SLOW_GL6 : SPONG_RESCUE_SLOW_GL4)
+                        : (alt_gl6[alt] ? SPONG_RESCUE_FAST_GL6 : SPONG_RESCUE_FAST_GL4)]++;
+                    rescued = 1;
+                }
+                /* Both graph parameterizations can become singular at the
+                 * same geometric point (most commonly on arrival).  The curve
+                 * itself is still regular there: continue it by arclength in
+                 * the 2-D normalized-gradient field, orders 8, 6, 4, with the
+                 * same expected-change check selecting the local stage
+                 * root. */
+                if (!rescued) {
+                    static const int orders[3] = { 8, 6, 4 };
+                    for (int oi = 0; oi < 3 && !rescued; oi++) {
+                        a_prev = a_star(f, b_prev) + w_prev;
+                        double z[2] = { a_prev, b_prev }, out[2];
+                        if (!spong_normalized_step(gf, z, -flow * cur,
+                                                   orders[oi], out))
+                            continue;
+                        double a_try = out[0], b_try = out[1];
+                        if (!(isfinite(a_try) && isfinite(b_try))) continue;
+                        double da = a_try - a_prev, db = b_try - b_prev;
+                        double ga, gb;
+                        grad_loss(f, a_prev, b_prev, &ga, &gb);
+                        double Lp = loss(f, a_prev, b_prev);
+                        double expected = flow * (ga * da + gb * db);
+                        double actual = flow * (loss(f, a_try, b_try) - Lp);
+                        double slack = 64.0 * eps * (1.0 + fabs(Lp));
+                        if (expected >= 0.0 || actual > 1e-4 * expected + slack)
+                            continue;
+                        b_new = b_try; w_new = a_try - a_star(f, b_try);
+                        result->rescues[SPONG_RESCUE_NORMALIZED_GL8 + oi]++;
+                        rescued = 1;
+                    }
+                }
+                if (!rescued) {
+                    b_end = b_prev; w_end = w_prev;
+                    if (centered_available) {
+                        /* the last rung needs the local jet: not on this ABI
+                         * yet, so the whole segment goes back */
+                        FINISH(SPONG_CONT_DELEGATE, SPONG_DELEGATE_CENTERED_CHART);
+                    }
+                    result->fail_b = b_prev; result->fail_w = w_prev;
+                    result->fail_cur = cur; result->fail_h = h;
+                    result->fail_vb = vb; result->fail_vw = vw;
+                    result->fail_slow = slow; result->fail_retry = retry;
+                    FINISH(SPONG_CONT_ABORT_STEP_FAILURE, SPONG_DELEGATE_NONE);
+                }
+                failed = 0;
             }
 
             if (n_pts >= 2) {
@@ -529,9 +690,19 @@ SPONG_API int spong_continue_curve(
             settled = 1;
             break;
         }
-        if (!settled) {   /* retry budget exhausted without a decision */
-            b_end = b_prev; w_end = w_prev;
-            FINISH(SPONG_CONT_DELEGATE, SPONG_DELEGATE_FLOOR_LADDER);
+        if (!settled) {
+            /* Retry budget exhausted with cur still above the floor (the
+             * ramped chord can sit far above the launch chord, so seven
+             * halvings of ds need not reach cur0/128).  The reference falls
+             * out of `for _retry in range(8)` and ACCEPTS the last attempt's
+             * b_new, w_new -- a point that failed the descent-realization
+             * test, or is non-finite (which then aborts as abort_nonfinite
+             * below).  Observed: directed seed 1414065525, both stable
+             * segments at the a*=0 saddle, taken=0 rejected=7.  Reproduced
+             * here for parity, not endorsed; whether the reference should
+             * instead descend the ladder is a separate decision, and this
+             * comment is where it is flagged. */
+            settled = 1;
         }
 
         b = b_new; w = w_new;

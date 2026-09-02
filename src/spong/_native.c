@@ -2033,20 +2033,23 @@ static PyTypeObject KernelType;   /* defined below; needed for the check */
  * caller wraps with numpy.frombuffer; that avoids linking the numpy C API
  * for what is a straight memory handoff.
  *
- * A SPONG_CONT_DELEGATE return means the segment reached a path this port
- * does not own.  The caller discards the points and re-runs the whole segment
- * in charts._continue_curve_python.
+ * A SPONG_CONT_DELEGATE return means the segment reached the centered-chart
+ * rescue with a centered local available (the optional trailing int).  The
+ * caller discards the points and re-runs the whole segment in
+ * charts._continue_curve_python.  The trailing dict carries floor-ladder
+ * rescue counts and the step_failure record, under engine_diag's names.
  */
 static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *kobj, *targets_obj, *box_obj, *gate_obj;
     double C, b0, w0, cap_r, ds, ds0;
     int flow;
+    int centered_available = 0;
     Py_ssize_t max_steps;
-    if (!PyArg_ParseTuple(args, "OdddiOdOddOn",
+    if (!PyArg_ParseTuple(args, "OdddiOdOddOn|i",
                           &kobj, &C, &b0, &w0, &flow, &targets_obj,
                           &cap_r, &box_obj, &ds, &ds0, &gate_obj,
-                          &max_steps)) {
+                          &max_steps, &centered_available)) {
         return NULL;
     }
     if (!PyObject_TypeCheck(kobj, &KernelType)) {
@@ -2098,6 +2101,7 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
             &field, b0, w0, flow,
             targets, (size_t)(n_targets_flat / 2), cap_r,
             box, ds, ds0, gate, (size_t)max_steps,
+            centered_available,
             points, cap, &res);
         Py_END_ALLOW_THREADS
         if (term != SPONG_CONT_NEED_CAPACITY) break;
@@ -2115,11 +2119,42 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
     if (blob == NULL) return NULL;
+    /* Diagnostics under the reference's engine_diag names: floor-ladder
+     * rescue counts, and the step_failure record on that abort. */
+    static const char *rescue_names[SPONG_RESCUE_COUNT] = {
+        "floor_fallback_slow_gl4", "floor_fallback_slow_gl6",
+        "floor_fallback_fast_gl4", "floor_fallback_fast_gl6",
+        "floor_fallback_normalized_gl8", "floor_fallback_normalized_gl6",
+        "floor_fallback_normalized_gl4",
+    };
+    PyObject *diag = PyDict_New();
+    if (diag == NULL) { Py_DECREF(blob); return NULL; }
+    for (int i = 0; i < SPONG_RESCUE_COUNT; i++) {
+        if (res.rescues[i] == 0) continue;
+        PyObject *v = PyLong_FromUnsignedLongLong(
+            (unsigned long long)res.rescues[i]);
+        if (v == NULL || PyDict_SetItemString(diag, rescue_names[i], v) < 0) {
+            Py_XDECREF(v); Py_DECREF(diag); Py_DECREF(blob); return NULL;
+        }
+        Py_DECREF(v);
+    }
+    if (res.term == SPONG_CONT_ABORT_STEP_FAILURE) {
+        PyObject *fail = Py_BuildValue(
+            "{sdsdsdsdsssdsdsdsi}",
+            "b", res.fail_b, "w", res.fail_w, "cur", res.fail_cur,
+            "ds", ds, "chart", res.fail_slow ? "slow" : "fast",
+            "h", res.fail_h, "vb", res.fail_vb, "vw", res.fail_vw,
+            "retry", res.fail_retry);
+        if (fail == NULL || PyDict_SetItemString(diag, "step_failure", fail) < 0) {
+            Py_XDECREF(fail); Py_DECREF(diag); Py_DECREF(blob); return NULL;
+        }
+        Py_DECREF(fail);
+    }
     PyObject *out = Py_BuildValue(
-        "(iiiddKKN)", res.term, res.delegate_reason, res.switches,
+        "(iiiddKKNN)", res.term, res.delegate_reason, res.switches,
         res.b_end, res.w_end,
         (unsigned long long)res.steps_taken,
-        (unsigned long long)res.steps_rejected, blob);
+        (unsigned long long)res.steps_rejected, blob, diag);
     return out;
 }
 

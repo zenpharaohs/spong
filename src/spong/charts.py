@@ -1579,13 +1579,15 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     tracing concurrent.  It reproduces _continue_curve_python bit for bit on
     every segment of tests/corpus/continue_curve.json.
 
-    Paths the corpus cannot judge -- the floor-fallback ladder, the
-    normalized-arclength rescue, the centered rescue, the stall trim -- are not
-    reimplemented in C.  The port returns DELEGATE and the WHOLE segment is
-    re-run here, from the original arguments.  Resuming mid-segment would have
-    to carry the chart, the ramped chord, the floor fixed at launch and the
-    stall window across the boundary; re-running is identical by construction
-    and costs nothing in a case that has never yet occurred.
+    The floor-fallback ladder, the normalized-arclength rescue and the stall
+    trim are ported (2026-09-02: directed seed 1414065525 reached the ladder
+    after 3.5M native steps and the whole-segment Python replay cost an
+    hour).  The one path still not in C is the centered-chart rescue, tried
+    only after both ladders fail and only when a centered local exists; the
+    port returns DELEGATE there and the WHOLE segment is re-run here, from
+    the original arguments -- resuming mid-segment would have to carry the
+    chart, the ramped chord, the floor fixed at launch and the stall window
+    across the boundary.  Passing the jet through the ABI retires it.
     """
     from . import engine
     if max_steps is None:
@@ -1628,13 +1630,15 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
             engine_diag=engine_diag, centered_local=centered_local)
 
     flat = [float(c) for t in targets for c in t]
-    term_code, reason, switches, b_end, w_end, taken, rejected, blob = \
-        native.continue_curve(
-            kernel, float(m.C), float(b0), float(w0), int(flow),
-            flat, float(cap_r), [float(x) for x in box],
-            float(ds), -1.0 if ds0 is None else float(ds0),
-            None if shallow_gate is None else [float(x) for x in shallow_gate],
-            int(max_steps))
+    centered_available = int(centered_local is not None
+                             and centered_local.native is not None)
+    (term_code, reason, switches, b_end, w_end, taken, rejected, blob,
+     native_diag) = native.continue_curve(
+        kernel, float(m.C), float(b0), float(w0), int(flow),
+        flat, float(cap_r), [float(x) for x in box],
+        float(ds), -1.0 if ds0 is None else float(ds0),
+        None if shallow_gate is None else [float(x) for x in shallow_gate],
+        int(max_steps), centered_available)
 
     if term_code == _NATIVE_DELEGATE:
         if engine_diag is not None:
@@ -1651,6 +1655,13 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
             engine_diag.get("native_steps", 0) + int(taken))
         engine_diag["native_rejected"] = (
             engine_diag.get("native_rejected", 0) + int(rejected))
+        # The port's floor_fallback_* counts and step_failure record, under
+        # the reference's names, so a native diag reads like a Python one.
+        for key, value in native_diag.items():
+            if key == "step_failure":
+                engine_diag[key] = value
+            else:
+                engine_diag[key] = engine_diag.get(key, 0) + int(value)
     return pts, _NATIVE_TERM[term_code], int(switches), (b_end, w_end)
 
 
