@@ -40,6 +40,14 @@ KAPPA_EXIT = 1e3        # shallow-zone exit (hysteresis: enter at HI, leave
                         # below EXIT, so the zone loop cannot ping-pong)
 R_SWITCH = 20.0         # velocity-ratio chart handoff threshold
 MAX_SWITCHES = 12
+# Absolute ceiling on accepted steps per continuation segment, independent
+# of ds.  The work bound below scales as diagonal/ds, and ds can be a short
+# direct connection's db/4000 on a large box: measured 174,554,744 on a
+# directed |b|=80 case whose branch crawled 1.2e-3 in b over 3.5M native
+# steps (2026-09-02).  A branch still marching after this many accepted
+# steps is not going to arrive at ANY ds; the only verdict this can change
+# is an abort_max_steps that arrives earlier.
+STEP_CEILING = 5000000
 TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
 UNSTABLE_LAUNCH_REL = 1e-6
 STABLE_LAUNCH_DELTA = 1e-4
@@ -1598,7 +1606,8 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         # Net effect of the pair: the engine can now stop EARLIER than before
         # (on distance) but never later (on work).
         diagonal = float(np.hypot(box[1]-box[0], box[3]-box[2]))
-        max_steps = int(max(200000.0, 8.0*diagonal/max(ds, 1e-300)))
+        max_steps = int(min(STEP_CEILING,
+                            max(200000.0, 8.0*diagonal/max(ds, 1e-300))))
     if engine.active_name() != "native":
         return _continue_curve_python(
             m, b0, w0, flow, targets, box, ds, max_steps=max_steps,
