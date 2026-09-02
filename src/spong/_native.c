@@ -55,11 +55,24 @@ static const double SQRT15 = 3.87298334620741688517926539978239961;
 static const double STAGE_GUARD = 1e-6;
 static const double NEWTON_TOL = 1e-13;
 static const int NEWTON_MAX = 30;
+/* Evaluation-floor convergence: a stage is converged when every residual is
+ * within NOISE_C times f's evaluation floor at that stage point.  See
+ * gauss._NOISE_C for the measurement that forced this. */
+static const double NOISE_C = 4.0;
 
 static double horner(const double *c, Py_ssize_t n, double x) {
     double acc = 0.0;
     for (Py_ssize_t i = n; i-- > 0;) {
         acc = acc * x + c[i];
+    }
+    return acc;
+}
+
+/* Horner on |c_i| at |x|: the running-error bound's building block. */
+static double horner_abs(const double *c, Py_ssize_t n, double x) {
+    double acc = 0.0, ax = fabs(x);
+    for (Py_ssize_t i = n; i-- > 0;) {
+        acc = acc * ax + fabs(c[i]);
     }
     return acc;
 }
@@ -181,9 +194,66 @@ static double fast_fj(void *ctx, double w, double b, double *jac) {
     return Pv / D;
 }
 
+/* Evaluation floors of the two chart right-hand sides: the FIRST-ORDER
+ * running-error bound of the computed expression, propagated operation by
+ * operation (E(Horner of degree n) = n*sum|c_i||x|^i; E(xy) = |x|E(y) +
+ * |y|E(x) + |xy|; E(x/y) = (E(x) + |x/y|E(y))/|y| + |x/y|; E(x+y) = E(x) +
+ * E(y) + |x+y|), times eps.  charts.slow_floor_s / fast_floor_s, term for
+ * term. */
+typedef double (*FLOOR)(void *, double, double);
+
+static void floor_parts(Kernel *k, double b, double w,
+                        double *A_, double *EA_, double *asp_, double *Easp_,
+                        double *Pv_, double *EP_) {
+    double A = horner(k->a, k->na, b), Ap = horner(k->ap, k->nap, b);
+    double B = horner(k->b, k->nb, b), Bp = horner(k->bp, k->nbp, b);
+    double Nv = horner(k->n, k->nn, b);
+    double EA = (double)k->na * horner_abs(k->a, k->na, b);
+    double EAp = (double)k->nap * horner_abs(k->ap, k->nap, b);
+    double EB = (double)k->nb * horner_abs(k->b, k->nb, b);
+    double EBp = (double)k->nbp * horner_abs(k->bp, k->nbp, b);
+    double EN = (double)k->nn * horner_abs(k->n, k->nn, b);
+    double aA = fabs(A), A2 = A * A;
+    double t1 = Bp / A;
+    double Et1 = (EBp + fabs(t1) * EA) / aA + fabs(t1);
+    double t2 = B * Ap / A2;
+    double Et2 = (fabs(Ap) * EB + fabs(B) * EAp) / A2
+                 + fabs(t2) * (2.0 * EA / aA + 1.0);
+    double asp = t1 - t2;
+    double Easp = Et1 + Et2 + fabs(asp);
+    double up = B * Nv / A2;
+    double Eup = (fabs(Nv) * EB + fabs(B) * EN) / A2
+                 + fabs(up) * (2.0 * EA / aA + 1.0);
+    double Pv = up + Ap * w * w - 2.0 * A * w * asp;
+    double EP = Eup + w * w * EAp + fabs(Ap * w * w)
+                + 2.0 * fabs(w) * (fabs(asp) * EA + aA * Easp)
+                + 2.0 * fabs(A * w * asp) + fabs(Pv);
+    *A_ = A; *EA_ = EA; *asp_ = asp; *Easp_ = Easp; *Pv_ = Pv; *EP_ = EP;
+}
+
+static double slow_floor(void *ctx, double b, double w) {
+    double A, EA, asp, Easp, Pv, EP;
+    floor_parts((Kernel *)ctx, b, w, &A, &EA, &asp, &Easp, &Pv, &EP);
+    double t = 2.0 * A * w / Pv;
+    double Et = (2.0 * fabs(w) * EA + fabs(t) * EP) / fabs(Pv) + fabs(t);
+    return DBL_EPSILON * (Et + Easp + fabs(t - asp));
+}
+
+static double fast_floor(void *ctx, double w, double b) {
+    double A, EA, asp, Easp, Pv, EP;
+    floor_parts((Kernel *)ctx, b, w, &A, &EA, &asp, &Easp, &Pv, &EP);
+    double D = 2.0 * A * w - asp * Pv;
+    double ED = 2.0 * fabs(w) * EA + fabs(asp) * EP + fabs(Pv) * Easp
+                + fabs(asp * Pv) + fabs(D);
+    double f = Pv / D;
+    return DBL_EPSILON * ((EP + fabs(f) * ED) / fabs(D) + fabs(f));
+}
+
 typedef double (*FJ)(void *, double, double, double *);
 
-static double gl4_step(void *ctx, FJ fj, double x, double y, double h) {
+/* fl may be NULL: then only the tol*(1+|K|) test applies. */
+static double gl4_step(void *ctx, FJ fj, FLOOR fl,
+                       double x, double y, double h) {
     const double c1 = 0.5 - SQRT3 / 6.0;
     const double c2 = 0.5 + SQRT3 / 6.0;
     const double a11 = 0.25;
@@ -205,6 +275,12 @@ static double gl4_step(void *ctx, FJ fj, double x, double y, double h) {
         double m = fabs(K1) > fabs(K2) ? fabs(K1) : fabs(K2);
         double r = fabs(r1) > fabs(r2) ? fabs(r1) : fabs(r2);
         if (r < NEWTON_TOL * (1.0 + m)) {
+            converged = 1;
+            break;
+        }
+        if (fl != NULL && it > 0
+                && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1)
+                && fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)) {
             converged = 1;
             break;
         }
@@ -239,7 +315,8 @@ static double gl4_step(void *ctx, FJ fj, double x, double y, double h) {
  * IS small forward error and no refinement is needed; the only guard required
  * is the ill-conditioning trip below.  Must stay bit-comparable with
  * gauss.gl6_scalar -- tests/test_native_parity.py pins that. */
-static double gl6_step(void *ctx, FJ fj, double x, double y, double h) {
+static double gl6_step(void *ctx, FJ fj, FLOOR fl,
+                       double x, double y, double h) {
     const double c1 = 0.5 - SQRT15 / 10.0;
     const double c2 = 0.5;
     const double c3 = 0.5 + SQRT15 / 10.0;
@@ -283,6 +360,13 @@ static double gl6_step(void *ctx, FJ fj, double x, double y, double h) {
         if (fabs(r2) > r) r = fabs(r2);
         if (fabs(r3) > r) r = fabs(r3);
         if (r < NEWTON_TOL * (1.0 + m)) {
+            converged = 1;
+            break;
+        }
+        if (fl != NULL && it > 0
+                && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1)
+                && fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)
+                && fabs(r3) <= NOISE_C * fl(ctx, x3, Y3)) {
             converged = 1;
             break;
         }
@@ -407,7 +491,7 @@ static PyObject *Kernel_slow_step(Kernel *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
         return NULL;
     }
-    return PyFloat_FromDouble(gl6_step(self, slow_fj, x, y, h));
+    return PyFloat_FromDouble(gl6_step(self, slow_fj, slow_floor, x, y, h));
 }
 
 static PyObject *Kernel_fast_step(Kernel *self, PyObject *args) {
@@ -415,7 +499,7 @@ static PyObject *Kernel_fast_step(Kernel *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
         return NULL;
     }
-    return PyFloat_FromDouble(gl6_step(self, fast_fj, x, y, h));
+    return PyFloat_FromDouble(gl6_step(self, fast_fj, fast_floor, x, y, h));
 }
 
 static PyObject *Kernel_slow_step_gl4(Kernel *self, PyObject *args) {
@@ -423,7 +507,7 @@ static PyObject *Kernel_slow_step_gl4(Kernel *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
         return NULL;
     }
-    return PyFloat_FromDouble(gl4_step(self, slow_fj, x, y, h));
+    return PyFloat_FromDouble(gl4_step(self, slow_fj, slow_floor, x, y, h));
 }
 
 static PyObject *Kernel_fast_step_gl4(Kernel *self, PyObject *args) {
@@ -431,7 +515,7 @@ static PyObject *Kernel_fast_step_gl4(Kernel *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "ddd", &x, &y, &h)) {
         return NULL;
     }
-    return PyFloat_FromDouble(gl4_step(self, fast_fj, x, y, h));
+    return PyFloat_FromDouble(gl4_step(self, fast_fj, fast_floor, x, y, h));
 }
 
 static PyObject *Kernel_velocities(Kernel *self, PyObject *args) {
@@ -771,9 +855,11 @@ static PyObject *LocalKernel_curve_step(LocalKernel *self, PyObject *args) {
         return NULL;
     }
     LocalCurveContext ctx = {self, independent};
+    /* No floor for the jet chart yet: the old absolute test applies, as
+     * before, until its running-error bound is written. */
     double out = order == 6
-        ? gl6_step(&ctx, local_curve_fj, x, y, h)
-        : gl4_step(&ctx, local_curve_fj, x, y, h);
+        ? gl6_step(&ctx, local_curve_fj, NULL, x, y, h)
+        : gl4_step(&ctx, local_curve_fj, NULL, x, y, h);
     return PyFloat_FromDouble(out);
 }
 

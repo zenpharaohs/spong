@@ -479,6 +479,80 @@ def fast_rhs_s(m: Model):
     return f, j
 
 
+# ---- evaluation floors of the chart right-hand sides ----------------------
+#
+# The stage Newton in gauss.gl6_scalar / gl4_scalar (and the C twins) accepts
+# a residual within gauss._NOISE_C times f's evaluation floor, because the
+# absolute tolerance tol*(1+|K|) is unreachable in the fast chart on models
+# with large a-scale (see gauss._NOISE_C).  The floor is the FIRST-ORDER
+# RUNNING-ERROR BOUND of the computed expression, propagated operation by
+# operation: E(Horner of degree n) = n * sum|c_i||x|^i; E(x*y) = |x|E(y) +
+# |y|E(x) + |xy|; E(x/y) = (E(x) + |x/y|E(y))/|y| + |x/y|; E(x+y) = E(x) +
+# E(y) + |x+y|; each rounding contributing its own |result|.  The floor is
+# eps * E(f).  Cancellation is charged where it occurs (a*' as a difference
+# of two large terms, P likewise) and nowhere else -- a first draft that
+# multiplied absolute sums together overshot by 1e12 at a capture vertex.
+
+def _horner_abs(c, x: float) -> float:
+    acc = 0.0
+    ax = abs(x)
+    for ci in reversed(c):
+        acc = acc * ax + abs(ci)
+    return acc
+
+
+def _floor_parts(m: Model, b: float, w: float):
+    """Values and error bounds (in units of eps) of A, a*', P at (b, w)."""
+    A, Ap = m.sA(b), m.sAp(b)
+    B, Bp, Nv = m.sB(b), m.sBp(b), m.sN(b)
+    EA = len(m._fa) * _horner_abs(m._fa, b)
+    EAp = len(m._fap) * _horner_abs(m._fap, b)
+    EB = len(m._fb) * _horner_abs(m._fb, b)
+    EBp = len(m._fbp) * _horner_abs(m._fbp, b)
+    EN = len(m._fn) * _horner_abs(m._fn, b)
+    aA, A2 = abs(A), A * A
+    t1 = Bp / A
+    Et1 = (EBp + abs(t1) * EA) / aA + abs(t1)
+    t2 = B * Ap / A2
+    Et2 = ((abs(Ap) * EB + abs(B) * EAp) / A2
+           + abs(t2) * (2.0 * EA / aA + 1.0))
+    asp = t1 - t2
+    Easp = Et1 + Et2 + abs(asp)
+    up = B * Nv / A2
+    Eup = (abs(Nv) * EB + abs(B) * EN) / A2 + abs(up) * (2.0 * EA / aA + 1.0)
+    Pv = up + Ap * w * w - 2.0 * A * w * asp
+    EP = (Eup + w * w * EAp + abs(Ap * w * w)
+          + 2.0 * abs(w) * (abs(asp) * EA + aA * Easp) + 2.0 * abs(A * w * asp)
+          + abs(Pv))
+    return A, EA, asp, Easp, Pv, EP
+
+
+def slow_floor_s(m: Model):
+    """floor(b, w) for the slow chart's f = 2Aw/P - a*'."""
+    eps = float(np.finfo(float).eps)
+
+    def floor(b: float, w: float) -> float:
+        A, EA, asp, Easp, Pv, EP = _floor_parts(m, b, w)
+        t = 2.0 * A * w / Pv
+        Et = (2.0 * abs(w) * EA + abs(t) * EP) / abs(Pv) + abs(t)
+        return eps * (Et + Easp + abs(t - asp))
+    return floor
+
+
+def fast_floor_s(m: Model):
+    """floor(w, b) for the fast chart's f = P/D, D = 2Aw - a*'P."""
+    eps = float(np.finfo(float).eps)
+
+    def floor(w: float, b: float) -> float:
+        A, EA, asp, Easp, Pv, EP = _floor_parts(m, b, w)
+        D = 2.0 * A * w - asp * Pv
+        ED = (2.0 * abs(w) * EA + abs(asp) * EP + abs(Pv) * Easp
+              + abs(asp * Pv) + abs(D))
+        f = Pv / D
+        return eps * ((EP + abs(f) * ED) / abs(D) + abs(f))
+    return floor
+
+
 def _s_depth_gauge(m: Model, b: float, w: float) -> float:
     A = m.sA(b)
     asp = m.s_a_star_p(b)
@@ -1696,6 +1770,7 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
     """
     sf, sj = slow_rhs_s(m)
     ff, fj = fast_rhs_s(m)
+    s_floor, f_floor = slow_floor_s(m), fast_floor_s(m)
     native = getattr(m, "_native_kernel", None)
     b, w = float(b0), float(w0)
     pts = [(m.s_a_star(b) + w, b)]
@@ -1845,14 +1920,16 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                         1.0 if vb > 0 else -1.0)
                     w_new = native.slow_step(b_prev, w_prev, h) \
                         if native is not None else \
-                        gauss.gl6_scalar(sf, sj, b_prev, w_prev, h)
+                        gauss.gl6_scalar(sf, sj, b_prev, w_prev, h,
+                                         floor=s_floor)
                     b_new = b_prev + h
                 else:
                     h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
                         1.0 if vw > 0 else -1.0)
                     b_new = native.fast_step(w_prev, b_prev, h) \
                         if native is not None else \
-                        gauss.gl6_scalar(ff, fj, w_prev, b_prev, h)
+                        gauss.gl6_scalar(ff, fj, w_prev, b_prev, h,
+                                         floor=f_floor)
                     w_new = w_prev + h
                 step_failed = False
             except (ZeroDivisionError, FloatingPointError, OverflowError):
@@ -1916,7 +1993,8 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                             else:
                                 step = gauss.gl6_scalar if method == "gl6" \
                                     else gauss.gl4_scalar
-                                w_new = step(sf, sj, b_prev, w_prev, h)
+                                w_new = step(sf, sj, b_prev, w_prev, h,
+                                             floor=s_floor)
                             b_new = b_prev + h
                         else:
                             h = cur / (1.0 + (vb / vw) ** 2) ** 0.5 * (
@@ -1928,7 +2006,8 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                             else:
                                 step = gauss.gl6_scalar if method == "gl6" \
                                     else gauss.gl4_scalar
-                                b_new = step(ff, fj, w_prev, b_prev, h)
+                                b_new = step(ff, fj, w_prev, b_prev, h,
+                                             floor=f_floor)
                             w_new = w_prev + h
                     except (ZeroDivisionError, FloatingPointError, OverflowError):
                         continue

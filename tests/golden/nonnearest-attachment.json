@@ -101,16 +101,16 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 2.5810150163158338e-15,
+      "angle_energy[RESIDUAL]": 2.581015019845137e-15,
       "angle_resolved": 8600,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.2422475745948945,
+      "max_turn_deg[RESIDUAL]": 0.24224757460693067,
       "n_points": 9115,
       "saddle_b": -1.5180886643292324,
-      "seam_residual[RESIDUAL]": 1.0234864273098426e-15,
+      "seam_residual[RESIDUAL]": 1.0234839920901192e-15,
       "term": "box_exit"
     },
     {

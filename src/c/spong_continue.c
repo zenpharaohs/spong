@@ -69,6 +69,7 @@
 #define KAPPA_HI        1e4
 #define RETRY_ATTEMPTS  8
 #define STALL_WINDOW    12
+#define NOISE_C         4.0     /* gauss._NOISE_C: evaluation-floor convergence */
 
 static const double SQRT15 = 3.87298334620741688517926539978239961;
 static const double SQRT3  = 1.73205080756887729352744634150587237;
@@ -93,6 +94,15 @@ static double horner_c(const double *c, size_t n, double x) {
     SPONG_FP_FUSED
     double acc = 0.0;
     for (size_t i = n; i-- > 0;) acc = acc * x + c[i];
+    return acc;
+}
+
+/* Horner on |c_i| at |x| -- the running-error bound's building block;
+ * fused, as _native.c's horner_abs is. */
+static double horner_abs_c(const double *c, size_t n, double x) {
+    SPONG_FP_FUSED
+    double acc = 0.0, ax = fabs(x);
+    for (size_t i = n; i-- > 0;) acc = acc * ax + fabs(c[i]);
     return acc;
 }
 
@@ -231,10 +241,65 @@ static double fast_fj(const spong_continue_field *f, double w, double b,
 
 typedef double (*FJ)(const spong_continue_field *, double, double, double *);
 
+/* Evaluation floors of the chart right-hand sides -- verbatim from
+ * _native.c (floor_parts / slow_floor / fast_floor): the first-order
+ * running-error bound, propagated operation by operation; fused as there. */
+typedef double (*FLOOR)(const spong_continue_field *, double, double);
+
+static void floor_parts(const spong_continue_field *k, double b, double w,
+                        double *A_, double *EA_, double *asp_, double *Easp_,
+                        double *Pv_, double *EP_) {
+    SPONG_FP_FUSED
+    double A = horner_c(k->A, k->nA, b), Ap = horner_c(k->Ap, k->nAp, b);
+    double B = horner_c(k->B, k->nB, b), Bp = horner_c(k->Bp, k->nBp, b);
+    double Nv = horner_c(k->N, k->nN, b);
+    double EA = (double)k->nA * horner_abs_c(k->A, k->nA, b);
+    double EAp = (double)k->nAp * horner_abs_c(k->Ap, k->nAp, b);
+    double EB = (double)k->nB * horner_abs_c(k->B, k->nB, b);
+    double EBp = (double)k->nBp * horner_abs_c(k->Bp, k->nBp, b);
+    double EN = (double)k->nN * horner_abs_c(k->N, k->nN, b);
+    double aA = fabs(A), A2 = A * A;
+    double t1 = Bp / A;
+    double Et1 = (EBp + fabs(t1) * EA) / aA + fabs(t1);
+    double t2 = B * Ap / A2;
+    double Et2 = (fabs(Ap) * EB + fabs(B) * EAp) / A2
+                 + fabs(t2) * (2.0 * EA / aA + 1.0);
+    double asp = t1 - t2;
+    double Easp = Et1 + Et2 + fabs(asp);
+    double up = B * Nv / A2;
+    double Eup = (fabs(Nv) * EB + fabs(B) * EN) / A2
+                 + fabs(up) * (2.0 * EA / aA + 1.0);
+    double Pv = up + Ap * w * w - 2.0 * A * w * asp;
+    double EP = Eup + w * w * EAp + fabs(Ap * w * w)
+                + 2.0 * fabs(w) * (fabs(asp) * EA + aA * Easp)
+                + 2.0 * fabs(A * w * asp) + fabs(Pv);
+    *A_ = A; *EA_ = EA; *asp_ = asp; *Easp_ = Easp; *Pv_ = Pv; *EP_ = EP;
+}
+
+static double slow_floor(const spong_continue_field *f, double b, double w) {
+    SPONG_FP_FUSED
+    double A, EA, asp, Easp, Pv, EP;
+    floor_parts(f, b, w, &A, &EA, &asp, &Easp, &Pv, &EP);
+    double t = 2.0 * A * w / Pv;
+    double Et = (2.0 * fabs(w) * EA + fabs(t) * EP) / fabs(Pv) + fabs(t);
+    return DBL_EPSILON * (Et + Easp + fabs(t - asp));
+}
+
+static double fast_floor(const spong_continue_field *f, double w, double b) {
+    SPONG_FP_FUSED
+    double A, EA, asp, Easp, Pv, EP;
+    floor_parts(f, b, w, &A, &EA, &asp, &Easp, &Pv, &EP);
+    double D = 2.0 * A * w - asp * Pv;
+    double ED = 2.0 * fabs(w) * EA + fabs(asp) * EP + fabs(Pv) * Easp
+                + fabs(asp * Pv) + fabs(D);
+    double fv = Pv / D;
+    return DBL_EPSILON * ((EP + fabs(fv) * ED) / fabs(D) + fabs(fv));
+}
+
 /* 2-stage Gauss (IRK4-GL), verbatim from _native.c's gl4_step (which is
  * what Kernel.slow_step_gl4 / fast_step_gl4 call): the floor ladder's first
  * rung.  Fused, as _native.c is built. */
-static double gl4_step(const spong_continue_field *ctx, FJ fj,
+static double gl4_step(const spong_continue_field *ctx, FJ fj, FLOOR fl,
                        double x, double y, double h) {
     SPONG_FP_FUSED
     const double c1 = 0.5 - SQRT3 / 6.0;
@@ -261,6 +326,12 @@ static double gl4_step(const spong_continue_field *ctx, FJ fj,
             converged = 1;
             break;
         }
+        if (fl != NULL && it > 0
+                && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1)
+                && fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)) {
+            converged = 1;
+            break;
+        }
         double J1, J2;
         (void)fj(ctx, x1, Y1, &J1);
         (void)fj(ctx, x2, Y2, &J2);
@@ -282,7 +353,7 @@ static double gl4_step(const spong_continue_field *ctx, FJ fj,
     return y + h * 0.5 * (K1 + K2);
 }
 
-static double gl6_step(const spong_continue_field *ctx, FJ fj,
+static double gl6_step(const spong_continue_field *ctx, FJ fj, FLOOR fl,
                        double x, double y, double h) {
     SPONG_FP_FUSED
     const double c1 = 0.5 - SQRT15 / 10.0;
@@ -316,6 +387,12 @@ static double gl6_step(const spong_continue_field *ctx, FJ fj,
             if (fabs(r2) > r) r = fabs(r2);
             if (fabs(r3) > r) r = fabs(r3);
             if (r < NEWTON_TOL * (1.0 + m)) { converged = 1; break; }
+            if (fl != NULL && it > 0
+                    && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1)
+                    && fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)
+                    && fabs(r3) <= NOISE_C * fl(ctx, x3, Y3)) {
+                converged = 1; break;
+            }
             double J1, J2, J3;
             (void)fj(ctx, x1, Y1, &J1);
             (void)fj(ctx, x2, Y2, &J2);
@@ -553,11 +630,11 @@ SPONG_API int spong_continue_curve(
             int failed = 0;
             if (slow) {
                 h = cur / sqrt(1.0 + (vw / vb) * (vw / vb)) * (vb > 0 ? 1.0 : -1.0);
-                w_new = gl6_step(f, slow_fj, b_prev, w_prev, h);
+                w_new = gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
                 b_new = b_prev + h;
             } else {
                 h = cur / sqrt(1.0 + (vb / vw) * (vb / vw)) * (vw > 0 ? 1.0 : -1.0);
-                b_new = gl6_step(f, fast_fj, w_prev, b_prev, h);
+                b_new = gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
                 w_new = w_prev + h;
             }
             if (!(isfinite(b_new) && isfinite(w_new))) failed = 1;
@@ -601,14 +678,14 @@ SPONG_API int spong_continue_curve(
                     if (alt_slow[alt]) {
                         h = cur / sqrt(1.0 + (vw / vb) * (vw / vb))
                             * (vb > 0 ? 1.0 : -1.0);
-                        wn = alt_gl6[alt] ? gl6_step(f, slow_fj, b_prev, w_prev, h)
-                                          : gl4_step(f, slow_fj, b_prev, w_prev, h);
+                        wn = alt_gl6[alt] ? gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h)
+                                          : gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
                         bn = b_prev + h;
                     } else {
                         h = cur / sqrt(1.0 + (vb / vw) * (vb / vw))
                             * (vw > 0 ? 1.0 : -1.0);
-                        bn = alt_gl6[alt] ? gl6_step(f, fast_fj, w_prev, b_prev, h)
-                                          : gl4_step(f, fast_fj, w_prev, b_prev, h);
+                        bn = alt_gl6[alt] ? gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h)
+                                          : gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
                         wn = w_prev + h;
                     }
                     if (!(isfinite(bn) && isfinite(wn))) continue;

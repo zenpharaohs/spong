@@ -70,6 +70,30 @@ _STAGES = {len(c): c for c, _, _ in _TABLEAU.values()}
 _NEWTON_TOL = 1e-13
 _NEWTON_MAX = 30
 
+# EVALUATION-FLOOR CONVERGENCE (2026-09-02).  The stage Newton is declared
+# converged when its residual falls below tol*(1+|K|) -- an ABSOLUTE 1e-13
+# whenever |K| < 1, which is every fast-chart step (|db/dw| < 1/R_SWITCH by
+# the chart's own definition).  On a model with large a-scale the residual
+# r_i = K_i - f(x_i, Y_i) cannot fall below f's own evaluation noise, which
+# at (directed seed 1414065525, b = -0.02117, a = 1.9e4) is 3.4e-13
+# absolute: Newton solved the stage system to working precision at
+# iteration 1 and then failed the test for 29 more.  Every such refusal was
+# halved down to the continuation floor and rescued by GL4 (which has the
+# same test and passed by rounding luck) -- 155k floor rescues on two stable
+# branches and a 3.5M-step crawl on the unstable one.
+#
+# So a stage is also converged when EVERY residual is within a small multiple
+# of the evaluation floor of f at that stage point, the floor being the
+# standard running-error bound: the same expression with every coefficient
+# and every term taken in absolute value, times eps.  Cancellation shows up
+# in that bound exactly where it amplifies the noise.  The multiple is
+# _NOISE_C; the floor comes from the caller (`floor(x, y)`), and callers
+# that supply none keep the old test unchanged.  The floor test is about a
+# STAGNATING iteration, so it applies only after Newton has corrected at
+# least once: at a stationary point the floor can exceed |K| and would
+# otherwise accept the explicit stage guess untouched.
+_NOISE_C = 4.0
+
 # Ill-conditioning trip for the closed-form stage solve, as a Hadamard-style
 # ratio |det M| / prod(row inf-norms).  Calibrated on REAL traces, not on a
 # synthetic dissipative sweep -- that mistake set this to 1e-3 and aborted a
@@ -256,12 +280,23 @@ def step(F, x, y, h, method="gl6", jac=None) -> Step:
     return Step(x, h, y, y1, K)
 
 
+def _within_floor(floor, pts, rs):
+    """Every stage residual within _NOISE_C times f's evaluation floor."""
+    if floor is None:
+        return False
+    for (xi, yi), ri in zip(pts, rs):
+        if not abs(ri) <= _NOISE_C * floor(xi, yi):
+            return False
+    return True
+
+
 def gl4_scalar(f, j, x: float, y: float, h: float,
-               tol: float = 1e-13, maxit: int = 30) -> float:
+               tol: float = 1e-13, maxit: int = 30, floor=None) -> float:
     """Tier-0 scalar GL4 step: pure floats, closed-form 2x2 stage Newton.
 
     Identical mathematics to step(..., method='gl4') for scalar systems;
     ~20x less interpreter overhead (no numpy objects in the loop).
+    `floor(x, y)` is f's evaluation-noise floor at a point; see _NOISE_C.
     """
     c1, c2 = _GL2_C
     (a11, a12), (a21, a22) = _GL2_A
@@ -269,7 +304,7 @@ def gl4_scalar(f, j, x: float, y: float, h: float,
     k = f(x, y)
     K1 = K2 = k
     converged = False
-    for _ in range(maxit):
+    for it in range(maxit):
         Y1 = y + h * (a11 * K1 + a12 * K2)
         Y2 = y + h * (a21 * K1 + a22 * K2)
         r1 = K1 - f(x1, Y1)
@@ -278,6 +313,9 @@ def gl4_scalar(f, j, x: float, y: float, h: float,
         if abs(K2) > m_:
             m_ = abs(K2)
         if (abs(r1) if abs(r1) > abs(r2) else abs(r2)) < tol * (1.0 + m_):
+            converged = True
+            break
+        if it > 0 and _within_floor(floor, ((x1, Y1), (x2, Y2)), (r1, r2)):
             converged = True
             break
         J1 = j(x1, Y1)
@@ -301,7 +339,7 @@ def gl4_scalar(f, j, x: float, y: float, h: float,
 
 
 def gl6_scalar(f, j, x: float, y: float, h: float,
-               tol: float = 1e-13, maxit: int = 30) -> float:
+               tol: float = 1e-13, maxit: int = 30, floor=None) -> float:
     """Tier-0 scalar GL6 step: pure floats, closed-form 3x3 stage Newton.
 
     Identical mathematics to step(..., method='gl6') for scalar systems;
@@ -349,7 +387,7 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
     k = f(x, y)
     K1 = K2 = K3 = k
     converged = False
-    for _ in range(maxit):
+    for it in range(maxit):
         Y1 = y + h * (a11 * K1 + a12 * K2 + a13 * K3)
         Y2 = y + h * (a21 * K1 + a22 * K2 + a23 * K3)
         Y3 = y + h * (a31 * K1 + a32 * K2 + a33 * K3)
@@ -367,6 +405,10 @@ def gl6_scalar(f, j, x: float, y: float, h: float,
         if abs(r3) > rm:
             rm = abs(r3)
         if rm < tol * (1.0 + m_):
+            converged = True
+            break
+        if it > 0 and _within_floor(floor, ((x1, Y1), (x2, Y2), (x3, Y3)),
+                                    (r1, r2, r3)):
             converged = True
             break
         J1, J2, J3 = j(x1, Y1), j(x2, Y2), j(x3, Y3)
