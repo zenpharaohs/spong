@@ -122,7 +122,8 @@ def run_oracle(kind: str, m, i: dict):
             (events[-1] if events else None)
     pts, term = charts._potential_rate_box_exit_python(
         m, tuple(i["start"]), tuple(i["box"]), i["ds"], diag,
-        max_steps=i["max_steps"], critical=critical)
+        max_steps=i["max_steps"], critical=critical,
+        stop_loss=i.get("stop_loss"))
     return pts, term, {}, diag.get("potential_rate_ascent")
 
 
@@ -157,7 +158,8 @@ def run_dispatch(kind: str, m, i: dict):
             (events[-1] if events else None)
     pts, term = charts._potential_rate_box_exit(
         m, tuple(i["start"]), tuple(i["box"]), i["ds"], diag,
-        max_steps=i["max_steps"], critical=critical)
+        max_steps=i["max_steps"], critical=critical,
+        stop_loss=i.get("stop_loss"))
     return pts, term, {}, diag.get("potential_rate_ascent")
 
 
@@ -247,11 +249,14 @@ def record_zoo(names) -> list[dict]:
 
     @functools.wraps(originals["ascent"])
     def rec_ascent(m, start, box, ds, engine_diag,
-                   max_steps=100000, critical=None):
+                   max_steps=100000, critical=None, stop_loss=None):
+        # stop_loss is the level bar (2026-09-02): part of the segment's
+        # input, recorded as given, None when the caller set none.
         i = {"start": [float(start[0]), float(start[1])],
              "box": [float(x) for x in box], "ds": float(ds),
              "max_steps": int(max_steps),
-             "critical": _critical_list(critical)}
+             "critical": _critical_list(critical),
+             "stop_loss": None if stop_loss is None else float(stop_loss)}
         result = run_oracle("ascent", m, i)
         note("ascent", i, result)
         pts, term, _extra, diag_entry = result

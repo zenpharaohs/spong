@@ -53,17 +53,34 @@ SPONG_API void   spong_field_hessian(const spong_field *field, double a, double 
 typedef int (*spong_vec_fj)(void *ctx, const double z[2],
                             double f[2], double J[2][2]);
 
-/* The two named fields on a spong_field context. */
+/* The field's evaluation floor at z: eta[d] bounds the rounding error of
+ * f[d] as computed (first-order running-error bound times eps).  The stage
+ * Newton in spong_irk2_step_floored accepts a residual within a small
+ * multiple of it -- the absolute NEWTON_TOL is unreachable on a unit field
+ * whose gradient carries cancellation (see gauss._NOISE_C in the Python
+ * reference for the measurement). */
+typedef int (*spong_vec_floor)(void *ctx, const double z[2], double eta[2]);
+
+/* The two named fields on a spong_field context, and their floors. */
 SPONG_API int spong_normalized_fj(void *ctx, const double z[2],
                                   double f[2], double J[2][2]);
 SPONG_API int spong_potential_rate_fj(void *ctx, const double z[2],
                                       double f[2], double J[2][2]);
+SPONG_API int spong_normalized_floor(void *ctx, const double z[2],
+                                     double eta[2]);
+SPONG_API int spong_potential_rate_floor(void *ctx, const double z[2],
+                                         double eta[2]);
 
 /* One implicit Gauss--Legendre step of the given order (4, 6 or 8) on any
  * field.  Returns 1 and writes out on convergence; 0 otherwise (a failed
- * stage solve is a step-size signal, not an error). */
+ * stage solve is a step-size signal, not an error).  The floored variant
+ * also converges when every stage residual is within the field's
+ * evaluation floor at that stage point (fl may be NULL). */
 SPONG_API int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2],
                               double h, int order, double out[2]);
+SPONG_API int spong_irk2_step_floored(void *ctx, spong_vec_fj fj,
+                                      spong_vec_floor fl, const double z[2],
+                                      double h, int order, double out[2]);
 
 /* Convenience: unit-speed and constant-potential-rate steps on the loss
  * field.  h > 0 ascends for the normalized field; for the potential field

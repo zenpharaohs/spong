@@ -89,14 +89,14 @@
       "term": "level_bar"
     },
     {
-      "angle_energy[RESIDUAL]": 7.093652116618983e-13,
-      "angle_resolved": 26347,
+      "angle_energy[RESIDUAL]": 7.097688640721625e-13,
+      "angle_resolved": 26298,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.059415389419246865,
-      "n_points": 26862,
+      "max_turn_deg[RESIDUAL]": 0.061775595311088095,
+      "n_points": 26813,
       "saddle_b": -2.738230515199488,
       "term": "capture"
     },
@@ -114,19 +114,19 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 1.1960085791718883e-11,
+      "angle_energy[RESIDUAL]": 1.1960085794845567e-11,
       "angle_resolved": 24027,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.3344457289662521,
+      "max_turn_deg[RESIDUAL]": 0.3344457288801607,
       "n_points": 24542,
       "saddle_b": 0.10367350683129141,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 2.2159450055072833e-14,
+      "angle_energy[RESIDUAL]": 2.2159450321712467e-14,
       "angle_resolved": 24037,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
@@ -138,53 +138,53 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 4.897508651390831e-08,
-      "angle_resolved": 28916,
+      "angle_energy[RESIDUAL]": 4.684626547398014e-11,
+      "angle_resolved": 32831,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
       "max_turn_deg[RESIDUAL]": 0.0818368495309191,
-      "n_points": 29431,
+      "n_points": 33346,
       "saddle_b": 1.3575561041173387,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 1.6138227658166507e-10,
+      "angle_energy[RESIDUAL]": 1.6138227659618682e-10,
       "angle_resolved": 24061,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 1.9459417441470401,
+      "max_turn_deg[RESIDUAL]": 1.9459417445807108,
       "n_points": 24576,
       "saddle_b": 1.3575561041173387,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 3.475015731226316e-14,
-      "angle_resolved": 1130,
+      "angle_energy[RESIDUAL]": 2.0814374694099522e-14,
+      "angle_resolved": 4678,
       "angle_unresolved": 2846,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 1.1131846416284069e-05,
-      "n_points": 4491,
+      "max_turn_deg[RESIDUAL]": 1.1197136397927998e-05,
+      "n_points": 8039,
       "saddle_b": 3.4244530752666313,
-      "seam_residual[RESIDUAL]": 9.708749630103462e-21,
+      "seam_residual[RESIDUAL]": 2.9327921591309826e-21,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 6.842987714549393e-17,
-      "angle_resolved": 3630,
+      "angle_energy[RESIDUAL]": 6.828049798007441e-17,
+      "angle_resolved": 3658,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.0006219973935876549,
-      "n_points": 4145,
+      "max_turn_deg[RESIDUAL]": 0.0006219968076287827,
+      "n_points": 4173,
       "saddle_b": 3.4244530752666313,
-      "seam_residual[RESIDUAL]": 1.6282016661997223e-19,
+      "seam_residual[RESIDUAL]": 1.4249105478526375e-19,
       "term": "capture"
     }
   ],
@@ -312,8 +312,8 @@
     "balanced": true,
     "representation_attested": true,
     "topology_status": "certified",
-    "worst_angle_energy": 4.897508651390831e-08,
-    "worst_max_turn_deg": 1.9459417441470401
+    "worst_angle_energy": 1.6138227659618682e-10,
+    "worst_max_turn_deg": 1.9459417445807108
   },
   "topology": {
     "ambiguous_count": 0,

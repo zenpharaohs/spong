@@ -45,26 +45,26 @@
       "term": "level_bar"
     },
     {
-      "angle_energy[RESIDUAL]": 8.570463670821137e-13,
+      "angle_energy[RESIDUAL]": 8.570463669074051e-13,
       "angle_resolved": 24056,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.14997635808401086,
+      "max_turn_deg[RESIDUAL]": 0.1499763580815807,
       "n_points": 24571,
       "saddle_b": -1.3093639957004994,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 2.684040406084324e-10,
-      "angle_resolved": 25593,
+      "angle_energy[RESIDUAL]": 8.738809851024183e-15,
+      "angle_resolved": 25942,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
       "max_turn_deg[RESIDUAL]": 0.04025529000596924,
-      "n_points": 26108,
+      "n_points": 26457,
       "saddle_b": -1.3093639957004994,
       "term": "capture"
     },

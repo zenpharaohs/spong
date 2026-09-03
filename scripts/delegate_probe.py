@@ -22,6 +22,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 os.environ.setdefault("SPONG_ENGINE", "native")
 os.environ.setdefault("SPONG_WORKERS", "1")
 
@@ -90,6 +92,25 @@ def main(argv=None) -> int:
                      if k.startswith("native_delegate_")}
         print(f"  br{i:<2} {br.kind:<8} {br.term:<24} n={len(br.Y):<7}"
               f" saddle_b={br.diag.get('saddle_b')!s:<22} {delegates}")
+        if br.term.startswith("abort") and len(br.Y):
+            a_end, b_end = float(br.Y[-1, 0]), float(br.Y[-1, 1])
+            w_end = a_end - m.s_a_star(b_end)
+            g = m.gradL(a_end, b_end)
+            print(f"       end: a={a_end:+.6e} b={b_end:+.10e} w={w_end:+.3e}"
+                  f" a*={m.s_a_star(b_end):+.3e} |gradL|={float(np.hypot(*g)):.3e}"
+                  f" L={float(m.L(a_end, b_end)):.10e}")
+            sf = br.diag.get("step_failure")
+            if sf:
+                print(f"       step_failure: {sf}")
+            rescues = {k: v for k, v in br.diag.items()
+                       if k.startswith(("normalized_", "floor_fallback_"))}
+            if rescues:
+                print(f"       rescues: {rescues}")
+    mins = [(float(q.a), float(q.b)) for q in p.enumeration.points
+            if q.kind == "min"]
+    print(f"  enumeration: {len(p.enumeration.saddles)} saddles, "
+          f"{len(mins)} minima: "
+          + ", ".join(f"({a:+.4e}, {b:+.6g})" for a, b in mins))
     print(f"\n{len(native_calls)} native continue_curve calls; "
           f"DELEGATEs:")
     for c in native_calls:

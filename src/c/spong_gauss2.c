@@ -16,6 +16,10 @@ static const double SQRT3 = 1.73205080756887729352744634150587237;
 static const double SQRT15 = 3.87298334620741688517926539978239961;
 static const double NEWTON_TOL = 1e-13;
 static const int NEWTON_MAX = 30;
+/* Evaluation-floor convergence: a stage residual within NOISE_C times the
+ * field's evaluation floor at that stage point is converged (after at least
+ * one Newton correction).  gauss._NOISE_C in the Python reference. */
+static const double NOISE_C = 4.0;
 
 static double horner(const double *c, size_t n, double x) {
     double acc = 0.0;
@@ -23,6 +27,38 @@ static double horner(const double *c, size_t n, double x) {
         acc = acc * x + c[i];
     }
     return acc;
+}
+
+/* Horner on |c_i| at |x|: the running-error bound's building block. */
+static double horner_abs(const double *c, size_t n, double x) {
+    double acc = 0.0, ax = fabs(x);
+    for (size_t i = n; i-- > 0;) {
+        acc = acc * ax + fabs(c[i]);
+    }
+    return acc;
+}
+
+/* The gradient of L and the first-order running-error bound of each
+ * component as computed (in units of eps): E(Horner of degree n) =
+ * n*sum|c_i||x|^i; E(xy) = |x|E(y) + |y|E(x) + |xy|; E(x+y) = E(x) + E(y)
+ * + |x+y|.  Cancellation in -2aB' + a^2 A' is charged where it occurs:
+ * measured on directed seed 99912409 at a = -6651, two O(1e8) terms
+ * cancelling to 1e3, the unit vector good to ~1e-10 and NEWTON_TOL = 1e-13
+ * unreachable. */
+static void gradient_floor(const spong_field *k, double a, double b,
+                           double g[2], double Eg[2]) {
+    double A = horner(k->A, k->nA, b), Ap = horner(k->Ap, k->nAp, b);
+    double B = horner(k->B, k->nB, b), Bp = horner(k->Bp, k->nBp, b);
+    double EA = (double)k->nA * horner_abs(k->A, k->nA, b);
+    double EAp = (double)k->nAp * horner_abs(k->Ap, k->nAp, b);
+    double EB = (double)k->nB * horner_abs(k->B, k->nB, b);
+    double EBp = (double)k->nBp * horner_abs(k->Bp, k->nBp, b);
+    double aa = fabs(a), a2 = a * a;
+    g[0] = 2.0 * (a * A - B);
+    g[1] = -2.0 * a * Bp + a2 * Ap;
+    Eg[0] = 2.0 * (aa * EA + fabs(a * A) + EB + fabs(a * A - B));
+    Eg[1] = 2.0 * (aa * EBp + fabs(a * Bp)) + a2 * EAp + fabs(a2 * Ap)
+            + fabs(g[1]);
 }
 
 void spong_field_eval_base(
@@ -178,10 +214,43 @@ int spong_potential_rate_fj(void *ctx, const double z[2],
     return isfinite(f[0]) && isfinite(f[1]);
 }
 
-static int irk2_evaluate(void *ctx, spong_vec_fj fj, const double z[2],
+/* Floors of the two named fields: the running-error bound of the
+ * normalization applied to the gradient's, times eps.  E(x/y) = (E(x) +
+ * |x/y|E(y))/|y| + |x/y|; E(hypot) = (|g0|E(g0) + |g1|E(g1))/|g| + |g|;
+ * E(g0^2 + g1^2) = 2|g0|E(g0) + 2|g1|E(g1) + 3q. */
+int spong_normalized_floor(void *ctx, const double z[2], double eta[2]) {
+    const spong_field *k = (const spong_field *)ctx;
+    double g[2], Eg[2];
+    gradient_floor(k, z[0], z[1], g, Eg);
+    double ng = hypot(g[0], g[1]);
+    if (!(ng > 1e-300) || !isfinite(ng)) return 0;
+    double Eng = (fabs(g[0]) * Eg[0] + fabs(g[1]) * Eg[1]) / ng + ng;
+    for (int d = 0; d < 2; d++) {
+        double fd = g[d] / ng;
+        eta[d] = DBL_EPSILON * ((Eg[d] + fabs(fd) * Eng) / ng + fabs(fd));
+    }
+    return isfinite(eta[0]) && isfinite(eta[1]);
+}
+
+int spong_potential_rate_floor(void *ctx, const double z[2], double eta[2]) {
+    const spong_field *k = (const spong_field *)ctx;
+    double g[2], Eg[2];
+    gradient_floor(k, z[0], z[1], g, Eg);
+    double q = g[0]*g[0] + g[1]*g[1];
+    if (!(q > 1e-300) || !isfinite(q)) return 0;
+    double Eq = 2.0 * fabs(g[0]) * Eg[0] + 2.0 * fabs(g[1]) * Eg[1] + 3.0 * q;
+    for (int d = 0; d < 2; d++) {
+        double fd = g[d] / q;
+        eta[d] = DBL_EPSILON * ((Eg[d] + fabs(fd) * Eq) / q + fabs(fd));
+    }
+    return isfinite(eta[0]) && isfinite(eta[1]);
+}
+
+static int irk2_evaluate(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
+                         const double z[2],
                          double h, int s, const double AT[4][4],
                          const double K[4][2], double R[8],
-                         double Js[4][2][2],
+                         double Js[4][2][2], double Eta[4][2],
                          double *scale, double *rmax, double *phi) {
     *scale = 1.0; *rmax = 0.0; *phi = 0.0;
     for (int i = 0; i < s; i++) {
@@ -189,6 +258,11 @@ static int irk2_evaluate(void *ctx, spong_vec_fj fj, const double z[2],
         for (int d = 0; d < 2; d++)
             for (int j = 0; j < s; j++) Y[d] += h*AT[i][j]*K[j][d];
         if (!fj(ctx, Y, F, Js == NULL ? NULL : Js[i])) return 0;
+        if (Eta != NULL) {
+            if (fl == NULL || !fl(ctx, Y, Eta[i])) {
+                Eta[i][0] = Eta[i][1] = 0.0;      /* no floor: old test only */
+            }
+        }
         for (int d = 0; d < 2; d++) {
             double rv = K[i][d] - F[d];
             R[2*i+d] = rv;
@@ -200,8 +274,22 @@ static int irk2_evaluate(void *ctx, spong_vec_fj fj, const double z[2],
     return isfinite(*phi);
 }
 
+/* every stage residual within NOISE_C times its stage floor */
+static int within_floor(int s, const double R[8], const double Eta[4][2]) {
+    for (int i = 0; i < s; i++)
+        for (int d = 0; d < 2; d++)
+            if (!(fabs(R[2*i+d]) <= NOISE_C * Eta[i][d])) return 0;
+    return 1;
+}
+
 int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
                     int order, double out[2]) {
+    return spong_irk2_step_floored(ctx, fj, NULL, z, h, order, out);
+}
+
+int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
+                            const double z[2], double h,
+                            int order, double out[2]) {
     static const double A4[4][4] = {
         {0.25, 0.25 - SQRT3/6.0, 0.0, 0.0},
         {0.25 + SQRT3/6.0, 0.25, 0.0, 0.0},
@@ -238,7 +326,7 @@ int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
     const double (*AT)[4] = order == 4 ? A4 : (order == 6 ? A6 : A8);
     const double *BT = order == 4 ? B4 : (order == 6 ? B6 : B8);
     int s = order/2, n = 2*s;
-    double f0[2], K[4][2], K0[4][2], Js[4][2][2];
+    double f0[2], K[4][2], K0[4][2], Js[4][2][2], Eta[4][2];
     if (!fj(ctx, z, f0, NULL)) return 0;
     for (int i = 0; i < s; i++) {
         K0[i][0] = f0[0]; K0[i][1] = f0[1];
@@ -248,9 +336,12 @@ int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
         memcpy(K, K0, sizeof(K));
         for (int it = 0; it < NEWTON_MAX; it++) {
             double R[8], scale, rmax, phi;
-            if (!irk2_evaluate(ctx, fj, z, h, s, AT, K, R, Js,
+            if (!irk2_evaluate(ctx, fj, fl, z, h, s, AT, K, R, Js, Eta,
                                &scale, &rmax, &phi)) break;
             if (rmax < NEWTON_TOL * scale) { converged = 1; break; }
+            if (fl != NULL && it > 0 && within_floor(s, R, Eta)) {
+                converged = 1; break;
+            }
             double M[8][8] = {{0}}, delta[8];
             for (int i = 0; i < s; i++) for (int j = 0; j < s; j++)
                 for (int r = 0; r < 2; r++) for (int c = 0; c < 2; c++) {
@@ -269,8 +360,8 @@ int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
                     memcpy(Kc, K, sizeof(Kc));
                     for (int i = 0; i < s; i++) for (int d = 0; d < 2; d++)
                         Kc[i][d] += alpha * delta[2*i+d];
-                    if (irk2_evaluate(ctx, fj, z, h, s, AT, Kc, Rc, NULL,
-                                      &sc, &rm, &phic)
+                    if (irk2_evaluate(ctx, fj, NULL, z, h, s, AT, Kc, Rc, NULL,
+                                      NULL, &sc, &rm, &phic)
                             && phic <= phi * (1.0 - 1e-4 * alpha)) {
                         memcpy(K, Kc, sizeof(K)); accepted = 1; break;
                     }
@@ -297,11 +388,13 @@ int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
 
 int spong_normalized_step(const spong_field *field, const double z[2],
                           double h, int order, double out[2]) {
-    return spong_irk2_step((void *)field, spong_normalized_fj, z, h, order, out);
+    return spong_irk2_step_floored((void *)field, spong_normalized_fj,
+                                   spong_normalized_floor, z, h, order, out);
 }
 
 int spong_potential_step(const spong_field *field, const double z[2],
                          double h, int order, double out[2]) {
-    return spong_irk2_step((void *)field, spong_potential_rate_fj, z, h, order,
-                           out);
+    return spong_irk2_step_floored((void *)field, spong_potential_rate_fj,
+                                   spong_potential_rate_floor, z, h, order,
+                                   out);
 }

@@ -103,9 +103,14 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     m, e, _z = context(args.case)
-    entry = entry_for(args.case, args.flow, None)
-    i = entry["input"]
-    flow = i["flow"]
+    try:
+        entry = entry_for(args.case, args.flow, None)
+        i = entry["input"]
+        flow = i["flow"]
+    except SystemExit:
+        if not args.state:
+            raise
+        i, flow = None, args.flow          # --state needs no corpus entry
     if args.state:
         b, w = (float(s) for s in args.state.split(","))
         a = m.s_a_star(b) + w
@@ -159,6 +164,25 @@ def main(argv=None) -> int:
         print("    gl6 exposed:")
         val, why = gl6_exposed(f, j, x, y, h)
         print(f"    -> {val!r} ({why})")
+        # the plane step at the same chord, with the descent test's numbers
+        a_prev = m.s_a_star(b) + w
+        for order in (8, 6, 4):
+            try:
+                a_try, b_try = native.normalized_step(a_prev, b, -flow*cur, order)
+            except Exception as ex:                       # noqa: BLE001
+                print(f"    plane gl{order}: raised {type(ex).__name__}: {ex}")
+                continue
+            if not (np.isfinite(a_try) and np.isfinite(b_try)):
+                print(f"    plane gl{order}: NaN")
+                continue
+            da, db = a_try - a_prev, b_try - b
+            expected = flow*float(m.gradL(a_prev, b) @ np.array([da, db]))
+            actual = flow*float(m.L(a_try, b_try) - m.L(a_prev, b))
+            slack = 64.0*np.finfo(float).eps*(1.0 + abs(float(m.L(a_prev, b))))
+            ok = not (expected >= 0.0 or actual > 1e-4*expected + slack)
+            print(f"    plane gl{order}: {'PASS' if ok else 'FAIL'} da={da:+.3e} db={db:+.3e}"
+                  f" |chord|={float(np.hypot(da, db)):.3e} expected={expected:+.3e}"
+                  f" actual={actual:+.3e} slack={slack:.1e}")
     return 0
 
 
