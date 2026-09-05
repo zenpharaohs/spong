@@ -247,12 +247,20 @@
                  style="width:auto;margin-right:4px">pinch zoom
         </label>
         <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0">
-          <input id="showCross" type="checkbox" checked
+          <input id="showCross" type="checkbox"
                  style="width:auto;margin-right:4px">crosshair
         </label>
         <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0">
           <input id="showSlaved" type="checkbox" checked
                  style="width:auto;margin-right:4px">slaved continuation
+        </label>
+        <label style="margin:0 0 0 8px;text-transform:none;letter-spacing:0">
+          extrapolated
+          <select id="extrapStyle" style="width:auto">
+            <option value="solid" selected>solid</option>
+            <option value="dashed">dashed</option>
+            <option value="dotted">dotted</option>
+          </select>
         </label>
         <p class="toolhint" id="toolHint">select: click a point in the portrait to read off (a, b) and the loss there.</p>
       </div>
@@ -597,8 +605,14 @@ const S = {
   tool: "select",
   levels: 44,
   levelSpan: "even",
-  showCross: true,
+  showCross: false,
   showSlaved: true,
+  // How the NON-CONTINUATION curves are drawn: the closed-form stable tails
+  // (level set of J, or the b-nullcline).  They are no less accurate than
+  // the continuation they continue, so the default is solid and the same
+  // weight; dashes are available for anyone who wants extrapolated
+  // distinguished from traced at a glance.
+  extrapStyle: "solid",
   rubber: null,
   traces: [],
   handoffs: [],
@@ -887,6 +901,19 @@ function apply(data, zooName){
     }
   }
   S.stale = false;
+  // FIT TO SKELETON on every fresh portrait.  The payload's view is the
+  // TRACE box, sized for the continuation, and on models whose minima sit
+  // far out it opens so wide that the critical points are a speck; the
+  // skeleton is what one wants to look at first, and refitting by hand on
+  // every case was costing more time than it saved.  The trace box stays
+  // one keypress away as `home` (0 / reset).
+  if (S.P.critical && S.P.critical.length){
+    const bs = S.P.critical.map(c => c.b), as = S.P.critical.map(c => c.a);
+    const bp = .35*(Math.max(...bs) - Math.min(...bs) + 1);
+    const ap = .35*(Math.max(...as) - Math.min(...as) + 1);
+    S.view = { b0: Math.min(...bs)-bp, b1: Math.max(...bs)+bp,
+               a0: Math.min(...as)-ap, a1: Math.max(...as)+ap };
+  }
   updateWallGap(data);
   draw();
 }
@@ -1249,126 +1276,67 @@ function drawPortrait(){
     xP.stroke();
   }
 
-  // Stable branches traced on past the compute box (server: _stable_extensions).
-  // Same ascent phase, same curve; drawn lighter because no certificate
-  // covers it -- the box is where the evidence stops, not where the curve does.
-  const extByBranch = new Map();
-  for (const ext of (S.P.extensions || [])){
-    extByBranch.set(ext.branch, ext);
-    xP.save();
-    xP.strokeStyle = css("--stable");
-    xP.globalAlpha = .5;
-    xP.setLineDash([2, 3]);
-    xP.beginPath();
-    strokeClipped(xP, ext.points, X, Y, v, W, H);
-    xP.stroke();
-    xP.restore();
-  }
+  // How the closed-form tails are drawn relative to the trace they
+  // continue (see S.extrapStyle).
+  const extDash = () => (S.extrapStyle === "dotted" ? [2, 3]
+                       : S.extrapStyle === "dashed" ? [14, 7] : []);
 
-  // Certified extrapolation beyond the traced box.
-  //
-  // Interpolation between traced vertices is already certified -- that is what
-  // the angle and turn residuals say -- so zooming IN never needs a recompute.
-  // Extrapolation is the only gap, and the flow near infinity closes it.
-  //
-  // With d = d_eff and A ~ alpha b^2d, B ~ beta b^d, the terms aA and a^2 A'
-  // dominate their partners, so grad L ~ 2 alpha a b^(2d-1) (b, d a).  The
-  // flow direction is therefore proportional to (b, d a), and
-  // grad(b^2 - d a^2) = (-2 d a, 2 b) is orthogonal to it: K = b^2 - d a^2 is
-  // CONSERVED by the leading flow.  Separatrices are asymptotically
-  // hyperbolas, meeting the diagonals b = +-sqrt(d) a like
-  // b/a = sqrt(d) + K/(sqrt(d) a^2).
-  //
-  // Extending along the bare diagonal discards that 1/a^2 term, which is why
-  // atlas.asymptote_certificate reports slope residuals of tens of percent at
-  // ordinary view radii -- the leading form only dominates far out.  Keeping K
-  // is strictly better at finite radius, and K supplies its own quality test:
-  // sample it down the tail and see whether it has settled.  A branch leaving
-  // along the degenerate b-axis -- the backbone end, db/dt ~ -C_inf/b^2 -- has
-  // K ~ b^2 still growing, fails that test, and is left alone, correctly,
-  // since the backbone is drawn in closed form anyway.
+  // Closed-form stable tails from the server (serve._j_tails).  Two
+  // sectors, each licensed by a measurement over a radius octave of the
+  // branch itself.  DIAGONAL: the level set J = J0 of the exact invariant of
+  // the B-truncated flow, licensed by the remaining drift D of J along the
+  // branch, expressed as a displacement in b relative to r.  PINNED: the
+  // b-nullcline a A'(b) = 2 B'(b) -- the slaved equilibrium the branch
+  // approaches on its way to an attracting root of A', not the branch itself
+  // -- licensed by the measured lag behind it.  Where the certified terminal
+  // (usually the level bar) licensed neither, the server grew the branch by
+  // the tracer's own machinery until one did; the growth is drawn solid in
+  // the branch colour, the closed form in the extrapolated style.
   const dEff = S.P.d_eff || 0;
-  let nExt = 0, nAsym = 0, nBone = 0, bestRes = Infinity;
+  let nExt = 0, nDiag = 0, nPin = 0, nNone = 0, worst = 0;
   const extDiag = [];
   if (dEff > 0){
-    const reach = 3 * Math.hypot(v.a1 - v.a0, v.b1 - v.b0);
     xP.save();
-    xP.setLineDash([5, 4]);
-    xP.lineWidth = 1.2;
-    for (const [bi, br] of S.P.branches.entries()){
-      // Both certified stable terminals: the box exit, and the level bar
-      // (stopped above the highest saddle loss, usually well inside the
-      // box -- its display tail is the extension).
-      if (br.term !== "box_exit" && br.term !== "level_bar") continue;
-      // The hyperbola test runs on the extended tail where one exists: the
-      // leading form dominates further out, so K has settled where the
-      // certified box alone could not show it.
-      const ext = extByBranch.get(bi);
-      const pts = ext ? br.points.concat(ext.points) : br.points, n = pts.length;
-      if (n < 8) continue;
-      const Kof = p => p[1]*p[1] - dEff*p[0]*p[0];
-      const rlast = Math.hypot(pts[n-1][0], pts[n-1][1]);
-      let i1 = 0, i2 = 0, e1 = Infinity, e2 = Infinity;
-      for (let i = 0; i < n; i++){
-        const r = Math.hypot(pts[i][0], pts[i][1]);
-        if (Math.abs(r - rlast/4) < e1){ e1 = Math.abs(r - rlast/4); i1 = i; }
-        if (Math.abs(r - rlast/2) < e2){ e2 = Math.abs(r - rlast/2); i2 = i; }
+    xP.lineWidth = 1.7;
+    for (const tp of (S.P.tails || [])){
+      const br = S.P.branches[tp.branch];
+      if (!br) continue;
+      const tag = `${br.kind[0]} b*=${(br.saddle_b ?? NaN).toFixed(4)}`;
+      if (tp.grown && tp.grown.length > 1){
+        xP.setLineDash([]);
+        xP.strokeStyle = css("--stable");
+        xP.beginPath();
+        strokeClipped(xP, tp.grown, X, Y, v, W, H);
+        xP.stroke();
       }
-      const K1 = Kof(pts[i1]), K2 = Kof(pts[i2]), K3 = Kof(pts[n-1]);
-      // K is conserved to two orders, not one: the A terms cancel in
-      // dK/dt = -2b g_b + 2da g_a, and the B terms cancel independently
-      // (4ab B' - 4da B ~ 4d beta a b^d - 4d beta a b^d), so drift enters only
-      // through the subleading coefficients of A and B.  So the honest
-      // quality measure is the DRIFT along the tail, not an extrapolation:
-      // Aitken divides by K3 - 2K2 + K1, which is noise exactly when K has
-      // already settled, and the better-converged the tail the more certainly
-      // it gets rejected.
-      const scaleK = Math.max(Math.abs(K3), rlast*rlast, 1e-12);
-      const d21 = K2 - K1, d32 = K3 - K2;
-      const res = Math.abs(d32) / scaleK;
-      let K = K3;
-      // Aitken only where the ratio shows a genuine geometric trend, and only
-      // as a refinement of an already-acceptable K.
-      const ratio = Math.abs(d21) > 1e-300 ? d32 / d21 : 0;
-      if (ratio > 0.02 && ratio < 0.98){
-        const acc = K3 + d32 * ratio / (1 - ratio);
-        if (Number.isFinite(acc) && Math.abs(acc - K3) < 4 * Math.abs(d32))
-          K = acc;
+      if (!tp.sector){
+        nNone++;
+        extDiag.push(`${tag} NO TAIL: ${tp.reason} (grown +${tp.n_grown}`
+                     + (tp.grow_term ? `, ${tp.grow_term}` : "") + ")");
+        continue;
       }
-      if (!Number.isFinite(K)) continue;
-      // K/r^2 says WHICH end the branch is leaving by.  On a diagonal
-      // b^2 = d a^2, so K -> 0 while r^2 grows: the ratio tends to 0.  On the
-      // degenerate b-axis exit -- the backbone end, db/dt ~ -C_inf/b^2 -- a
-      // stays bounded and K -> b^2 ~ r^2: the ratio tends to 1.  (On the
-      // a-axis it tends to -d.)  Only the diagonal case is a hyperbola; a
-      // backbone end is extended by the backbone itself, which is drawn in
-      // closed form at any zoom, so it is labelled rather than dropped.
-      const kappa = K3 / Math.max(rlast*rlast, 1e-300);
+      const meas = tp.sector === "pinned" ? tp.lag : tp.drift;
+      worst = Math.max(worst, meas);
+      if (tp.sector === "pinned") nPin++; else nDiag++;
+      const trap = (tp.trap === null || tp.trap === undefined) ? "—" : tp.trap.toFixed(6);
       extDiag.push(
-        `${br.kind[0]} b*=${(br.saddle_b ?? NaN).toFixed(4)} `
-        + `end=(${pts[n-1][0].toFixed(3)},${pts[n-1][1].toFixed(3)}) `
-        + `r=${rlast.toFixed(2)} K=${K3.toExponential(3)} `
-        + `K/r2=${kappa.toFixed(3)} drift=${res.toExponential(2)}`);
-      if (kappa > 0.5){ nBone++; continue; }
-      nAsym++; bestRes = Math.min(bestRes, res);
-      if (!(res <= 0.02)) continue;
-
-      const last = pts[n-1];
-      const sa = Math.sign(last[0]) || 1, sb = Math.sign(last[1]) || 1;
-      const a0 = Math.abs(last[0]);
-      xP.strokeStyle = br.kind === "unstable" ? css("--unstable") : css("--stable");
-      xP.globalAlpha = .55;
-      xP.beginPath();
-      let started = false;
-      for (let k = 0; k <= 240; k++){
-        const aa = a0 + reach * k / 240;
-        const bb2 = dEff*aa*aa + K;
-        if (bb2 < 0) continue;
-        const x = X(sa*aa), y = Y(sb*Math.sqrt(bb2));
-        started ? xP.lineTo(x, y) : (xP.moveTo(x, y), started = true);
+        `${tag} ${tp.sector}`
+        + (tp.sector === "pinned"
+            ? ` lag=${tp.lag.toExponential(2)} trap=${trap}`
+            : ` drift=${tp.drift.toExponential(2)} J0=${tp.J0.toExponential(4)}`
+              + (tp.handoff_to_nullcline
+                  ? ` → nullcline at a=${tp.handoff_to_nullcline[0].toPrecision(4)}` : ""))
+        + ` tol=${tp.tol} n=${tp.points.length} (+${tp.n_grown} grown`
+        + (tp.grow_term ? `, ${tp.grow_term}` : "") + ")"
+        + (tp.reason ? ` [${tp.reason}]` : ""));
+      if (tp.points.length > 1){
+        xP.setLineDash(extDash());
+        xP.strokeStyle = css("--stable");
+        xP.beginPath();
+        strokeClipped(xP, tp.points, X, Y, v, W, H);
+        xP.stroke();
+        nExt++;
       }
-      xP.stroke();
-      nExt++;
     }
     xP.restore();
     xP.globalAlpha = 1;
@@ -1622,9 +1590,9 @@ function drawPortrait(){
     `${en.n_min} minima / ${en.n_saddle} saddles`
     + (S.stale ? "  · stale" : "")
     + (S.P.d_eff
-        ? `  · d_eff ${S.P.d_eff}, ${nExt}/${nAsym} extended`
-          + (nAsym ? `, best drift ${bestRes.toExponential(2)}` : "")
-          + (nBone ? `, ${nBone} on the backbone end` : "")
+        ? `  · d_eff ${S.P.d_eff}, ${nExt} tails (${nDiag} diagonal, ${nPin} pinned)`
+          + (nExt ? `, worst estimate ${worst.toExponential(1)} of r` : "")
+          + (nNone ? `, ${nNone} unlicensed` : "")
           + (nExt && !beyond ? " (zoom out to see)" : "")
         : "  · no d_eff in payload — restart the server")
     + (beyond ? "  · view exceeds the traced box" : "")
@@ -2161,6 +2129,9 @@ els("showCross").addEventListener("change", () => {
 });
 els("showSlaved").addEventListener("change", () => {
   S.showSlaved = els("showSlaved").checked; draw();
+});
+els("extrapStyle").addEventListener("change", () => {
+  S.extrapStyle = els("extrapStyle").value; draw();
 });
 els("lamReset").onclick = () => {
   if (!WALL) return;
@@ -2773,11 +2744,24 @@ function exportSvg(){
   }
   out.push(path(bone, { id: "backbone", stroke: css("--backbone"), "stroke-width": 2 }));
   S.P.branches.forEach((br, i) => {
-    out.push(path(br.points, {
+    // The traced branch, the server's growth and its closed-form tail,
+    // emitted as ONE unbroken path: the growth is the same tracer on the
+    // same curve and the tail is licensed to continue it.  data-n-traced,
+    // data-n-grown and data-n-tail say where each part ends, and
+    // data-sector names the closed form (diagonal: level set of J;
+    // pinned: the b-nullcline).
+    const tp = (S.P.tails || []).find(t => t.branch === i);
+    const grown = tp && tp.grown ? tp.grown.slice(1) : [];
+    const tail = tp && tp.points ? tp.points.slice(1) : [];
+    const pts = br.points.concat(grown, tail);
+    out.push(path(pts, {
       id: `branch-${i}`, "data-kind": br.kind,
       "data-saddle-b": br.saddle_b, "data-direction": br.direction,
       "data-stable-sign": br.stable_sign, "data-term": br.term,
       "data-n-traced": br.n_traced,
+      "data-n-grown": grown.length,
+      "data-n-tail": tail.length,
+      "data-sector": tp && tp.sector ? tp.sector : "",
       stroke: br.kind === "unstable" ? css("--unstable") : css("--stable"),
       "stroke-width": 1.7 }));
   });
