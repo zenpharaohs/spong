@@ -359,6 +359,99 @@ def _slow_fixed_point_python(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
     return w, it, rel
 
 
+# BACKBONE ADHERENCE, and where it ends (Gronwall).
+#
+# Near the backbone the transverse coordinate w = a - a*(b) obeys
+#
+#     dw/db = -lambda(b) w - a*'(b),      lambda = 2A/u',
+#
+# whose slaved solution is w1 = -a*'/lambda: the manifold carries NO free
+# constant, because lambda is the Hessian's transverse eigenvalue divided by
+# the speed and the contraction kills the launch memory outright.  Gronwall
+# on the deviation from that slaved value gives a genuine bound,
+#
+#     |w - w1| <= |w - w1|(b0) exp(-int lambda) + sup|w1'|/lambda,
+#
+# and both terms are computable.  MEASURED on f = [1.478681, 1.185213],
+# deg g = 17, uniform01, from the saddle at b = -3.5443: int lambda db to
+# b = -1.4 is 2.05e23, so exp(-int lambda) UNDERFLOWS -- the first term is
+# not small, it is unrepresentable, and the slaved curve is the manifold to
+# whatever the second term allows.
+#
+# The second term is the departure test, compared against the field's own
+# evaluation noise rather than against a coordinate ulp.  On the backbone
+# g_a = 2(aA - B) = 2Aw EXACTLY, so a transverse offset is resolvable when
+# 2A|w| exceeds the running error of g_a -- a floor IN w, and the floor the
+# tracer actually works against (w is its own double in the chart,
+# representable far below ulp(a*)).  Measured crossings on that case: w1
+# clears the floor at b = -2.69, the remainder clears it at b = -1.844, and
+# the remainder overtakes w1 (adiabatic breakdown) at b = -1.204 -- which is
+# where the shallow fixed point independently starts rejecting.  The middle
+# one is the handoff, and it has no constant in it.
+#
+# An earlier version compared |w1| against ulp(a*) and departed at b = -3.06,
+# still deep in the canyon: wrong quantity, wrong epsilon, 1.2 units of b too
+# early.  The picture showed it before the arithmetic did.
+
+
+def _transverse_floor(m: Model, b: float) -> float:
+    """Smallest transverse offset the field can resolve at b.
+
+    g_a = 2Aw on the backbone, so w is resolvable when 2A|w| exceeds the
+    running error of g_a: eps*(|a*|E_A + |a* A| + E_B) with E the Horner
+    absolute-value bounds, the same construction as the C gradient_floor.
+    """
+    A = float(m.A(b))
+    if not (A > 0.0) or not np.isfinite(A):
+        return float("inf")
+    a_star = abs(float(m.s_a_star(b)))
+    ca = np.abs(np.asarray(m._fa, dtype=float))
+    cb = np.abs(np.asarray(m._fb, dtype=float))
+    EA = len(ca) * float(np.polyval(ca[::-1], abs(b)))
+    EB = len(cb) * float(np.polyval(cb[::-1], abs(b)))
+    eps = np.finfo(float).eps
+    return 2.0 * eps * (a_star * EA + a_star * A + EB) / (2.0 * A)
+
+
+def _slaved_offset(m: Model, b: float) -> float:
+    """w1 = -a*' u' / (2A), the value the transverse mode is slaved to."""
+    A = float(m.A(b))
+    if not (A > 0.0) or not np.isfinite(A):
+        return float("nan")
+    return -float(m.s_a_star_p(b)) * float(m.s_u_p(b)) / (2.0 * A)
+
+
+def _gronwall_departure(m: Model, b_from: float, b_to: float,
+                        n: int = 256) -> float:
+    """First b in [b_from, b_to] where the slaved representation stops being
+    exact to the field's noise: |w1'|/lambda >= the transverse floor.
+
+    Returns b_to when the bound holds all the way (adherence covers the whole
+    stretch) and b_from when it fails at once (nothing to claim).  Sampled,
+    not root-found: this sets where one owner hands to another, so a sample
+    of slack costs a little tracing and never an answer.
+    """
+    if not np.isfinite(b_from) or not np.isfinite(b_to) or b_to == b_from:
+        return b_from
+    bs = np.linspace(b_from, b_to, max(16, int(n)))
+    w1 = np.array([_slaved_offset(m, float(b)) for b in bs])
+    if not np.all(np.isfinite(w1)):
+        cut = int(np.argmax(~np.isfinite(w1)))
+        if cut < 3:
+            return b_from
+        bs, w1 = bs[:cut], w1[:cut]
+    up = np.array([abs(float(m.s_u_p(float(b)))) for b in bs])
+    Av = np.array([float(m.A(float(b))) for b in bs])
+    floor = np.array([_transverse_floor(m, float(b)) for b in bs])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lam = np.where(up > 0.0, 2.0 * Av / np.maximum(up, 1e-300), np.inf)
+        remainder = np.abs(np.gradient(w1, bs)) / lam
+    bad = ~np.isfinite(remainder) | (remainder >= floor)
+    if not np.any(bad):
+        return float(bs[-1])
+    return float(bs[int(np.argmax(bad))])
+
+
 def slow_fixed_point(m: Model, b_grid: np.ndarray, tol: float = 1e-13,
                      max_iter: int = 40):
     """Production Hadamard graph transform; Python remains the parity oracle."""
@@ -2711,6 +2804,74 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             j = min(j, n_grid - 1)
             b_zone = np.linspace(b_cur, b_end, n_pts)
             w_zone, iters, rel = slow_fixed_point(m, b_zone)
+            # GRONWALL RETRY, on rejection only.  The fixed point ITERATES to
+            # the true w, so it stays valid well past the point where the
+            # closed-form slaved value w1 alone stops being exact -- clamping
+            # its zone preemptively by that criterion cut a stretch
+            # dead-neuron br7 solves with rel = 0 and cost 328 vertices for
+            # nothing.  So it is applied only where the fixed point has
+            # actually refused: the gauge and the target both leave zone ends
+            # past the breakdown, and the refusal is for the far end,
+            # discarding the near stretch the transform solves exactly.  Retry
+            # once on the stretch Gronwall still vouches for -- w is slaved to
+            # w1 = -a*'u'/(2A) and |w - w1| <= sup|w1'|/lambda, lambda = 2A/u'
+            # -- and fall through to the engine only if that fails too.
+            #
+            # WHERE THE BENEFIT ACTUALLY LANDS, because it is not where it
+            # looks.  Measured on f = [1.478681, 1.185213], deg g = 17,
+            # uniform01, at the saddle b* = -3.5443, which portrait assembly
+            # probes in both b directions before aiming a trace at a minimum:
+            #
+            #   with the retry     the +b probe (b_t = 51073) has its zone
+            #                      rejected at b = -3.5318 (rel = inf), the
+            #                      retry re-solves to the departure -1.8336,
+            #                      a second zone from there is rejected and
+            #                      DECLINED (departure == b_cur, so the guard
+            #                      refuses and it cannot loop), the engine
+            #                      takes over at -1.8336 where A ~ 2e6 and the
+            #                      transverse offset is 4e-10, and the probe
+            #                      CAPTURES at 608 vertices.  Assembly then
+            #                      dispatches a third trace at the minimum
+            #                      (-3.3824, -0.41631), which captures at 7833.
+            #   without it         the same probe's engine inherits the canyon
+            #                      floor at -3.53, its step collapses to
+            #                      h = -3.9e-9, abort_step_failure at 514 --
+            #                      no probe capture, no third trace, and the
+            #                      aborted probe is the branch.
+            #
+            # So the retry fires once, on a DISCOVERY PROBE, and the captured
+            # branch it enables never enters this code path at all: its own
+            # zone succeeds first time because assembly gave it the minimum as
+            # b_t, which narrows the sounding grid.  Reading the captured
+            # branch's diagnostics shows no retry and is NOT evidence that
+            # none happened -- that misreading cost an afternoon.
+            #
+            # The departure -1.8336 is the same crossing the independent sweep
+            # puts at -1.844 (see the header comment above): |w1'|/lambda
+            # against the transverse evaluation floor, agreeing to the
+            # sampling resolution.  No constant enters it.
+            if rel > 1e-10 or not np.all(np.isfinite(w_zone)):
+                b_gw = _gronwall_departure(m, float(b_cur), b_end)
+                record = {"from": float(b_cur), "rejected_end": float(b_end),
+                          "rel_rejected": float(rel),
+                          "departure": float(b_gw), "accepted": False}
+                if (b_gw - b_cur) * sgn > 1e-12 * (1.0 + abs(b_cur)) \
+                        and (b_end - b_gw) * sgn > 0.0:
+                    span_gw = abs(b_gw - float(b_cur))
+                    n_gw = max(8, int(np.ceil(
+                        span_gw / max(ds, np.finfo(float).tiny))) + 1)
+                    b_try = np.linspace(b_cur, b_gw, n_gw)
+                    w_try, iters_gw, rel_gw = slow_fixed_point(m, b_try)
+                    record["rel_retried"] = float(rel_gw)
+                    if rel_gw <= 1e-10 and np.all(np.isfinite(w_try)):
+                        record["accepted"] = True
+                        b_end, b_zone, w_zone = b_gw, b_try, w_try
+                        iters, rel = iters_gw, rel_gw
+                # Recorded whether or not it was taken: a retry that declined
+                # is as much a fact about the branch as one that worked, and
+                # the absence of this key was read as "the mechanism did not
+                # run" when it had.
+                diag.setdefault("gronwall_retries", []).append(record)
             if rel > 1e-10 or not np.all(np.isfinite(w_zone)):
                 # SELF-CERTIFICATION FAILED: the sounding gauge 2A/|u''|
                 # spikes falsely at inflections of u (u'' = 0), where no
