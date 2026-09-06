@@ -292,7 +292,10 @@
         <button class="tool" id="exportPng" style="margin-left:10px"
                 title="Write one PNG of the phase portrait and backbone panels, redrawn at 2x, with captions and a compact view/contour record">export PNG 2x</button>
         <button class="tool" id="exportSvg"
-                title="Write the phase portrait's vector layers as SVG: every branch, shot, candidate and connection as its own path with data- attributes naming it. Contours are omitted.">export SVG</button>
+                title="Write the phase portrait's vector layers as SVG: every branch, shot, candidate and connection as its own path with data- attributes naming it. Tick contours to include the level curves as paths carrying their level.">export SVG</button>
+        <label for="svgContours" style="margin:0 4px 0 6px;text-transform:none;letter-spacing:0"
+               title="Include the level curves in the SVG, in closed form (a = a*(b) +- sqrt((c-u)/A)), each path tagged with its level. What a trace's angle against the contours shows is why they are worth exporting.">contours</label>
+        <input type="checkbox" id="svgContours" checked>
         <span id="exportStatus" role="status" aria-live="polite"></span></span></p>
       <canvas id="cBone" width="760" height="230"></canvas>
     </div>
@@ -2735,6 +2738,95 @@ function exportSvg(){
            + (WALL && S.lastBody ? ` ${WALL.parameter_name} = ${S.lastBody.lam}` : "")
            + (S.P.status ? ` status ${S.P.status}` : "") + " -->\n");
   out.push(`  <rect width="${W}" height="${H}" fill="#fff"/>\n`);
+  // Level curves, if the page is drawing them and the export box is ticked.
+  // Same closed form as drawPortrait: on a b-grid, a = a*(b) +- sqrt((c-u)/A),
+  // with each branch closed on its turning point u(b) = c rather than left
+  // hanging at the last grid sample.  No marching squares, so the exported
+  // paths are the curves themselves and stay exact under any later zoom.
+  // They go in FIRST so the manifolds draw over them, and carry data-level so
+  // a reader can tell which contour is which -- the angle a trace makes with
+  // the contours is the thing these are for.
+  if (els("svgContours") && els("svgContours").checked && S.levels > 0){
+    const M2 = 1200, bs2 = [], As2 = [], ast2 = [], us2 = [];
+    const uAt2 = b => {
+      const den = evalp(F.backbone_den, b);
+      return Math.abs(den) > 1e-300 ? F.C - evalp(F.backbone_num, b) / den : NaN;
+    };
+    const aStarAt2 = b => {
+      const A = evalp(F.A, b);
+      return A > 1e-13 ? evalp(F.B, b) / A : NaN;
+    };
+    for (let i = 0; i <= M2; i++){
+      const b = v.b0 + i / M2 * (v.b1 - v.b0);
+      bs2.push(b); As2.push(evalp(F.A, b));
+      ast2.push(aStarAt2(b)); us2.push(uAt2(b));
+    }
+    const uv2 = us2.filter(Number.isFinite);
+    const uMin2 = uv2.length ? Math.min(...uv2) : 0;
+    let uMaxBone2 = uMin2, Lmax2 = uMin2;
+    for (const u of uv2) uMaxBone2 = Math.max(uMaxBone2, u);
+    if (S.levelSpan === "backbone"){
+      Lmax2 = uMaxBone2;
+      if (!(Lmax2 > uMin2)) Lmax2 = uMin2 + 1e-12;
+    } else {
+      for (const a of [v.a0, v.a1]) for (const b of [v.b0, v.b1])
+        Lmax2 = Math.max(Lmax2, Lof(a, b));
+    }
+    const NL2 = Math.max(4, Math.min(400, S.levels | 0));
+    const margin2 = 2 * (v.a1 - v.a0);
+    const LV = levelValues(uMin2, uMaxBone2, Lmax2, NL2, v);
+    const turningB2 = (bLo, bHi, c) => {
+      let lo = bLo, hi = bHi, sLo = uAt2(lo) - c;
+      if (!Number.isFinite(sLo)) return NaN;
+      for (let it = 0; it < 40; it++){
+        const mid = 0.5 * (lo + hi), s = uAt2(mid) - c;
+        if (!Number.isFinite(s)) return NaN;
+        if ((s < 0) === (sLo < 0)) { lo = mid; sLo = s; } else hi = mid;
+      }
+      return 0.5 * (lo + hi);
+    };
+    const turnPt2 = (i0, i1, c) => {
+      const bt = turningB2(bs2[i0], bs2[i1], c), at = aStarAt2(bt);
+      if (!Number.isFinite(bt) || !Number.isFinite(at)) return null;
+      if (at < v.a0 - margin2 || at > v.a1 + margin2) return null;
+      return [at, bt];
+    };
+    out.push(`  <g id="contours" stroke="${css("--contour")}" stroke-width="1" fill="none">\n`);
+    for (let k = 1; k <= NL2; k++){
+      const c = LV[k - 1];
+      for (const sgn of [1, -1]){
+        let run = [], below = false;
+        const flush = () => {
+          if (run.length > 1){
+            const d = run.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(3)} ${Y(p[1]).toFixed(3)}`).join("");
+            out.push(`    <path d="${d}" data-level="${c}" data-side="${sgn > 0 ? "+" : "-"}"/>\n`);
+          }
+          run = [];
+        };
+        for (let i = 0; i <= M2; i++){
+          const A = As2[i], u = us2[i];
+          const ok = (A > 1e-13) && Number.isFinite(u);
+          if (!ok || c <= u){
+            if (run.length && ok && i > 0){
+              const t = turnPt2(i - 1, i, c);
+              if (t) run.push(t);
+            }
+            flush(); below = ok && c <= u; continue;
+          }
+          const a = ast2[i] + sgn * Math.sqrt((c - u) / A);
+          if (a < v.a0 - margin2 || a > v.a1 + margin2){ flush(); below = false; continue; }
+          if (!run.length && below && i > 0){
+            const t = turnPt2(i - 1, i, c);
+            if (t) run.push(t);
+          }
+          run.push([a, bs2[i]]);
+          below = false;
+        }
+        flush();
+      }
+    }
+    out.push("  </g>\n");
+  }
   // backbone, sampled as drawPortrait samples it
   const M = 1200, bone = [];
   for (let i = 0; i <= M; i++){
