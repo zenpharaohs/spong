@@ -2436,7 +2436,17 @@ static PyObject *native_segments_cross_exact(PyObject *self, PyObject *args) {
                                                       cx, cy, dx, dy));
 }
 
+static PyObject *native_chord_rejections(PyObject *self, PyObject *args) {
+    int reset = 0;
+    (void)self;
+    if (!PyArg_ParseTuple(args, "|p", &reset)) return NULL;
+    return PyLong_FromUnsignedLong(spong_chord_rejections(reset));
+}
+
 static PyMethodDef module_methods[] = {
+    {"chord_rejections", native_chord_rejections, METH_VARARGS,
+     "Steps refused by the chord-realisation gate; chord_rejections(True) "
+     "reads and zeroes. Process-wide and atomic across worker threads."},
     {"orient2d_exact", native_orient2d_exact, METH_VARARGS,
      "Exact sign of the orientation determinant of three binary64 points."},
     {"segments_cross_exact", native_segments_cross_exact, METH_VARARGS,

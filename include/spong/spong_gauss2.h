@@ -82,6 +82,25 @@ SPONG_API int spong_irk2_step_floored(void *ctx, spong_vec_fj fj,
                                       spong_vec_floor fl, const double z[2],
                                       double h, int order, double out[2]);
 
+/* The same step with the CHORD-REALISATION admissibility test optionally
+ * applied.  unit_speed = 1 asserts |f| = 1 on this field and enables the
+ * test; on any other field it must be 0.  See the long comment in
+ * spong_gauss2.c: the test refuses a converged stage configuration that
+ * delivers only a fraction of the requested arc (the alternating roots,
+ * which no residual test can see), and it is valid ONLY where the stage
+ * magnitudes are pinned, because A-stable collocation on a stiff decay
+ * produces the same alternating sign pattern legitimately. */
+SPONG_API int spong_irk2_step_gated(void *ctx, spong_vec_fj fj,
+                                    spong_vec_floor fl, const double z[2],
+                                    double h, int order, double out[2],
+                                    int unit_speed);
+
+/* How many steps the chord-realisation gate has refused since the last
+ * reset, for cost/benefit measurement.  reset != 0 reads and zeroes in one
+ * atomic exchange.  Counts across all threads; the counter is process-wide,
+ * not per-segment. */
+SPONG_API unsigned long spong_chord_rejections(int reset);
+
 /* Convenience: unit-speed and constant-potential-rate steps on the loss
  * field.  h > 0 ascends for the normalized field; for the potential field
  * h is the signed loss change. */

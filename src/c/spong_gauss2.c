@@ -282,14 +282,115 @@ static int within_floor(int s, const double R[8], const double Eta[4][2]) {
     return 1;
 }
 
-int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
-                    int order, double out[2]) {
-    return spong_irk2_step_floored(ctx, fj, NULL, z, h, order, out);
+/* CHORD REALISATION: |sum b_i K_i| / sum b_i |K_i|, the fraction of the
+ * requested arc a converged stage configuration actually delivers.
+ *
+ * A converged configuration is not yet a step.  The alternating
+ * configurations are GENUINE roots of the stage equations -- GL8 at
+ * h = 1.5 on directed:99912409 converges to |R| = 6e-16 in three
+ * iterations and delivers 0.652 of the chord -- and no residual test can
+ * see them, because nothing about them is a residual failure.  Measured
+ * against a Radau reference at rtol 1e-12 (scripts/chord_realisation_probe.py)
+ * the endpoint of such a step lands 0.26 to 0.46 of an arclength away from
+ * the flow, while its residual is at the evaluation floor.
+ *
+ * The short values are not arbitrary: in a hemstitch the stages are all
+ * +-f, so what the weights can deliver is |sum eps_i b_i| over sign
+ * patterns -- GL4 {1, 0}, GL6 {1, 4/9, 1/9}, GL8 {1, .6521, .3479,
+ * .3043, 0}.  Every short ratio ever observed here is in that set, so the
+ * gap below 1 is a property of the tableau and the gate below is its
+ * midpoint, not a tuned constant.  1 - ratio also tracks the relative
+ * endpoint error to within about 1.2x, so a sound step clears the gate by
+ * orders of magnitude rather than marginally (measured: 1 - ratio <= 1e-9
+ * on every sound row, against a gate deficit of 0.17).
+ *
+ * Dividing by sum b_i |K_i| rather than by |h| is what keeps this
+ * dimensionless on a field that is not unit-speed: the potential-rate
+ * field has |f| ~ 9e-4, where the |h| form reads zero for every root,
+ * sound or not.  The weights are palindromic, so the ratio is invariant
+ * under c -> 1-c and gating on it costs no anadromy.
+ *
+ * SCOPE, and it is narrow.  This is sound ONLY on a UNIT-SPEED field,
+ * where |K_i| = 1 identically so that sum b_i |K_i| = 1 and the ratio
+ * measures nothing but disagreement in DIRECTION.  On a field whose stage
+ * magnitudes vary it is not a test at all: at h*lambda = -100 on an
+ * anisotropic linear jet the CORRECT Gauss stages alternate in sign --
+ * measured GL8 (+8.83e-2, -3.08e-2, +2.99e-2, -6.77e-2), ratio 0.0703;
+ * GL4 0.0346; GL6 0.4310 -- because that is what A-stable collocation
+ * does on a stiff decay, and tests/test_local.py catches the rejection.
+ * A parasitic hemstitch root and a sound stiff step produce the SAME sign
+ * pattern; only the unit-speed constraint separates them.  So
+ * spong_normalized_step gates and nothing else does; the potential-rate
+ * field wants its own measurement before it gets a test of its own.
+ *
+ * It also does NOT police step sizes: a step whose h is past the flow's
+ * turning scale can deliver a full-length chord in the wrong place
+ * (measured at h*rho(J) ~ 2e7), and that failure is loud -- halve h and
+ * the answer moves -- so it belongs to step-size policy, and certification
+ * holds if it can be had at any step size for which the computation makes
+ * sense.  Refusal here returns 0, which is the signal the floor ladder and
+ * the halving retries already consume.
+ */
+static int realises_chord(int s, const double *BT, const double K[4][2]) {
+    double num[2] = {0.0, 0.0}, den = 0.0;
+    for (int i = 0; i < s; i++) {
+        num[0] += BT[i] * K[i][0];
+        num[1] += BT[i] * K[i][1];
+        den += BT[i] * hypot(K[i][0], K[i][1]);
+    }
+    if (!(den > 0.0) || !isfinite(den)) return 0;
+    /* (1 + largest realisable short value)/2, midway across the gap. */
+    const double gate = s == 2 ? 0.5
+                      : (s == 3 ? 0.7222222222222222
+                                : 0.8260362887156365);
+    return hypot(num[0], num[1]) >= gate * den;
 }
 
-int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
-                            const double z[2], double h,
-                            int order, double out[2]) {
+/* How often the gate above has refused a step, for cost/benefit measurement
+ * across an ensemble.  ATOMIC: the tracer runs one segment per worker
+ * thread with the GIL released, so a plain counter would lose increments
+ * exactly when the number matters most.  C11 atomics where the toolchain
+ * has them, the GCC/clang builtins otherwise; the library is C99, so
+ * neither is assumed. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L \
+    && !defined(__STDC_NO_ATOMICS__)
+#include <stdatomic.h>
+static _Atomic unsigned long chord_rejections = 0;
+#define SPONG_COUNT_REJECT() \
+    atomic_fetch_add_explicit(&chord_rejections, 1UL, memory_order_relaxed)
+#define SPONG_READ_REJECT() \
+    atomic_load_explicit(&chord_rejections, memory_order_relaxed)
+#define SPONG_RESET_REJECT() \
+    atomic_exchange_explicit(&chord_rejections, 0UL, memory_order_relaxed)
+#elif defined(__GNUC__)
+static unsigned long chord_rejections = 0;
+#define SPONG_COUNT_REJECT() \
+    __atomic_fetch_add(&chord_rejections, 1UL, __ATOMIC_RELAXED)
+#define SPONG_READ_REJECT() \
+    __atomic_load_n(&chord_rejections, __ATOMIC_RELAXED)
+#define SPONG_RESET_REJECT() \
+    __atomic_exchange_n(&chord_rejections, 0UL, __ATOMIC_RELAXED)
+#else
+#warning "chord-rejection counter is not atomic on this toolchain"
+static unsigned long chord_rejections = 0;
+#define SPONG_COUNT_REJECT() (chord_rejections++)
+#define SPONG_READ_REJECT()  (chord_rejections)
+#define SPONG_RESET_REJECT() (chord_rejections)
+#endif
+
+unsigned long spong_chord_rejections(int reset) {
+    return reset ? (unsigned long)SPONG_RESET_REJECT()
+                 : (unsigned long)SPONG_READ_REJECT();
+}
+
+int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
+                    int order, double out[2]) {
+    return spong_irk2_step_gated(ctx, fj, NULL, z, h, order, out, 0);
+}
+
+int spong_irk2_step_gated(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
+                          const double z[2], double h,
+                          int order, double out[2], int unit_speed) {
     static const double A4[4][4] = {
         {0.25, 0.25 - SQRT3/6.0, 0.0, 0.0},
         {0.25 + SQRT3/6.0, 0.25, 0.0, 0.0},
@@ -378,6 +479,10 @@ int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
         }
     }
     if (!converged) return 0;
+    if (unit_speed && !realises_chord(s, BT, K)) {
+        SPONG_COUNT_REJECT();
+        return 0;
+    }
     out[0] = z[0]; out[1] = z[1];
     for (int i = 0; i < s; i++) {
         out[0] += h * BT[i] * K[i][0];
@@ -386,10 +491,17 @@ int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
     return isfinite(out[0]) && isfinite(out[1]);
 }
 
+int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
+                            const double z[2], double h,
+                            int order, double out[2]) {
+    return spong_irk2_step_gated(ctx, fj, fl, z, h, order, out, 0);
+}
+
 int spong_normalized_step(const spong_field *field, const double z[2],
                           double h, int order, double out[2]) {
-    return spong_irk2_step_floored((void *)field, spong_normalized_fj,
-                                   spong_normalized_floor, z, h, order, out);
+    /* The only unit-speed caller, and the only one that gates. */
+    return spong_irk2_step_gated((void *)field, spong_normalized_fj,
+                                 spong_normalized_floor, z, h, order, out, 1);
 }
 
 int spong_potential_step(const spong_field *field, const double z[2],
