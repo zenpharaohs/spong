@@ -48,6 +48,117 @@ def _trace_box(m: Model, display_box, scale: float = 1.35):
     return (ac - ah, ac + ah, max(bc - bh, -bmax), min(bc + bh, bmax))
 
 
+def _stable_trace_box(m: Model, display_box, stop_loss):
+    """The box for STABLE branches: the bar's own sublevel set, exactly.
+
+    A stable branch ascends, and the level bar stops it the moment L exceeds
+    U*.  So the only region it can occupy is {L <= c} for a rational c >= U*,
+    and the widest that region gets in a IS the box -- outside it the bar has
+    necessarily fired already, so box_exit becomes impossible in a and can
+    only mean the b limit, which is the genuine arithmetic edge.  Contrast
+    _trace_box, which is derived from the DISPLAY view: a viewport has no
+    business deciding when certification stops, and measured on 47 untargeted
+    ensemble cases it stopped stable branches before the bar could fire,
+    losing the certificate (fp64_unresolved, stable_escape_unresolved) on
+    every one.  It also cost work rather than saving it -- a branch that
+    leaves the display box gets no bar, so the machinery keeps grinding:
+    3738 -> 2107, 5351 -> 4188, 5581 -> 3212 stable vertices on three of
+    those cases, longest branch 1527 -> 541.
+
+    EXACT, not sampled.  With w = a - a*, L = u + Aw^2, so on L = c
+    (aA - B)^2 = -P where P = (C-c)A - B^2 is the level polynomial.  The
+    extreme |a| on that set has dL/db = 0, and dL/db = a(aA' - 2B'), so it
+    lies either on a = 0 (which contributes nothing to a maximum) or on the
+    b-nullcline a = 2B'/A' -- the same curve the pinned stable tails ride.
+    Substituting and clearing denominators,
+
+        Q(b) = (2AB' - A'B)^2 + P A'^2 = 0,
+
+    whose real roots Sturm isolates exactly; the extreme a values are the
+    SIGNED 2B'/A' over those roots, together with the two b endpoints.  The
+    far tail cannot win: A ~ b^(2d) drives the width to zero as |b| grows.
+
+    The extremes are taken separately in each direction, NOT as a symmetric
+    half-width: the sublevel set is centred on the backbone, and a* wanders,
+    so sup|a| applied symmetrically is not a bound on the set.  Collapsing
+    the two with abs() cut four ensemble cases that had certified before,
+    each on the side where a* is displaced (seed 1647346713: the set reaches
+    a = +1.108 while sup|a| gave 0.736).  The result is unioned with the
+    display box as well, so this can only ever enlarge what the tracer had.
+
+    c must be RATIONAL for any of this to be exact, and U* is algebraic (the
+    saddle b is a root of B*N).  The float bar is already inflated upward for
+    exactly this reason, so any rational c >= U* serves and a larger c only
+    enlarges the box -- conservative in the safe direction.  c is rounded UP
+    to four significant digits, which keeps its denominator small; that turns
+    out not to matter for cost (the level polynomial's coefficients are
+    275 bits either way, inherited from the moments) but it costs nothing and
+    keeps the object readable.
+
+    ON DEMAND, because it is not cheap.  isolate_roots on Q costs about 7 s
+    at degree 64 (tricky-d11) and 48 s at degree 100 (thrash) -- intrinsic to
+    the degree, not to coefficient size: the integer-primitive form measures
+    the same, and an earlier reading that it was free was a Sturm-cache hit
+    from a previous call on the same polynomial.  So the caller traces with
+    the display box first and only pays this when a stable branch actually
+    comes back box_exit, which is the only case where the display box has
+    truncated anything.  Zero cost on a portrait that already certifies.
+    """
+    from fractions import Fraction
+    from . import merge_tree
+    from . import _poly as P
+
+    a0, a1, b0, b1 = display_box
+    bmax = atlas.legal_max_b(m)
+    old = _trace_box(m, display_box)
+    if stop_loss is None or not np.isfinite(stop_loss):
+        return (old[0], old[1], -bmax, bmax)
+    # A small-denominator rational strictly above the bar (see the docstring):
+    # ceil to 4 significant digits, which is exact in Fraction and keeps the
+    # Sturm chain's coefficients small.
+    s = float(stop_loss)
+    if s == 0.0:
+        c = Fraction(1, 2**20)
+    else:
+        exp = int(np.floor(np.log10(abs(s)))) - 3
+        q = Fraction(10) ** exp
+        c = Fraction(int(np.ceil(s / float(q))) + 1) * q
+    if c < Fraction(s):                      # never below the bar
+        c = Fraction(s)
+    Pc = merge_tree.level_polynomial(m, c)
+    Ap = P.deriv(m.alpha)
+    Bp = P.deriv(m.beta)
+    # (2AB' - A'B)^2 + P A'^2
+    lhs = P.sub(P.scale(P.mul(m.alpha, Bp), Fraction(2)), P.mul(Ap, m.beta))
+    Q = P.add(P.mul(lhs, lhs), P.mul(Pc, P.mul(Ap, Ap)))
+    cand = [old[0], old[1]]
+    try:
+        for iv in sturm.isolate_roots(Q):
+            iv = sturm.refine(Q, iv, Fraction(1, 2**48))
+            b = float(iv.mid)
+            apv = float(np.polyval(np.asarray(Ap, dtype=float)[::-1], b))
+            bpv = float(np.polyval(np.asarray(Bp, dtype=float)[::-1], b))
+            if apv != 0.0:
+                cand.append(2.0 * bpv / apv)          # SIGNED
+    except Exception:
+        # No exact answer available: keep what the tracer had rather than
+        # substituting a sampled maximum.
+        return (old[0], old[1], -bmax, bmax)
+    for b in (-bmax, bmax):
+        A = float(m.A(b))
+        if A > 0.0:
+            u = float(m.L(float(m.a_star(b)), b))
+            half = np.sqrt(max(float(c) - u, 0.0) / A)
+            astar = float(m.a_star(b))
+            cand.extend((astar - half, astar + half))
+    cand = [x for x in cand if np.isfinite(x)]
+    lo, hi = min(cand), max(cand)
+    # Outward slack: the box must CONTAIN the sublevel set, and the
+    # candidates are evaluated in floating point.
+    pad = 1e-12 * max(abs(lo), abs(hi), 1.0)
+    return (lo - pad, hi + pad, -bmax, bmax)
+
+
 def _unstable_stub(s, direction):
     return next((stub for stub in s.stubs
                  if stub.manifold == "unstable"
@@ -143,11 +254,11 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     _saddle_u = [float(m.L(float(m.a_star(q.b)), q.b)) for q in e.saddles]
     stop_loss = (max(_saddle_u)*(1.0 + 1e-9) + 1e-12) if _saddle_u else None
 
-    def _stable_branch(task):
+    def _stable_branch(task, trace_box=None):
         t0 = time.perf_counter()
         s, sign = task
         br = engine.trace_stable(
-            m, s.b, sign, box=box,
+            m, s.b, sign, box=(box if trace_box is None else trace_box),
             ds=span_scale/(30000.0*resolution_divisor),
             critical_local=s.local,
             critical_stub=_stable_stub(s, sign, m),
@@ -161,10 +272,31 @@ def compute(m: Model, view=None, geometry_level: int = 0,
         return br
 
     n_workers = engine.workers()
-    branches.extend(engine.map_ordered(
-        _stable_branch,
-        [(s, sign) for s in e.saddles for sign in (+1, -1)],
-        workers=n_workers))
+    stable_tasks = [(s, sign) for s in e.saddles for sign in (+1, -1)]
+    stable = engine.map_ordered(_stable_branch, stable_tasks, workers=n_workers)
+    # THE BOX IS NOT PART OF THE CERTIFICATE.  A stable branch that reaches
+    # the level bar is certified without reference to any rectangle; one that
+    # comes back box_exit has been truncated by the DISPLAY view, which has no
+    # business deciding when certification stops -- measured on 47 untargeted
+    # ensemble cases, every one lost its certificate that way
+    # (stable_escape_unresolved), and retracing them against the bar's own
+    # sublevel set both certified them AND cost fewer vertices, since a branch
+    # denied its bar keeps being worked on.  Recomputing that box is expensive
+    # at high degree, so it is paid only here, only when a box_exit says the
+    # display view actually got in the way.
+    if (os.environ.get("SPONG_STABLE_DISPLAY_BOX", "") in ("", "0")
+            and any(br.term == "box_exit" for br in stable)):
+        sb = _stable_trace_box(m, display_view, stop_loss)
+        redo = [i for i, br in enumerate(stable) if br.term == "box_exit"]
+        again = engine.map_ordered(
+            lambda t: _stable_branch(t, trace_box=sb),
+            [stable_tasks[i] for i in redo], workers=n_workers)
+        for i, br in zip(redo, again):
+            br.diag["stable_box_retrace"] = {
+                "from_term": stable[i].term, "box_a": [sb[0], sb[1]],
+                "box_b": [sb[2], sb[3]]}
+            stable[i] = br
+    branches.extend(stable)
 
     discovery_ds = max(display_view[3]-display_view[2],
                        display_view[1]-display_view[0]) / (
