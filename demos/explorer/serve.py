@@ -48,10 +48,10 @@ os.environ.setdefault("SPONG_ENGINE", "native")
 os.environ.setdefault("SPONG_WORKERS", "8")
 
 try:
-    from spong import atlas, model, portrait, sturm, wall_shoot, zoo
+    from spong import atlas, inverse, model, portrait, sturm, wall_shoot, zoo
 except ImportError:                                  # running from a checkout
     sys.path.insert(0, str(REPO / "src"))
-    from spong import atlas, model, portrait, sturm, wall_shoot, zoo
+    from spong import atlas, inverse, model, portrait, sturm, wall_shoot, zoo
 
 # The allocator experiment remains demo code, but the viewer needs to run it
 # against the exact model behind the active portrait.  A script launched as
@@ -377,12 +377,26 @@ def _nullcline_b(a, b, Ap, App, Bp, Bpp, lo, hi):
     return None
 
 
-def _grow_stable(m, start, ds, r_max, critical, max_steps=200000):
+def _grow_stable(m, start, ds, r_max, critical, max_steps=200000,
+                 ds0=None):
     """Continue a stable branch outward from ``start`` by the SAME two-tier
     machinery that traced it: the constant-potential-rate ascent, and, where
     that step-fails short of the box, the chart continuation engine from the
     point it reached.  Bounded by the box |a|,|b| <= r_max and by steps.
     Returns the new points (excluding start) and the terminal label.
+
+    ``ds0`` IS NOT OPTIONAL IN PRACTICE.  charts.trace_stable hands the
+    continuation ds0=launch_scale -- the stub's physical reach, a tiny first
+    chord that the engine then ramps up from.  Passing the full chord as ds0
+    instead makes the engine attempt its FIRST step at that size, and in a
+    stiff canyon that step lands on a different branch of the flow: measured
+    on inverse.separated_linear_case(4, 30), the wall from the B-saddle at
+    b = 1 with ds = 7.2 goes to the trap at b = -14.892264 when ds0 = 7.2 and
+    to the correct trap at b = +597.255444 when ds0 is the branch's own last
+    chord (0.0022) or smaller.  It is not a step-size accuracy question --
+    the destination changes, not its precision -- and the drawn curve was
+    confidently wrong with a sector label and a named trap attached.  Default
+    to something small rather than to ds.
     """
     from spong import charts
     box = (-r_max, r_max, -r_max, r_max)
@@ -399,8 +413,9 @@ def _grow_stable(m, start, ds, r_max, critical, max_steps=200000):
         b0 = float(last[1]); w0 = float(last[0] - m.a_star(b0))
         try:
             more, term, _sw, _ = charts._continue_curve(
-                m, b0, w0, -1, [], box, ds, ds0=ds, engine_diag={},
-                max_steps=max_steps)
+                m, b0, w0, -1, [], box, ds,
+                ds0=(ds0 if ds0 is not None else min(ds, 1e-6)),
+                engine_diag={}, max_steps=max_steps)
             out.extend((float(q[0]), float(q[1])) for q in more[1:])
         except Exception:                            # display only
             term = "growth_failure"
@@ -529,8 +544,13 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
             for _ in range(max_doublings):
                 r_now = math.hypot(*curve[-1])
                 r_max = 2.0*max(r_now, r_crit)
-                more, grow_term = _grow_stable(m, curve[-1], ds, r_max,
-                                               critical)
+                # The engine ramps from ds0; give it the branch's own last
+                # chord, as trace_stable gives it the stub's reach.
+                tail_chord = math.hypot(curve[-1][0] - curve[-2][0],
+                                        curve[-1][1] - curve[-2][1])
+                more, grow_term = _grow_stable(
+                    m, curve[-1], ds, r_max, critical,
+                    ds0=(tail_chord if tail_chord > 0.0 else None))
                 if not more:
                     break
                 curve.extend(more)
@@ -649,6 +669,7 @@ def _resolve(payload: dict):
     """(f, g, view, moment spec, cache key) from a request."""
     wall = payload.get("wall")
     name = payload.get("zoo")
+    separated = payload.get("separated_linear")
     if wall:
         # A rheostat member of a wall family, at an arbitrary Lambda.
         # zoo.rheostat_member materializes only the three named members; the
@@ -685,6 +706,25 @@ def _resolve(payload: dict):
         view = tuple(float(x) for x in z.default_view) \
             if z.default_view else None
         spec = {"kind": z.moment_dist}
+    elif separated:
+        degree = int(separated.get("degree", 4))
+        if not 1 <= degree <= 8:
+            raise ValueError(
+                "inspector separated-linear degree must lie in [1, 8]")
+        raw_separation = separated.get("separation", "30")
+        try:
+            scale = Fraction(str(raw_separation))
+        except (ValueError, ZeroDivisionError) as exc:
+            raise ValueError("separation must be a rational number") from exc
+        if not Fraction(1) < scale <= Fraction(1000):
+            raise ValueError("separation must lie in (1, 1000]")
+        family = inverse.separated_linear_case(degree, scale)
+        # Keep the rational coefficients through model construction.  They
+        # are converted only when serialized for the browser.
+        f = list(family.f)
+        g = list(family.g)
+        view = None
+        spec = {"kind": "uniform01"}
     else:
         f = [float(x) for x in payload["f"]]
         g = [float(x) for x in payload["g"]]
@@ -1213,7 +1253,14 @@ def compute(payload: dict) -> dict:
 
     e = p.enumeration
     out = {
-        "f": f, "g": g,
+        "f": [float(x) for x in f], "g": [float(x) for x in g],
+        "separated_linear": ({
+            "degree": int(payload["separated_linear"].get("degree", 4)),
+            "separation": str(payload["separated_linear"].get(
+                "separation", "30")),
+            "algebraic_ceiling": 4 * int(
+                payload["separated_linear"].get("degree", 4)) - 2,
+        } if payload.get("separated_linear") else None),
         "stage": stage,
         "varf": varf if varf > 0 else 1.0,
         "elapsed_sec": elapsed,
