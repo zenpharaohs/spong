@@ -212,7 +212,7 @@ NONNEAREST_SADDLE_CONNECTION = WallFamily(
     base_case=NONNEAREST_ATTACHMENT.name,
     parameter_name="Lambda",
     below_parameter=2.0,
-    wall_parameter=2.177709563954844,
+    wall_parameter=2.17770956082838,
     above_parameter=4.0,
     source_b=-0.4770682827686173,
     target_b=0.6402740918269282,
@@ -228,15 +228,28 @@ NONNEAREST_SADDLE_CONNECTION = WallFamily(
         "center portrait is a geometric wall limit, not an ordinary "
         "certified portrait."
     ),
-    wall_bracket=(2.177709563952666, 2.1777095639570216),
+    wall_bracket=(2.1777095608283794, 2.1777095608283807),
     bracket_protocol=(
-        "Landing fates at both endpoints verified by two independent "
-        "integrators (Radau rtol 1e-12 atol 1e-14; DOP853 rtol 1e-13 "
-        "atol 1e-15), jet-eigenvector launch offset 1e-8 from the "
-        "Newton-polished saddle at b=-0.4770682827686173: far minimum at "
-        "the lower endpoint, near minimum at the upper endpoint, all four "
-        "runs agreeing.  Numerical-oracle grade, not a signed-shooting "
-        "certificate."
+        "Landing-fate bisection with spong's own tracer: the watched branch "
+        "captures (1.168364, 0.966807) below the wall and "
+        "(3.153984, -0.015763) above it, a discrete property needing no "
+        "separation function.  Bisected to the binary64 floor at IRK-GL4 and "
+        "IRK-GL6 independently; both return the identical one-ulp bracket "
+        "quoted here (23 portraits each, scripts/wall_bisect.py).  IRK-GL8 "
+        "returns a bracket equally sharp but offset +3.0e-12 -- at this "
+        "chord its truncation error is already below the evaluation floor, "
+        "so the extra stages contribute rounding rather than accuracy, and "
+        "the GL8 value is recorded as the calibration of where order stops "
+        "helping, not as a competing answer.  wall_shoot.py's Brent root "
+        "(2.1777095613653787) inherits the same effect: its _level_crossing "
+        "steps at a hard-coded order 8.  Numerical-oracle grade, not a "
+        "signed-shooting certificate.\n\n"
+        "SUPERSEDES a bracket (2.177709563952666, 2.1777095639570216) whose "
+        "protocol cited scipy's Radau and DOP853.  Neither is anadromic and "
+        "scipy is not a dependency of this project, so that protocol was "
+        "unreproducible here; measured 2026-09-07, both of its endpoints AND "
+        "the wall_parameter it carried give the same landing under the "
+        "current tracer, so it did not straddle the flip at all."
     ),
 )
 

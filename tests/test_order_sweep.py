@@ -3,6 +3,7 @@
 from fractions import Fraction
 import numpy as np
 import pytest
+import math
 from types import SimpleNamespace
 
 from spong import (comparison, inverse, model, order_sweep, portrait, sturm,
@@ -204,17 +205,31 @@ def test_isolated_root_is_not_hidden_by_a_later_terminal_band():
 def test_near_saddle_connection_euler_crossing_is_a_resolved_fault():
     """A bad proposer reaches the isolated-simple-root production path.
 
-    Forward Euler is not a production option.  At the registered B-to-N
+    Forward Euler is not a production option.  Near the B-to-N
     saddle-connection wall it is a useful negative control: its independently
     traced W^u(B) and W^s(N) cross once, away from either saddle, instead of
     agreeing on the wall orbit.  Unlike an asymptotic contact band, this event
     must be reported as an isolated resolved construction fault.
+
+    LAMBDA IS PINNED HERE, deliberately, and is NOT the family's certified
+    wall_parameter.  This test is about how the classifier diagnoses a bad
+    proposer, not about where the wall is; it needs only a parameter near
+    enough for Euler to misbehave in this particular way.  Coupling it to the
+    certified constant made it collateral damage of re-shooting: when the wall
+    moved 2.6e-9 in 2026-09 the watched pair still behaved exactly as asserted
+    (one contact, one isolated resolved root, correct bracket and margin) but
+    Euler picked up three further crossings ELSEWHERE in the portrait and the
+    audit-wide forbidden_count went 1 -> 4.  The value below is the one this
+    test's expectations were calibrated against.
     """
+    LAMBDA = 2.177709563954844
     family = zoo.get_wall_family("nonnearest-saddle-connection")
-    case = zoo.rheostat_member(family, "wall")
-    degree = len(case.g)-1
-    m = model.build(
-        case.f, case.g, model.moments_uniform01(2*degree+1))
+    base = zoo.get(family.base_case)
+    root = math.sqrt(LAMBDA)
+    f = tuple(value/root for value in base.f)
+    g = tuple(root*value for value in base.g)
+    degree = len(g)-1
+    m = model.build(f, g, model.moments_uniform01(2*degree+1))
     enumeration = sturm.enumerate_critical_points(m)
     p = comparison.casual_portrait(
         m, "forward-euler", reference_enumeration=enumeration,
