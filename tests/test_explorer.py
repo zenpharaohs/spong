@@ -78,6 +78,25 @@ def test_wall_slider_starts_at_exact_stored_wall_coordinate():
     assert spec == {"kind": base.moment_dist}
 
 
+def test_separated_linear_family_is_exactly_resolved_for_the_inspector():
+    f, g, view, spec, _ = serve._resolve({
+        "separated_linear": {"degree": 4, "separation": "30"}})
+    assert f == [1, 1]
+    assert view is None
+    assert spec == {"kind": "uniform01"}
+    m = serve.model.build(f, g, serve.model.moments_uniform01(9))
+    assert serve.sturm.count_roots(m.critical_reduced) == 14
+
+
+def test_separated_linear_family_controls_are_present():
+    page = serve.PAGE.read_text()
+    assert 'id="advSeparated"' in page
+    assert 'id="sepDegree"' in page
+    assert 'id="sepScale"' in page
+    assert 'id="loadSeparated"' in page
+    assert 'separated_linear: separated' in page
+
+
 def test_wall_limit_snaps_model_and_serializes_common_orbit(monkeypatch):
     from types import SimpleNamespace
 

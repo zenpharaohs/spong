@@ -157,15 +157,49 @@ data cross as strings, while the map coefficients cross as the exact doubles
 that will map the resulting curve.  The production path uses at least 192 bits
 and is differentially checked against the retained Decimal implementation.
 
-The next local entry point is specified by the independent
-`spong.local_certificate` oracle.  It will consume rectangular GMP rational
-interval-coefficient arrays for the centered two-component field, potential,
-and lifted `y`, together with exact dyadic frame/centre data and fixed work
-budgets.  It will return the stable integer status contract, exact cone and
-face margins, rational section rectangle, and work counters documented in
-`local_graph_certificate.md`.  That entry point is intentionally not declared
-in the public header until differential parity and refusal behavior are fixed;
-the Python oracle is the executable ABI specification.
+`spong_poincare_graph_proposal` is the frontend-neutral floating Hadamard
+fixed point.  It consumes a `spong_jet`, exact binary64 frame/map values, and
+caller-owned output arrays.  It is proposal data only.
+
+The load-bearing local entry point is `spong_local_launch_decimal` in
+`spong_smale.h`.  It consumes the original exact rational loss pencil, a
+critical-root interval, exact dyadic frame/map, and fixed work budgets.  The
+GMP kernel independently checks that the interval contains one simple `B`- or
+`N`-root, reconstructs the centered and transformed interval field, proves a
+linear invariant cone and its Frobenius graph cone, and cuts an exact regular
+one-sheet loss section.  It also attempts a regular fixed-`b` section directly
+from the Frobenius cone, without making a floating graph load-bearing.  It
+returns exact margins, section rectangles, and bounded work counters.  The
+Python/Fraction implementation remains the differential oracle.
+
+The first global exact-holonomy entry point is now exposed by
+`include/spong/spong_smale.h`.
+`spong_b_parameter_handoff_decimal` accepts the exact rational loss pencil,
+a proposed monotone centreline, a fixed-`b` launch interval, a target loss,
+and explicit work ceilings.  The proposal carries no proof: the GMP kernel
+reconstructs every affine face, proves full-slab regularity and both Nagumo
+inequalities, checks `N=A'B-2B'A`, and projects the first strictly bracketing
+slab onto the exact target fibre.  It returns owned decimal rational endpoints,
+exact minimum margins, stable integer status/reason codes, and work counters;
+`spong_b_parameter_result_destroy` releases all output memory.  Work-limit and
+arithmetic refusals escape immediately, while ordinary interval overestimation
+may trigger bounded slab subdivision.  The independent Python implementation
+remains the differential oracle.  This entry point introduces ABI version 6;
+the native Poincare proposal and local launch proof introduce ABI version 7.
+
+`spong_sheet_flow_tube_decimal` is the ordinary complementary chart.  It
+first projects a supplied `(b,y)` launch rectangle onto one exact regular
+loss sheet, then validates the scalar tube `b=b(level)` through a proposed
+centreline.  The GMP kernel reconstructs the square-root sheet, checks the
+entire correlated slab domain and both affine lateral faces, and returns the
+terminal fibre rectangle with exact minimum margins.  This entry point
+introduces ABI version 8.
+
+This does not by itself make the portrait-wide Smale path production-ready.
+The Python portrait-wide orchestrator and its final incidence reduction must
+still cross a frontend-neutral backend boundary.  The old piecewise graph and
+two-coordinate rescues are explicitly development-only and disabled by
+default.  `spong.smale` reports this boundary explicitly.
 
 Two-dimensional Gauss--Legendre collocation on the loss field is exposed by
 `include/spong/spong_gauss2.h`.  `spong_field` is the plain-array view of
@@ -202,6 +236,21 @@ critical-capped and arclength steps, GL8 attempts and acceptances, and the
 maximal Richardson and interpolation errors -- so the extension's engine
 diagnostics are assembled without recomputation.  The GIL is released for
 the whole segment.
+
+Prefix requests may additionally enable an explicitly bounded proper-time
+clock.  Between `clock_start_level` and `clock_stop_level`, potential-rate
+steps integrate the unnormalized gradient-flow time from the same accepted
+Gauss collocation stages; normalized-arclength rescue steps integrate
+`1/|grad L|` at their stages.  Full-step versus two-half-step quadrature is
+accepted against independent `clock_atol` and `clock_rtol` tolerances and the
+result reports the elapsed `tau`, accepted clock steps and rejections, and
+the maximal accepted error and error ratio.  Both loss boundaries are step
+events rather than a posteriori polyline interpolation.  If the prefix hands
+off before the lower boundary, `spong_centered_arrival` carries the window
+through its centered raw-gradient phase, whose independent variable is
+already proper time.  The feature is off by default, and its extra stage
+work and event-localization steps therefore cannot perturb ordinary portrait
+vertices or corpus parity.
 
 Parity is defined by `tests/corpus/potential_rate.json`, recorded by
 `scripts/potential_corpus.py` from the requests the phases receive during

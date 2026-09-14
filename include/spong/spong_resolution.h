@@ -29,8 +29,20 @@ extern "C" {
 
 /* 3: spong_continue_curve gained centered_available and
  *    spong_continue_result gained rescue counts and the step-failure
- *    record (2026-09-02, floor-ladder port). */
-#define SPONG_ABI_VERSION UINT32_C(3)
+ *    record (2026-09-02, floor-ladder port).
+ * 4: spong_continue_curve gained chart_order, selecting the PRIMARY chart
+ *    stepper between the 2-stage and 3-stage Gauss tableaux (2026-09-07).
+ *    The order was a compile-time fact, so it could not be varied in any
+ *    experiment that meant anything; the floor-fallback ladder is
+ *    unaffected and still tries both orders on both charts.
+ * 5: spong_potential_request/result gained the opt-in collocation-stage
+ *    proper-time clock and its diagnostics; centered arrival carries that
+ *    clock through its raw-flow handoff (2026-09-12).
+ * 6: spong_smale.h added the frontend-neutral GMP rational trapping-tube
+ *    verifier and exact target-fibre projection (2026-09-13).
+ * 7: spong_local.h exposed the Poincare graph proposal and spong_smale.h
+ *    added the exact GMP local cone/Frobenius launch proof (2026-09-13). */
+#define SPONG_ABI_VERSION UINT32_C(8)
 
 typedef enum {
     SPONG_RESOLUTION_PROCEED = 0,

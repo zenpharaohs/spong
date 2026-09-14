@@ -41,6 +41,19 @@ int main(void) {
               <= 1e-12,
               "potential step lands on the target loss");
     }
+    {
+        double tau_normalized, tau_potential;
+        check(spong_normalized_step_clock(
+                  &quadratic, z, 0.01, 8, out, &tau_normalized),
+              "normalized clock step converges");
+        check(fabs(tau_normalized-0.5*log(1.01)) <= 2e-13,
+              "normalized stage clock matches analytic proper time");
+        check(spong_potential_step_clock(
+                  &quadratic, z, 0.01, 8, out, &tau_potential),
+              "potential clock step converges");
+        check(fabs(tau_potential-0.25*log(1.01)) <= 2e-13,
+              "potential stage clock matches analytic proper time");
+    }
 
     double Acoef[3] = {1.0, 0.0, 1.0}, Ap[2] = {0.0, 2.0}, App[1] = {2.0};
     spong_field curved = {

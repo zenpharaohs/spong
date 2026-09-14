@@ -49,6 +49,9 @@ typedef struct {
     size_t n;                 /* logical vertex count (may exceed capacity) */
     double geometry_floor;
     int orders[2];
+    int clock_started;
+    int clock_done;
+    int clock_failed;
     spong_potential_result *out;
 } segment;
 
@@ -116,24 +119,73 @@ static int segment_capture(double a0, double b0, double a1, double b1,
     return ea*ea+eb*eb < radius*radius;
 }
 
-/* charts._full_and_two_half on either field. */
-static int full_and_two_half(const spong_field *f, int potential,
-                             const double z[2], double h, int order,
-                             double full[2], double mid[2], double end[2]) {
+/* charts._full_and_two_half on either field.  When clock != 0, the three
+ * calls also return collocation-stage quadrature for the full step and the
+ * accepted two-half composition. */
+static int full_and_two_half_clock(const spong_field *f, int potential,
+                                   const double z[2], double h, int order,
+                                   double full[2], double mid[2], double end[2],
+                                   int clock, double *tau_full,
+                                   double *tau_half) {
     SPONG_FP_EXACT
     int (*step)(const spong_field *, const double[2], double, int, double[2]) =
         potential ? spong_potential_step : spong_normalized_step;
-    int ok_full = step(f, z, h, order, full);
-    int ok_mid = step(f, z, 0.5*h, order, mid);
+    int (*clock_step)(const spong_field *, const double[2], double, int,
+                      double[2], double *) =
+        potential ? spong_potential_step_clock : spong_normalized_step_clock;
+    double tau0 = 0.0, tau1 = 0.0, tau2 = 0.0;
+    int ok_full = clock ? clock_step(f, z, h, order, full, &tau0)
+                        : step(f, z, h, order, full);
+    int ok_mid = clock ? clock_step(f, z, 0.5*h, order, mid, &tau1)
+                       : step(f, z, 0.5*h, order, mid);
     if (!ok_full) { full[0] = full[1] = NAN; }
     if (!ok_mid) { mid[0] = mid[1] = NAN; }
     end[0] = mid[0]; end[1] = mid[1];
     if (isfinite(mid[0]) && isfinite(mid[1])) {
-        if (!step(f, mid, 0.5*h, order, end)) { end[0] = end[1] = NAN; }
+        int ok_end = clock ? clock_step(f, mid, 0.5*h, order, end, &tau2)
+                           : step(f, mid, 0.5*h, order, end);
+        if (!ok_end) { end[0] = end[1] = NAN; }
+    }
+    if (clock) {
+        *tau_full = tau0;
+        *tau_half = tau1+tau2;
     }
     return isfinite(full[0]) && isfinite(full[1])
         && isfinite(mid[0]) && isfinite(mid[1])
-        && isfinite(end[0]) && isfinite(end[1]);
+        && isfinite(end[0]) && isfinite(end[1])
+        && (!clock || (isfinite(*tau_full) && isfinite(*tau_half)));
+}
+
+static int full_and_two_half(const spong_field *f, int potential,
+                             const double z[2], double h, int order,
+                             double full[2], double mid[2], double end[2]) {
+    SPONG_FP_EXACT
+    return full_and_two_half_clock(f, potential, z, h, order,
+                                   full, mid, end, 0, NULL, NULL);
+}
+
+static int clock_error(const segment *s, int order,
+                       double tau_full, double tau_half,
+                       double *error, double *ratio) {
+    SPONG_FP_EXACT
+    double divisor = (double)((1u << order)-1u);
+    *error = fabs(tau_half-tau_full)/divisor;
+    double tolerance = s->req->clock_atol
+        + s->req->clock_rtol*fabs(tau_half);
+    *ratio = *error/fmax(tolerance, DBL_MIN);
+    return isfinite(*error) && isfinite(*ratio) && *error <= tolerance;
+}
+
+static void record_clock_attempt(segment *s, double error, double ratio,
+                                 int accepted) {
+    SPONG_FP_EXACT
+    if (accepted) {
+        if (error > s->out->max_clock_error) s->out->max_clock_error = error;
+        if (ratio > s->out->max_clock_error_ratio)
+            s->out->max_clock_error_ratio = ratio;
+    } else {
+        s->out->clock_rejected++;
+    }
 }
 
 /* charts._step_arclength_cap with the gradient already at hand. */
@@ -164,18 +216,25 @@ static double step_arclength_cap(const segment *s, const double z[2],
     return cap;
 }
 
-/* charts._arclength_step: returns 1 and writes half/mid on success. */
-static int arclength_step(const segment *s, const double z[2],
-                          double arclength, double sign,
-                          double half[2], double mid[2]) {
+/* charts._arclength_step: returns 1 and writes half/mid on success.  The
+ * clock-aware form returns 2 when the trajectory tests pass but the clock
+ * defect does not, allowing the caller to distinguish clock rejection from
+ * an unavailable geometric step. */
+static int arclength_step_clock(const segment *s, const double z[2],
+                                double arclength, double sign, int clock,
+                                double half[2], double mid[2],
+                                double *tau, double *clock_err,
+                                double *clock_ratio) {
     SPONG_FP_EXACT
     double L0 = spong_field_loss(s->field, z[0], z[1]);
     double noise = 64.0*DBL_EPSILON*(1.0+fabs(z[0])+fabs(z[1]));
     for (int k = 0; k < 2; k++) {
         int order = s->orders[k];
         double full[2], m[2], end[2];
-        if (!full_and_two_half(s->field, 0, z, sign*arclength, order,
-                               full, m, end))
+        double tau_full = 0.0, tau_half = 0.0;
+        if (!full_and_two_half_clock(
+                s->field, 0, z, sign*arclength, order, full, m, end,
+                clock, &tau_full, &tau_half))
             continue;
         double chord = hypot(end[0]-z[0], end[1]-z[1]);
         if (chord == 0.0) continue;
@@ -184,11 +243,26 @@ static int arclength_step(const segment *s, const double z[2],
         double L1 = spong_field_loss(s->field, end[0], end[1]);
         double slack = 64.0*DBL_EPSILON*(1.0+fabs(L0));
         if (!isfinite(L1) || sign*(L1-L0) < -slack) continue;
+        if (clock) {
+            if (!clock_error(s, order, tau_full, tau_half,
+                             clock_err, clock_ratio))
+                return 2;
+            *tau = tau_half;
+        }
         half[0] = end[0]; half[1] = end[1];
         mid[0] = m[0]; mid[1] = m[1];
         return 1;
     }
     return 0;
+}
+
+static int arclength_step(const segment *s, const double z[2],
+                          double arclength, double sign,
+                          double half[2], double mid[2]) {
+    SPONG_FP_EXACT
+    double tau, error, ratio;
+    return arclength_step_clock(s, z, arclength, sign, 0, half, mid,
+                                &tau, &error, &ratio) == 1;
 }
 
 /* charts._cubic_hermite, componentwise in the Python operation order. */
@@ -213,7 +287,114 @@ static void finish(segment *s, int term, const double z[2]) {
     s->out->a_end = z[0];
     s->out->b_end = z[1];
     s->out->n_points = s->n;
+    if (s->req->clock) {
+        s->out->clock_started = s->clock_started && !s->clock_failed;
+        s->out->clock_available = s->clock_done && !s->clock_failed;
+    }
     if (s->n > s->capacity) s->out->term = SPONG_POT_NEED_CAPACITY;
+}
+
+enum {
+    CLOCK_BOUNDARY_NONE = 0,
+    CLOCK_BOUNDARY_START = 1,
+    CLOCK_BOUNDARY_STOP = 2
+};
+
+static double clock_level_tolerance(double level) {
+    SPONG_FP_EXACT
+    return 256.0*DBL_EPSILON*(1.0+fabs(level));
+}
+
+/* Shorten a loss-parameter step to the next clock section.  This happens
+ * after curvature policy has chosen the actual h, so later cap logic cannot
+ * accidentally step over the section. */
+static int limit_clock_loss_step(const segment *s, double level, double *h) {
+    SPONG_FP_EXACT
+    if (!s->req->clock || s->clock_done || s->clock_failed || !(*h < 0.0))
+        return CLOCK_BOUNDARY_NONE;
+    double boundary;
+    int kind;
+    if (!s->clock_started) {
+        boundary = s->req->clock_start_level;
+        kind = CLOCK_BOUNDARY_START;
+    } else {
+        boundary = s->req->clock_stop_level;
+        kind = CLOCK_BOUNDARY_STOP;
+    }
+    if (level > boundary && level+*h <= boundary) {
+        *h = boundary-level;
+        return kind;
+    }
+    return CLOCK_BOUNDARY_NONE;
+}
+
+/* The potential-rate field has loss itself as its independent variable, so
+ * the helper above lands on a section directly.  The singular-field rescue
+ * is parameterized by arclength instead.  Only when that rescue crosses a
+ * clock section, solve the scalar loss event by bisection in arclength and
+ * retain the stage clock of the same accepted two-half endpoint. */
+static int prefix_arclength_step(segment *s, const double z[2],
+                                 double arclength, double half[2],
+                                 double mid[2], int *boundary_kind,
+                                 double *tau, double *error, double *ratio) {
+    SPONG_FP_EXACT
+    int clock = s->req->clock && s->clock_started && !s->clock_done
+        && !s->clock_failed;
+    *boundary_kind = CLOCK_BOUNDARY_NONE;
+    *tau = *error = *ratio = 0.0;
+    int status = arclength_step_clock(s, z, arclength, -1.0, clock,
+                                      half, mid, tau, error, ratio);
+    if (status == 2) {
+        record_clock_attempt(s, *error, *ratio, 0);
+        return 0;
+    }
+    if (status != 1 || !s->req->clock || s->clock_done || s->clock_failed)
+        return status == 1;
+
+    double boundary = s->clock_started ? s->req->clock_stop_level
+                                       : s->req->clock_start_level;
+    int kind = s->clock_started ? CLOCK_BOUNDARY_STOP : CLOCK_BOUNDARY_START;
+    double end_level = spong_field_loss(s->field, half[0], half[1]);
+    if (!(end_level <= boundary)) return 1;
+
+    double lo = 0.0, hi = arclength;
+    double best_half[2] = {half[0], half[1]};
+    double best_mid[2] = {mid[0], mid[1]};
+    double best_tau = *tau, best_error = *error, best_ratio = *ratio;
+    double level_tol = clock_level_tolerance(boundary);
+    for (int it = 0; it < 60; it++) {
+        double trial_length = 0.5*(lo+hi);
+        double trial_half[2], trial_mid[2];
+        double trial_tau = 0.0, trial_error = 0.0, trial_ratio = 0.0;
+        int trial = arclength_step_clock(
+            s, z, trial_length, -1.0, clock, trial_half, trial_mid,
+            &trial_tau, &trial_error, &trial_ratio);
+        if (trial != 1) {
+            /* Smaller arclength is the only useful direction after either
+             * a stage or a clock failure.  The original crossing remains a
+             * valid upper endpoint until a shorter one succeeds. */
+            hi = trial_length;
+            continue;
+        }
+        double trial_level = spong_field_loss(
+            s->field, trial_half[0], trial_half[1]);
+        if (trial_level <= boundary) {
+            hi = trial_length;
+            best_half[0] = trial_half[0]; best_half[1] = trial_half[1];
+            best_mid[0] = trial_mid[0]; best_mid[1] = trial_mid[1];
+            best_tau = trial_tau;
+            best_error = trial_error;
+            best_ratio = trial_ratio;
+            if (fabs(trial_level-boundary) <= level_tol) break;
+        } else {
+            lo = trial_length;
+        }
+    }
+    half[0] = best_half[0]; half[1] = best_half[1];
+    mid[0] = best_mid[0]; mid[1] = best_mid[1];
+    *tau = best_tau; *error = best_error; *ratio = best_ratio;
+    *boundary_kind = kind;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +414,23 @@ static void run_prefix(segment *s) {
     double gap0 = start_level-target_level;
     if (!(isfinite(gap0) && gap0 > 0.0)) {
         finish(s, SPONG_POT_UNAVAILABLE, z); return;
+    }
+    if (r->clock) {
+        double start_tol = clock_level_tolerance(r->clock_start_level);
+        if (!(isfinite(r->clock_start_level)
+                && isfinite(r->clock_stop_level)
+                && r->clock_start_level > r->clock_stop_level
+                && r->clock_rtol >= 0.0 && isfinite(r->clock_rtol)
+                && r->clock_atol >= 0.0 && isfinite(r->clock_atol)
+                && (r->clock_rtol > 0.0 || r->clock_atol > 0.0))) {
+            s->clock_failed = 1;
+        } else if (fabs(start_level-r->clock_start_level) <= start_tol) {
+            s->clock_started = 1;
+        } else if (start_level < r->clock_start_level) {
+            /* The prefix was launched below the requested regular section;
+             * no silently truncated clock.  The trajectory still runs. */
+            s->clock_failed = 1;
+        }
     }
     size_t n_levels = r->n_levels > 0 ? r->n_levels : 1;
     double base = gap0/(double)n_levels;
@@ -262,11 +460,26 @@ static void run_prefix(segment *s) {
             o->critical_capped++;
             if (cap < loss_floor) {
                 double half[2], mid[2];
-                if (arclength_step(s, z, arc_cap, -1.0, half, mid)) {
+                int clock_boundary = CLOCK_BOUNDARY_NONE;
+                int timed = r->clock && s->clock_started && !s->clock_done
+                    && !s->clock_failed;
+                double tau_step = 0.0, clock_err = 0.0, clock_ratio = 0.0;
+                if (prefix_arclength_step(
+                        s, z, arc_cap, half, mid, &clock_boundary,
+                        &tau_step, &clock_err, &clock_ratio)) {
                     o->arclength_steps++;
                     previous[0] = z[0]; previous[1] = z[1];
                     z[0] = half[0]; z[1] = half[1];
                     o->accepted++;
+                    if (timed) {
+                        record_clock_attempt(s, clock_err, clock_ratio, 1);
+                        o->tau += tau_step;
+                        o->clock_steps++;
+                    }
+                    if (clock_boundary == CLOCK_BOUNDARY_START)
+                        s->clock_started = 1;
+                    else if (clock_boundary == CLOCK_BOUNDARY_STOP)
+                        s->clock_done = 1;
                     int exited = 0;
                     const double *samples[2] = {mid, z};
                     double zc[2] = {z[0], z[1]};
@@ -296,15 +509,24 @@ static void run_prefix(segment *s) {
             }
             h = -fmax(cap, loss_floor);
         }
+        int requested_boundary = limit_clock_loss_step(s, level, &h);
+        double boundary_h = h;
         int have = 0;
         double zn[2] = {0, 0}, accepted_mid[2] = {0, 0};
+        int accepted_boundary = CLOCK_BOUNDARY_NONE;
+        int timed = r->clock && s->clock_started && !s->clock_done
+            && !s->clock_failed;
+        double accepted_tau = 0.0, accepted_clock_error = 0.0;
+        double accepted_clock_ratio = 0.0;
         for (int retry = 0; retry < 12 && !have; retry++) {
             for (int k = 0; k < 2; k++) {
                 int order = s->orders[k];
                 if (order == 8) o->gl8_attempted++;
                 double full[2], mid[2], half[2];
-                if (!full_and_two_half(s->field, 1, z, h, order,
-                                       full, mid, half))
+                double tau_full = 0.0, tau_half = 0.0;
+                if (!full_and_two_half_clock(
+                        s->field, 1, z, h, order, full, mid, half,
+                        timed, &tau_full, &tau_half))
                     continue;
                 double chord = hypot(half[0]-z[0], half[1]-z[1]);
                 double richardson = hypot(full[0]-half[0], full[1]-half[1]);
@@ -314,8 +536,28 @@ static void run_prefix(segment *s) {
                         || richardson > 1e-6*fmax(chord, 1e-8)
                         || loss_error > 2e-5*fmax(fabs(h), 1e-12))
                     continue;
+                double clock_err = 0.0, clock_ratio = 0.0;
+                if (timed && !clock_error(s, order, tau_full, tau_half,
+                                           &clock_err, &clock_ratio)) {
+                    record_clock_attempt(s, clock_err, clock_ratio, 0);
+                    continue;
+                }
                 zn[0] = half[0]; zn[1] = half[1];
                 accepted_mid[0] = mid[0]; accepted_mid[1] = mid[1];
+                if (r->clock && !s->clock_failed) {
+                    if (requested_boundary != CLOCK_BOUNDARY_NONE
+                            && h == boundary_h)
+                        accepted_boundary = requested_boundary;
+                    else if (!s->clock_started
+                            && new_level <= r->clock_start_level)
+                        accepted_boundary = CLOCK_BOUNDARY_START;
+                    else if (s->clock_started && !s->clock_done
+                             && new_level <= r->clock_stop_level)
+                        accepted_boundary = CLOCK_BOUNDARY_STOP;
+                }
+                accepted_tau = tau_half;
+                accepted_clock_error = clock_err;
+                accepted_clock_ratio = clock_ratio;
                 if (richardson > o->max_richardson)
                     o->max_richardson = richardson;
                 if (order == 8) o->gl8_accepted++;
@@ -328,6 +570,16 @@ static void run_prefix(segment *s) {
         previous[0] = z[0]; previous[1] = z[1];
         z[0] = zn[0]; z[1] = zn[1];
         o->accepted++;
+        if (timed) {
+            record_clock_attempt(s, accepted_clock_error,
+                                 accepted_clock_ratio, 1);
+            o->tau += accepted_tau;
+            o->clock_steps++;
+        }
+        if (accepted_boundary == CLOCK_BOUNDARY_START)
+            s->clock_started = 1;
+        else if (accepted_boundary == CLOCK_BOUNDARY_STOP)
+            s->clock_done = 1;
         cur_level_step = fmin(base, 1.5*fabs(h));
         {
             double zc[2] = {z[0], z[1]};
@@ -643,12 +895,36 @@ int spong_potential_rate_segment(
     s.points = points;
     s.capacity = points == NULL ? 0 : point_capacity;
     s.n = 0;
+    s.clock_started = 0;
+    s.clock_done = 0;
+    s.clock_failed = 0;
     double box_scale = 0.0;
     for (int i = 0; i < 4; i++)
         if (fabs(request->box[i]) > box_scale) box_scale = fabs(request->box[i]);
     s.geometry_floor = 128.0*DBL_EPSILON*(1.0+box_scale);
-    if (request->primary_order == 8) { s.orders[0] = 8; s.orders[1] = 6; }
-    else { s.orders[0] = 6; s.orders[1] = 8; }
+    if (request->clock && request->mode != SPONG_POT_PREFIX) return -1;
+    /* Order schedule: primary first, then the fallback.  4 -> (4, 6) is the
+     * point of the table -- until it existed, GL4 was unreachable here, since
+     * every non-8 primary collapsed to (6, 8) and "GL4" silently ran GL6.
+     * GL8 is kept for the saturation check rather than as the authority: on
+     * the nonnearest wall it accepts 10872 of 10874 steps (so it is not
+     * falling back) yet places the wall 3.0e-12 from where 6-first places
+     * it, with nothing to say it is the better answer.
+     *
+     * PURE MODE, for convergence studies: a NEGATIVE primary_order requests
+     * both slots at |primary_order|, so a rejected step is retried at the
+     * same order and then the step is halved -- it cannot switch method.
+     * The fallback schedules are a state-dependent hybrid: a "GL4-first"
+     * run may contain an unknown number of GL6 steps, and precisely near the
+     * difficult saddle passage, which makes any h^4-vs-h^6 comparison
+     * ambiguous.  Purity here is STRUCTURAL rather than measured, which is
+     * why no per-order counter is needed to establish it.  Production keeps
+     * the fallback schedules; those are robustness, not convergence. */
+    int po = request->primary_order;
+    if (po < 0) { s.orders[0] = -po; s.orders[1] = -po; }
+    else if (po == 8) { s.orders[0] = 8; s.orders[1] = 6; }
+    else if (po == 4) { s.orders[0] = 4; s.orders[1] = 6; }
+    else              { s.orders[0] = 6; s.orders[1] = 8; }
     s.out = result;
     switch (request->mode) {
     case SPONG_POT_PREFIX:      run_prefix(&s); break;

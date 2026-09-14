@@ -61,6 +61,25 @@ UNSTABLE_LAUNCH_REL = 1e-6
 STABLE_LAUNCH_DELTA = 1e-4
 GEOMETRIC_IRK_PRIMARY = 8
 
+# Order of the CHART stepper in the continuation engine's primary path.
+#
+# Distinct from GEOMETRIC_IRK_PRIMARY, which orders the PLANE steppers (the
+# potential-rate phases, the normalized-arclength rescue, the centered
+# arrival).  The chart path was hard-coded GL6 with GL4 reachable only from
+# the floor-fallback ladder, so there was no way to ask what the tracer does
+# at another order -- and setting GEOMETRIC_IRK_PRIMARY to 4 or 6 changes
+# nothing at all, because _geometric_orders() returns (6, 8) for anything
+# that is not 8.  A wall bisection run at "GL4" and "GL6" that way returned
+# bit-identical brackets, which is what exposed this.
+#
+# THE ORDER GOES THROUGH THE ABI, not just through this module.  The C port
+# is the backend -- phone and WebASM targets ship it and not this file -- so
+# a knob only the Python loops respond to would produce answers about the
+# ORACLE rather than about the tracer.  native.continue_curve takes the order
+# and selects the stepper in C; the Python loops below take the same value so
+# the parity corpus still compares like with like.
+CHART_IRK_ORDER = 6
+
 # Step-length cap near critical points for the potential-rate phases.  Those
 # phases step in LOSS with the field grad(L)/|grad(L)|^2, which is singular
 # at every critical point: near one, |grad L| ~ lambda*r, so a loss step h
@@ -733,7 +752,36 @@ def _full_and_two_half(step, z, h, order):
 
 
 def _geometric_orders():
-    return ((8, 6) if GEOMETRIC_IRK_PRIMARY == 8 else (6, 8))
+    """(primary, fallback) for the PLANE steppers.
+
+    4 -> (4, 6) is the point of this table.  It used to read
+    ``(8, 6) if PRIMARY == 8 else (6, 8)``, so every non-8 setting collapsed
+    to the same pair and a study that set 4 silently ran 6: a wall bisection
+    labelled "GL4" and "GL6" returned bit-identical brackets for that reason
+    alone.  Mirrors the schedule in spong_potential.c and spong_arrival.c.
+
+    GL8 is the saturation check, not the authority.  On the nonnearest wall
+    it accepts 10872 of 10874 prefix steps -- it is not falling back -- yet
+    places the wall 3.0e-12 from where 6-first places it, and nothing says
+    the extra stages bought accuracy rather than rounding.
+
+    PURE MODE, for convergence studies: a NEGATIVE setting returns
+    (|p|, |p|), so a rejected step is retried at the same order and then the
+    step is halved -- the method cannot switch.  The fallback schedules are a
+    state-dependent hybrid: a "GL4-first" run may contain an unknown number
+    of GL6 steps, precisely near the difficult saddle passage, which makes an
+    h^4-vs-h^6 comparison ambiguous.  Purity is then STRUCTURAL rather than
+    measured.  Production keeps the fallback schedules -- those are
+    operational robustness, not convergence.
+    """
+    if GEOMETRIC_IRK_PRIMARY < 0:
+        pure = -GEOMETRIC_IRK_PRIMARY
+        return (pure, pure)
+    if GEOMETRIC_IRK_PRIMARY == 8:
+        return (8, 6)
+    if GEOMETRIC_IRK_PRIMARY == 4:
+        return (4, 6)
+    return (6, 8)
 
 
 def _cubic_hermite(z0, z1, f0, f1, h, s):
@@ -1377,10 +1425,13 @@ def _arrival_native(arrival_local):
 
 
 def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
-                          engine_diag: dict, max_steps: int = 4096):
+                          engine_diag: dict, max_steps: int = 4096,
+                          clock=None):
     """Dispatch the centered raw arrival; see _centered_raw_arrival_python."""
     native = _arrival_native(arrival_local)
     if native is None:
+        if clock is not None:
+            raise RuntimeError("the proper-time clock requires the native engine")
         return _centered_raw_arrival_python(
             start, target, arrival_local, cap_r, engine_diag,
             max_steps=max_steps)
@@ -1390,12 +1441,21 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
         return [tuple(map(float, start))], "unavailable"
     slow, fast = float(np.min(lam)), float(np.max(lam))
     turn_reject = float(np.cos(2.0*np.arctan(CRITICAL_STEP_FRACTION)))
+    clock_enabled = clock is not None
+    clock_started_in = False if clock is None else bool(clock["started"])
+    clock_start_value = (float("nan") if clock is None
+                         else float(clock["start_value"]))
+    clock_stop_value = (float("nan") if clock is None
+                        else float(clock["stop_value"]))
     (term_code, _a_end, _b_end, accepted, rejected, turn_rejected,
      gl8_attempted, gl8_accepted, max_richardson, finish_r,
-     spectral_ratio, blob) = native.centered_arrival(
+     spectral_ratio, tau, clock_steps, clock_started,
+     clock_available, blob) = native.centered_arrival(
         arrival_local.native, float(start[0]), float(start[1]), at, bt,
         float(arrival_local.a), float(arrival_local.b), slow, fast,
-        float(cap_r), int(max_steps), turn_reject, GEOMETRIC_IRK_PRIMARY)
+        float(cap_r), int(max_steps), turn_reject, GEOMETRIC_IRK_PRIMARY,
+        int(clock_enabled), int(clock_started_in), clock_start_value,
+        clock_stop_value)
     term = _ARRIVAL_TERM[term_code]
     pts = [tuple(p) for p in
            np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
@@ -1411,6 +1471,15 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
         "term": term,
         "primary_order": GEOMETRIC_IRK_PRIMARY,
     }
+    if clock is not None:
+        engine_diag["centered_arrival"]["proper_time"] = {
+            "available": bool(clock_available),
+            "started": bool(clock_started),
+            "tau": float(tau),
+            "steps": int(clock_steps),
+            "start_value": clock_start_value,
+            "stop_value": clock_stop_value,
+        }
     return pts, term
 
 
@@ -1621,21 +1690,29 @@ def _potential_native(m: Model):
 def _potential_segment(native, kernel, m: Model, mode: str, a0: float,
                        b0: float, targets, cap_r: float, box, ds: float,
                        n_levels: int, max_steps: int, critical,
-                       stop_level: float = float("inf")):
+                       stop_level: float = float("inf"), clock=None):
     """One native constant-potential-rate segment, unpacked."""
     flat_targets = [float(c) for t in targets for c in t]
     flat_critical = ([] if critical is None
                      else [float(c) for c in np.asarray(critical).reshape(-1)])
+    clock_enabled = clock is not None
+    clock_rtol = 0.0 if clock is None else float(clock["rtol"])
+    clock_atol = 0.0 if clock is None else float(clock["atol"])
+    clock_start = float("nan") if clock is None else float(clock["start_level"])
+    clock_stop = float("nan") if clock is None else float(clock["stop_level"])
     (term_code, a_end, b_end, captured, captured_a, captured_b,
      event_level, level_step, accepted, rejected, critical_capped,
      arclength_steps, gl8_attempted, gl8_accepted,
-     max_richardson, max_interpolation_error, blob) = \
+     max_richardson, max_interpolation_error, tau, max_clock_error,
+     max_clock_error_ratio, clock_rejected, clock_steps,
+     clock_started, clock_available, blob) = \
         native.potential_rate_segment(
             kernel, float(m.C), _POTENTIAL_MODE[mode], float(a0), float(b0),
             flat_targets, float(cap_r), [float(x) for x in box], float(ds),
             int(n_levels), int(max_steps), flat_critical,
             CRITICAL_STEP_FRACTION, GEOMETRIC_IRK_PRIMARY,
-            float(stop_level))
+            float(stop_level), int(clock_enabled), clock_rtol, clock_atol,
+            clock_start, clock_stop)
     pts = [tuple(p) for p in
            np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
     return (_POTENTIAL_TERM[term_code], pts,
@@ -1649,21 +1726,31 @@ def _potential_segment(native, kernel, m: Model, mode: str, a0: float,
              "gl8_attempted": int(gl8_attempted),
              "gl8_accepted": int(gl8_accepted),
              "max_richardson": float(max_richardson),
-             "max_interpolation_error": float(max_interpolation_error)})
+             "max_interpolation_error": float(max_interpolation_error),
+             "tau": float(tau),
+             "max_clock_error": float(max_clock_error),
+             "max_clock_error_ratio": float(max_clock_error_ratio),
+             "clock_rejected": int(clock_rejected),
+             "clock_steps": int(clock_steps),
+             "clock_started": bool(clock_started),
+             "clock_available": bool(clock_available)})
 
 
 def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
                            box, cap_r: float, engine_diag: dict,
-                           n_levels: int = 12000, critical=None):
+                           n_levels: int = 12000, critical=None, clock=None):
     """Dispatch one prefix segment; see _potential_rate_prefix_python."""
     native, kernel = _potential_native(m)
     if native is None:
+        if clock is not None:
+            raise RuntimeError("the proper-time clock requires the native engine")
         return _potential_rate_prefix_python(
             m, a0, b0, target, box, cap_r, engine_diag,
             n_levels=n_levels, critical=critical)
     term, pts, _captured, r = _potential_segment(
         native, kernel, m, "prefix", a0, b0,
-        [tuple(map(float, target))], cap_r, box, 0.0, n_levels, 0, critical)
+        [tuple(map(float, target))], cap_r, box, 0.0, n_levels, 0, critical,
+        clock=clock)
     if term == "unavailable":
         return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
     engine_diag["potential_rate"] = {
@@ -1678,6 +1765,20 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
         "term": term,
         "primary_order": GEOMETRIC_IRK_PRIMARY,
     }
+    if clock is not None:
+        engine_diag["potential_rate"]["proper_time"] = {
+            "available": r["clock_available"],
+            "started": r["clock_started"],
+            "tau": r["tau"],
+            "steps": r["clock_steps"],
+            "rejected": r["clock_rejected"],
+            "max_error": r["max_clock_error"],
+            "max_error_ratio": r["max_clock_error_ratio"],
+            "start_level": float(clock["start_level"]),
+            "stop_level": float(clock["stop_level"]),
+            "rtol": float(clock["rtol"]),
+            "atol": float(clock["atol"]),
+        }
     return (pts, r["b_end"],
             float(r["a_end"]-m.s_a_star(r["b_end"])), term)
 
@@ -1813,7 +1914,7 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         flat, float(cap_r), [float(x) for x in box],
         float(ds), -1.0 if ds0 is None else float(ds0),
         None if shallow_gate is None else [float(x) for x in shallow_gate],
-        int(max_steps), centered_available)
+        int(max_steps), centered_available, int(CHART_IRK_ORDER))
 
     if term_code == _NATIVE_DELEGATE:
         if engine_diag is not None:
@@ -2068,19 +2169,30 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
         for _retry in range(8):
             h = np.nan
             try:
+                gl4 = (CHART_IRK_ORDER == 4)
                 if chart == "slow":
                     h = cur * vb / vp
-                    w_new = native.slow_step(b_prev, w_prev, h) \
-                        if native is not None else \
-                        gauss.gl6_scalar(sf, sj, b_prev, w_prev, h,
-                                         floor=s_floor)
+                    if native is not None:
+                        step = (native.slow_step_gl4 if gl4
+                                else native.slow_step)
+                        w_new = step(b_prev, w_prev, h)
+                    else:
+                        step = (gauss.gl4_scalar if gl4
+                                else gauss.gl6_scalar)
+                        w_new = step(sf, sj, b_prev, w_prev, h,
+                                     floor=s_floor)
                     b_new = b_prev + h
                 else:
                     h = cur * vw / vp
-                    b_new = native.fast_step(w_prev, b_prev, h) \
-                        if native is not None else \
-                        gauss.gl6_scalar(ff, fj, w_prev, b_prev, h,
-                                         floor=f_floor)
+                    if native is not None:
+                        step = (native.fast_step_gl4 if gl4
+                                else native.fast_step)
+                        b_new = step(w_prev, b_prev, h)
+                    else:
+                        step = (gauss.gl4_scalar if gl4
+                                else gauss.gl6_scalar)
+                        b_new = step(ff, fj, w_prev, b_prev, h,
+                                     floor=f_floor)
                     w_new = w_prev + h
                 step_failed = False
             except (ZeroDivisionError, FloatingPointError, OverflowError):
@@ -2409,7 +2521,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                    critical_local=None, critical_stub=None,
                    capture_targets=None, arrival_local=None,
                    candidate_minima=None, candidate_enumeration=None,
-                   critical_points=None) -> Branch:
+                   critical_points=None, potential_clock=None,
+                   potential_n_levels: int | None = None) -> Branch:
     """Candidate-directed unstable continuation to capture, exit, or failure.
 
     Zone loop per the dispatcher contract: whenever the sounding says
@@ -2711,16 +2824,44 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
             prefix, b_cur, w_cur, prefix_term = _potential_rate_prefix(
                 m, float(m.s_a_star(b_cur)+w_cur), float(b_cur),
                 (at_unique, bt_unique), box, cap_r, diag,
-                critical=critical)
+                n_levels=(12000 if potential_n_levels is None
+                          else int(potential_n_levels)),
+                critical=critical, clock=potential_clock)
             pts.extend(prefix[1:])
             if prefix_term == "capture":
                 term = "capture"
             elif prefix_term == "box_exit":
                 term = "box_exit"
             elif prefix_term in {"near_target", "step_failure", "budget"}:
+                arrival_clock = None
+                prefix_clock = (diag.get("potential_rate", {})
+                                .get("proper_time"))
+                if (potential_clock is not None and prefix_clock is not None
+                        and not prefix_clock["available"]):
+                    target_level = float(m.L(at_unique, bt_unique))
+                    arrival_clock = {
+                        "started": bool(prefix_clock["started"]),
+                        "start_value": (float(potential_clock["start_level"])
+                                        - target_level),
+                        "stop_value": (float(potential_clock["stop_level"])
+                                       - target_level),
+                    }
                 arrival, arrival_term = _centered_raw_arrival(
                     prefix[-1], (at_unique, bt_unique),
-                    arrival_local, cap_r, diag)
+                    arrival_local, cap_r, diag, clock=arrival_clock)
+                if arrival_clock is not None:
+                    arrival_result = (diag.get("centered_arrival", {})
+                                      .get("proper_time", {}))
+                    prefix_clock["prefix_tau"] = prefix_clock["tau"]
+                    prefix_clock["arrival_tau"] = float(
+                        arrival_result.get("tau", 0.0))
+                    prefix_clock["tau"] += prefix_clock["arrival_tau"]
+                    prefix_clock["steps"] += int(
+                        arrival_result.get("steps", 0))
+                    prefix_clock["started"] = bool(
+                        arrival_result.get("started", prefix_clock["started"]))
+                    prefix_clock["available"] = bool(
+                        arrival_result.get("available", False))
                 pts.extend(arrival[1:])
                 if arrival_term == "capture":
                     term = "capture"

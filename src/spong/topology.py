@@ -250,6 +250,84 @@ def _representable(branch):
     return branch.term in _STEP_BUDGET_TERMS
 
 
+def _forced_completion(m, enumeration, branch):
+    """Fate certified by the merge tree, with no arrival and no radius.
+
+    A descent orbit inside a BOUNDED sublevel component that contains no
+    saddle and exactly one minimum can only converge to that minimum: the
+    component traps it, and the Euler count on a bounded component (no local
+    maxima, since L_aa = 2A > 0) leaves nothing else to converge to.  So the
+    fate is decided by WHERE THE ORBIT IS, not by how far it has been traced
+    -- which is what makes it available to a branch whose continuation broke.
+
+    Two tiers, both exact:
+
+      launch     the inventory at the far end of the certified stub is
+                 already forced.  Nothing beyond the stub is consulted, so
+                 the certificate does not depend on the traced curve at all.
+      threshold  otherwise, the same inventory gives a scalar: the lowest
+                 loss among the saddles IN THIS COMPONENT, and u_infinity on
+                 any unbounded side.  Below it the component has shed every
+                 saddle and closed, so the first traced vertex under that
+                 level is forced -- and the inventory is re-run there to say
+                 so rather than inferred.
+
+    The last vertex is never used.  A step failure can leave a garbage final
+    point (the continuation accepts its last failed attempt), and a
+    certificate resting on a point that may not lie on the orbit would be
+    worthless; every vertex this consults predates the failure.
+
+    MEASURED on the directed ensemble: 29 of 40 unstable aborts are forced at
+    their abort point, and forcing happens at vertex 1 to 1033 of traces
+    running 116k to 395k -- so 99.7% or more of that tracing follows a fate
+    that was already decided.  The global lowest saddle level is NOT a
+    substitute for the component's: it fires at vertex 14021 where the
+    component's fires at 20, and on one case never fires at all.
+    """
+    if branch.kind != "unstable" or len(branch.Y) < 2:
+        return None
+    from . import fates
+    try:
+        launch = fates.launch_fates(m, enumeration, branch)
+    except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError):
+        return None
+    if not launch.get("certified"):
+        return None
+    if launch.get("forced"):
+        return {"tier": "launch", "entry_index": int(launch["index"]),
+                "minimum": launch["minima"][0],
+                "slack_shift": launch.get("slack_shift")}
+    levels = [float(m.L(a, b)) for a, b in launch["saddles"]]
+    if not launch["bounded"]:
+        u_inf = merge_tree.backbone_level_at_infinity(m)
+        if u_inf is None:
+            return None
+        levels.append(float(u_inf))
+    if not levels:
+        return None
+    threshold = min(levels)
+    Y = np.asarray(branch.Y, dtype=float)
+    start = int(launch["index"])
+    stop = len(Y) - 1                       # never the final vertex
+    if stop <= start:
+        return None
+    loss = np.array([float(m.L(Y[k, 0], Y[k, 1])) for k in range(start, stop)])
+    below = np.flatnonzero(loss < threshold)
+    if below.size == 0:
+        return None
+    k = start + int(below[0])
+    try:
+        here = fates.component_fates(m, enumeration, Y[k])
+    except (ArithmeticError, OverflowError, ValueError, ZeroDivisionError):
+        return None
+    if not (here.get("certified") and here.get("forced")):
+        return None
+    return {"tier": "threshold", "entry_index": k,
+            "minimum": here["minima"][0],
+            "threshold": threshold,
+            "slack_shift": here.get("slack_shift")}
+
+
 def _topology_decision_python(
         saddle_count, branch_count, stable_count, unstable_count,
         segment_count, segment_budget, raw_event_count, raw_event_budget,
@@ -1516,8 +1594,23 @@ def audit(m, enumeration, branches, box,
     raw_event_budget = 5000
     observed_stable = sum(br.kind == "stable" for br in branches)
     observed_unstable = sum(br.kind == "unstable" for br in branches)
-    aborted = [i for i, br in enumerate(branches)
-               if not _representable(br)]
+    # A branch whose continuation broke is not a usable POLYLINE, but its
+    # fate can still be certified: _forced_completion decides from the
+    # certified stub and the exact merge tree, using no vertex at or after
+    # the failure.  Non-crossing is a theorem about the manifolds, so the
+    # contact scan checks the polyline's fidelity and has nothing to say
+    # about ground a forced branch never traced -- which is why one of these
+    # no longer has to take the whole audit down with it.
+    forced_by_branch = {}
+    aborted = []
+    for i, br in enumerate(branches):
+        if _representable(br):
+            continue
+        forced = _forced_completion(m, enumeration, br)
+        if forced is None:
+            aborted.append(i)
+        else:
+            forced_by_branch[i] = forced
     initial_decision = _topology_decision(
         len(enumeration.saddles), len(branches),
         observed_stable, observed_unstable,
@@ -1628,6 +1721,23 @@ def audit(m, enumeration, branches, box,
                     m, enumeration, branch, box, 16*predicate_tol,
                     level_tree)
                 kind = "infinity_escape"
+            elif i in forced_by_branch:
+                # Certified by the merge tree rather than by arrival: the
+                # orbit is inside a bounded saddle-free component holding one
+                # minimum.  Reported as its own kind, because it is a
+                # different sort of evidence from a capture -- "only this
+                # minimum is reachable from here" rather than "the trace got
+                # there" -- and a reader should not have to guess which.
+                forced = forced_by_branch[i]
+                certificate = {
+                    "certified": True, "reason": None,
+                    "entry_index": forced["entry_index"],
+                    "minimum": forced["minimum"],
+                    "tier": forced["tier"],
+                    "slack_shift": forced.get("slack_shift"),
+                    "threshold": forced.get("threshold"),
+                }
+                kind = "forced_completion"
             elif branch.term in _STEP_BUDGET_TERMS:
                 # branch.term must not SELECT the certificate.  A branch that
                 # merely ran out of step budget was heading somewhere, and the

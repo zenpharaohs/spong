@@ -14,7 +14,10 @@ add_library(spong_core ${SPONG_LIBRARY_TYPE}
     src/c/spong_exact_gmp.c
     src/c/spong_topology.c
     src/c/spong_geometry.c
+    src/c/spong_local.c
     src/c/spong_local_gmp.c
+    src/c/spong_local_certificate_gmp.c
+    src/c/spong_smale_gmp.c
     src/c/spong_continue.c
     src/c/spong_gauss2.c
     src/c/spong_potential.c
@@ -41,7 +44,7 @@ set_target_properties(spong_core PROPERTIES
     C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     PUBLIC_HEADER
-        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h"
+        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_smale.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h"
 )
 if(SPONG_BUILD_SHARED)
     target_compile_definitions(spong_core
@@ -71,6 +74,9 @@ if(SPONG_BUILD_C_TESTS)
     add_executable(test_spong_local tests/c/test_spong_local.c)
     target_link_libraries(test_spong_local PRIVATE spong::core)
     add_test(NAME spong_local_c_abi COMMAND test_spong_local)
+    add_executable(test_spong_smale tests/c/test_spong_smale.c)
+    target_link_libraries(test_spong_smale PRIVATE spong::core)
+    add_test(NAME spong_smale_c_abi COMMAND test_spong_smale)
     add_executable(test_spong_gauss2 tests/c/test_spong_gauss2.c)
     target_link_libraries(test_spong_gauss2 PRIVATE spong::core m)
     add_test(NAME spong_gauss2_c_abi COMMAND test_spong_gauss2)

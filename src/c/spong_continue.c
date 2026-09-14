@@ -562,6 +562,7 @@ SPONG_API int spong_continue_curve(
         const double box[4], double ds, double ds0,
         const double *shallow_gate, size_t max_steps,
         int centered_available,
+        int chart_order,
         double *points, size_t point_capacity,
         spong_continue_result *result) {
 
@@ -571,6 +572,9 @@ SPONG_API int spong_continue_curve(
      * (spong_gauss2.h); the normalized-arclength rescue reads the field
      * through that view. */
     const spong_field *gf = (const spong_field *)f;
+    /* The primary chart stepper.  The ladder below still tries both orders
+     * on both charts; only this first attempt follows chart_order. */
+    const int primary_gl4 = (chart_order == 4);
     const double TMAX = turn_max();
     const double eps = DBL_EPSILON;
     // Budget the DISTANCE TRAVELLED, not the step count.  A step budget is
@@ -669,11 +673,15 @@ SPONG_API int spong_continue_curve(
             int failed = 0;
             if (slow) {
                 h = cur * vb / vp;
-                w_new = gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
+                w_new = primary_gl4
+                    ? gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h)
+                    : gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
                 b_new = b_prev + h;
             } else {
                 h = cur * vw / vp;
-                b_new = gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
+                b_new = primary_gl4
+                    ? gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h)
+                    : gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
                 w_new = w_prev + h;
             }
             if (!(isfinite(b_new) && isfinite(w_new))) failed = 1;

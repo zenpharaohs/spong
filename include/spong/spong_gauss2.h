@@ -109,6 +109,20 @@ SPONG_API int spong_normalized_step(const spong_field *field, const double z[2],
 SPONG_API int spong_potential_step(const spong_field *field, const double z[2],
                                    double h, int order, double out[2]);
 
+/* The same two steps with stage-consistent quadrature of elapsed time in
+ * the UNNORMALIZED gradient flow dz/dtau = grad L.  tau is positive for
+ * either sign of h.  For the potential-rate field the collocation stage
+ * derivative K_i satisfies |K_i|^2 = 1/|grad L|^2; for the normalized
+ * field the integrand is 1/|grad L(Eta_i)|.  Keeping this quadrature beside
+ * the stage solve preserves the relation between the accepted trajectory
+ * and its clock; endpoint quadrature does not. */
+SPONG_API int spong_normalized_step_clock(
+    const spong_field *field, const double z[2], double h, int order,
+    double out[2], double *tau);
+SPONG_API int spong_potential_step_clock(
+    const spong_field *field, const double z[2], double h, int order,
+    double out[2], double *tau);
+
 #ifdef __cplusplus
 }
 #endif

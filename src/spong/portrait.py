@@ -200,7 +200,9 @@ def _capture_radius(e: sturm.Enumeration, ds: float) -> float:
 def compute(m: Model, view=None, geometry_level: int = 0,
             _enumeration=None, _display_view=None,
             _genericity=None, _skip_audit: bool = False,
-            pair_contact_policy: str = "order_sweep") -> Portrait:
+            pair_contact_policy: str = "order_sweep",
+            _potential_clock=None,
+            _potential_n_levels: int | None = None) -> Portrait:
     """Compute the certified portrait inside the §8b box contract.
 
     _skip_audit returns the geometry with NO topology certificate.  It exists
@@ -333,7 +335,9 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             candidate_minima=same_side,
             candidate_enumeration=e,
             capture_targets=[(q.a, q.b) for q in same_side],
-            critical_points=critical_points)
+            critical_points=critical_points,
+            potential_clock=_potential_clock,
+            potential_n_levels=_potential_n_levels)
         br.diag["saddle_b"] = s.b
         br.diag["unstable_direction"] = direction
         br.diag["sublevel_candidate_b"] = [
@@ -363,7 +367,9 @@ def compute(m: Model, view=None, geometry_level: int = 0,
                 # the wrong basin and the refined integral curve reaches
                 # its true minimum with capture artificially disabled.
                 capture_targets=[(q.a, q.b) for q in e.minima],
-                critical_points=critical_points)
+                critical_points=critical_points,
+                potential_clock=_potential_clock,
+                potential_n_levels=_potential_n_levels)
             if refined.term == "capture":
                 destination = min(
                     e.minima,

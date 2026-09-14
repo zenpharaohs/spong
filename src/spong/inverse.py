@@ -225,6 +225,82 @@ class Design:
     freedom: int          # dimension of the solution space
 
 
+@dataclass(frozen=True)
+class SeparatedLinearCase:
+    """One member of the uniform-moment, linear-target separated family.
+
+    ``beta_roots`` are prescribed exactly.  ``algebraic_ceiling`` is the
+    degree bound ``deg(B) + deg(N) = 4d-2``; it is not, by itself, a claim
+    that every separation and degree attains the bound.  At separation 30 the
+    exact Sturm count attains it for degrees 1 through 8 (the inspector's
+    advertised range and the regression below).
+    """
+
+    model: model.Model
+    f: Poly
+    g: Poly
+    beta_roots: tuple[Fraction, ...]
+    separation: Fraction
+    algebraic_ceiling: int
+
+
+def separated_linear_case(
+        deg_g: int,
+        separation=Fraction(30),
+        fpoly=(Fraction(1), Fraction(1))) -> SeparatedLinearCase:
+    """Construct the exact separated-root candidate for maximal complexity.
+
+    Contract.  Moments are uniform on ``[0,1]`` and ``f`` is exactly linear.
+    If ``g(z) = sum_j g_j z^j``, then
+
+        B(b) = <f, g(b x)> = sum_j c_j g_j b^j,
+        c_j = <f, x^j> = f_0/(j+1) + f_1/(j+2).
+
+    When every ``c_j`` is nonzero this diagonal map is invertible.  Prescribe
+
+        B(b) = product_{k=0}^{d-1} (b - (-1)^k separation^k)
+
+    and recover ``g_j = B_j/c_j``.  The alternating signs and separated
+    scales are what make all roots of N real in the verified low-degree
+    family.  The construction itself promises the exact B roots; callers use
+    Sturm to decide whether a requested member reaches the algebraic ceiling.
+    """
+    if not isinstance(deg_g, int) or isinstance(deg_g, bool) or deg_g < 1:
+        raise ValueError("deg_g must be a positive integer")
+    sep = P.as_fraction(separation)
+    if sep <= 1:
+        raise ValueError("separation must be greater than 1")
+
+    f = P.poly(fpoly)
+    if P.degree(f) != 1:
+        raise ValueError("f must have degree exactly 1")
+
+    beta_roots = tuple((Fraction(-1) ** k) * (sep ** k)
+                       for k in range(deg_g))
+    beta = (Fraction(1),)
+    for root in beta_roots:
+        beta = P.mul(beta, (-root, Fraction(1)))
+
+    correlations = tuple(
+        f[0] * Fraction(1, j + 1) + f[1] * Fraction(1, j + 2)
+        for j in range(deg_g + 1))
+    zero = next((j for j, value in enumerate(correlations) if value == 0),
+                None)
+    if zero is not None:
+        raise ValueError(
+            f"<f,x^{zero}> is zero, so the coefficient map g -> B "
+            "is not invertible")
+
+    g = P.trim(tuple(beta[j] / correlations[j]
+                     for j in range(deg_g + 1)))
+    mu = model.moments_uniform01(2 * max(P.degree(f), deg_g) + 1)
+    instance = model.build(f, g, mu)
+    if instance.beta != P.trim(beta):
+        raise ArithmeticError("exact reconstruction of the prescribed B failed")
+    return SeparatedLinearCase(
+        instance, f, g, beta_roots, sep, 4 * deg_g - 2)
+
+
 def design(prescribed, gpoly, mu, deg_f: int | None = None,
            families=None, combo=None, reference=None) -> Design:
     """Build a model whose critical set contains `prescribed`.

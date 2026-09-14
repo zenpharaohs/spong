@@ -54,8 +54,17 @@ trapping tubes; and same-sheet Abel gaps can exclude stable/unstable
 connections.  Genus-zero conic differentials have a separate certified
 residue--logarithm fast path.  `spong.local_certificate` now proves exact
 rational invariant-cone graph launches and hands their `(b,y)` section boxes
-to the holonomy tube in either loss direction.  This Python/Fraction oracle is
-opt-in until its GMP C counterpart is ready for production timing.  The
+to the holonomy tube in either loss direction.  The complementary fixed-`b`
+`y(b)` trapping tube and exact target-fibre projection now run in the GMP C
+backend and are differentially pinned to the Python/Fraction oracle.  The
+local linear/Frobenius launch is now also a native GMP proof rebuilt from the
+original exact loss pencil.  That Frobenius cone now also supplies a native
+analytic fixed-`b` section; the ordinary fixed-sheet tube, including its
+initial fibre projection, is native as well.  The old piecewise numerical
+graph and two-coordinate Python rescues are disabled by default.  The
+portrait-wide orchestration and remaining incidence reduction are still
+Python, so this remains development machinery rather than a browser/mobile
+production certificate.  The
 portrait ledger keeps the remaining proof boundary explicit: positive-genus
 comparisons spanning a branch point still need unwrapped period/Gauss--Manin
 transport and portrait-wide orchestration.  See

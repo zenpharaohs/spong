@@ -164,6 +164,36 @@ def test_validated_local_launch_hands_off_to_decreasing_loss_holonomy():
     assert cert.slabs[0].level_hi == Fraction(4)
 
 
+def test_b_parameter_tube_projects_back_to_an_exact_loss_fibre():
+    # In this synthetic chart A=1, B=0, N=1 gives dy/db=2.  The proof is
+    # nevertheless performed by the same exact rational face inequalities
+    # used by the near-backbone handoff in a real SPONG portrait.
+    fake = SimpleNamespace(
+        alpha=(Fraction(1),), beta=(), N=(Fraction(1),), C=Fraction(0))
+    centres = []
+    for i in range(4):
+        b = Fraction(i, 8)
+        y = 1+2*b
+        centres.append(hyperelliptic.LiftedPoint(y*y, b, y, y))
+    radius = Fraction(1, 2**40)
+
+    tube = hyperelliptic.certify_b_parameter_flow_tube(
+        fake, centres,
+        initial_y_interval=hyperelliptic.RationalInterval(
+            centres[0].y-radius, centres[0].y+radius),
+        launch_validated=True, max_inflations=8)
+    target_y = Fraction(11, 10)
+    crossing = hyperelliptic.project_b_parameter_tube_to_level(
+        fake, tube, target_y*target_y, max_bisection_depth=10)
+
+    assert tube.status == "validated"
+    assert crossing.status == "validated"
+    assert crossing.b_interval.lo <= Fraction(1, 20) \
+        <= crossing.b_interval.hi
+    assert crossing.y_interval.lo <= target_y <= crossing.y_interval.hi
+    assert crossing.knots[-1].level == target_y*target_y
+
+
 def test_same_sheet_abel_gap_excludes_a_connection():
     fake = SimpleNamespace(
         alpha=(Fraction(1),), beta=(), N=(), C=Fraction(0))
@@ -198,4 +228,38 @@ def test_validated_tubes_compose_to_a_smale_connection_exclusion():
 
     assert decision.status == "connection_excluded"
     assert decision.gap.zero_excluded
+    assert decision.fibre_separation.rectangles_disjoint
+    assert decision.fibre_separation.separated_coordinates == ("b",)
     assert decision.as_dict()["connection_excluded[VALIDATED]"]
+
+
+def test_opposite_sheet_rectangles_exclude_connection_without_abel_chart():
+    fake = SimpleNamespace(
+        alpha=(Fraction(1),), beta=(), N=(), C=Fraction(0))
+
+    def tube(sign):
+        centres = []
+        for i in range(5):
+            y = sign*Fraction(4+i, 4)
+            centres.append(hyperelliptic.LiftedPoint(
+                y*y, Fraction(0), y, y))
+        return hyperelliptic.certify_flow_tube(
+            fake, centres, initial_b_radius=Fraction(1, 1024),
+            initial_y_radius=Fraction(1, 1024), max_radius=Fraction(1),
+            launch_validated=True, max_inflations=8)
+
+    positive, negative = tube(1), tube(-1)
+    decision = hyperelliptic.certify_connection_exclusion(
+        fake, positive, negative)
+
+    assert decision.status == "connection_excluded"
+    assert not decision.gap.zero_excluded
+    assert decision.fibre_separation.rectangles_disjoint
+    assert decision.fibre_separation.separated_coordinates == ("y",)
+    assert decision.as_dict()["connection_excluded[VALIDATED]"]
+
+    overlap = hyperelliptic.certify_connection_exclusion(
+        fake, positive, positive)
+    assert overlap.status == "unresolved"
+    assert not overlap.fibre_separation.rectangles_disjoint
+    assert not overlap.as_dict()["connection_excluded[VALIDATED]"]

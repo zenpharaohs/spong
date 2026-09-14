@@ -689,11 +689,17 @@ def enumerate_critical_points(m: Model) -> Enumeration:
     return Enumeration(tuple(pts), psi_ok, morse, alternates)
 
 
-def materialize_stubs(m: Model, e: Enumeration) -> Enumeration:
-    """Elaborate saddles into four certified, reusable physical stubs."""
+def materialize_stubs(m: Model, e: Enumeration,
+                      resolution_level: int = 0) -> Enumeration:
+    """Elaborate saddles into four certified, reusable physical stubs.
+
+    ``resolution_level`` is reserved for convergence measurements; ordinary
+    portraits use the established level-zero graph grids.
+    """
     from .local import build_stubs
     points = tuple(
-        replace(p, stubs=build_stubs(m, p, e.minima))
+        replace(p, stubs=build_stubs(
+            m, p, e.minima, resolution_level=resolution_level))
         if p.kind == "saddle" else p
         for p in e.points)
     return replace(e, points=points)
@@ -702,12 +708,12 @@ def materialize_stubs(m: Model, e: Enumeration) -> Enumeration:
 def materialize_validated_launches(m: Model, e: Enumeration) -> Enumeration:
     """Attach exact-rational local launch boxes to every saddle stub.
 
-    This is currently the independent Python/Fraction oracle and is kept
-    separate from :func:`materialize_stubs` so ordinary portrait timing still
-    measures the established floating graph transform.  The later GMP C
-    kernel will make this certificate cheap enough to join the default path.
+    The load-bearing launch is the native GMP linear-cone certificate.  It is
+    kept separate from :func:`materialize_stubs` because ordinary portraits
+    do not need the additional exact work.  The finite-plane Smale certifier
+    requests the farther Frobenius section where that proof coordinate helps.
     """
-    from .local_certificate import certify_poincare_launch
+    from .local_certificate import certify_poincare_launch_native
 
     if any(point.kind == "saddle" and not point.stubs for point in e.points):
         e = materialize_stubs(m, e)
@@ -720,8 +726,9 @@ def materialize_validated_launches(m: Model, e: Enumeration) -> Enumeration:
         launches = []
         for stub in point.stubs:
             chart = charts[stub.manifold]
-            launch = certify_poincare_launch(
-                m, point, chart, stub.orientation)
+            launch = certify_poincare_launch_native(
+                m, point, chart, stub.orientation,
+                require_frobenius=False)
             launches.append(replace(stub, validated_launch=launch))
         points.append(replace(point, stubs=tuple(launches)))
     return replace(e, points=tuple(points))

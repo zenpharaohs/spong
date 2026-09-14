@@ -52,6 +52,10 @@ typedef struct {
     size_t max_steps;
     double turn_reject;              /* cos(2 atan(CRITICAL_STEP_FRACTION)) */
     int    primary_order;            /* charts.GEOMETRIC_IRK_PRIMARY        */
+    int    clock;                    /* opt-in proper-time level window     */
+    int    clock_started;            /* upper section crossed in prefix    */
+    double clock_start_value;        /* levels relative to target minimum  */
+    double clock_stop_value;
 } spong_arrival_request;
 
 typedef struct {
@@ -63,6 +67,10 @@ typedef struct {
     double   max_richardson;
     double   finish_radius;
     double   spectral_ratio;         /* fast / slow                         */
+    double   tau;                    /* raw-flow time inside clock window   */
+    uint64_t clock_steps;
+    int      clock_started;
+    int      clock_available;
 } spong_arrival_result;
 
 /* Runs the arrival.  Returns result->term, or -1 for a malformed request.

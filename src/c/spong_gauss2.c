@@ -388,9 +388,13 @@ int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
     return spong_irk2_step_gated(ctx, fj, NULL, z, h, order, out, 0);
 }
 
-int spong_irk2_step_gated(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
-                          const double z[2], double h,
-                          int order, double out[2], int unit_speed) {
+/* clock_kind: 0 none; 1 potential-rate; 2 normalized arclength.  The clock
+ * modes are private because they rely on ctx being a spong_field.  The
+ * public arbitrary-field IRK entry points retain their old contract. */
+static int irk2_step_core(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
+                          const double z[2], double h, int order,
+                          double out[2], int unit_speed, int clock_kind,
+                          double *tau) {
     static const double A4[4][4] = {
         {0.25, 0.25 - SQRT3/6.0, 0.0, 0.0},
         {0.25 + SQRT3/6.0, 0.25, 0.0, 0.0},
@@ -483,12 +487,47 @@ int spong_irk2_step_gated(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
         SPONG_COUNT_REJECT();
         return 0;
     }
+    if (clock_kind != 0) {
+        /* Reconstruct stage coordinates from the final K.  Eta above stores
+         * evaluation-floor bounds, not positions, and a Newton iteration may
+         * declare convergence immediately after its last correction.  This
+         * explicit reconstruction therefore gives the stages belonging to
+         * the K that produces the accepted endpoint without changing any
+         * ordinary (clock-off) arithmetic. */
+        double integral = 0.0;
+        for (int i = 0; i < s; i++) {
+            double clock_value;
+            if (clock_kind == 1) {
+                clock_value = K[i][0]*K[i][0] + K[i][1]*K[i][1];
+            } else {
+                double stage[2] = {z[0], z[1]};
+                for (int d = 0; d < 2; d++)
+                    for (int j = 0; j < s; j++)
+                        stage[d] += h*AT[i][j]*K[j][d];
+                double g[2];
+                const spong_field *field = (const spong_field *)ctx;
+                spong_field_gradient(field, stage[0], stage[1], g);
+                double ng = hypot(g[0], g[1]);
+                if (!(ng > 1e-300) || !isfinite(ng)) return 0;
+                clock_value = 1.0/ng;
+            }
+            integral += BT[i]*clock_value;
+        }
+        *tau = fabs(h)*integral;
+        if (!isfinite(*tau) || *tau < 0.0) return 0;
+    }
     out[0] = z[0]; out[1] = z[1];
     for (int i = 0; i < s; i++) {
         out[0] += h * BT[i] * K[i][0];
         out[1] += h * BT[i] * K[i][1];
     }
     return isfinite(out[0]) && isfinite(out[1]);
+}
+
+int spong_irk2_step_gated(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
+                          const double z[2], double h,
+                          int order, double out[2], int unit_speed) {
+    return irk2_step_core(ctx, fj, fl, z, h, order, out, unit_speed, 0, NULL);
 }
 
 int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
@@ -509,4 +548,22 @@ int spong_potential_step(const spong_field *field, const double z[2],
     return spong_irk2_step_floored((void *)field, spong_potential_rate_fj,
                                    spong_potential_rate_floor, z, h, order,
                                    out);
+}
+
+int spong_normalized_step_clock(const spong_field *field, const double z[2],
+                                double h, int order, double out[2],
+                                double *tau) {
+    if (tau == NULL) return 0;
+    return irk2_step_core((void *)field, spong_normalized_fj,
+                          spong_normalized_floor, z, h, order, out, 1, 2,
+                          tau);
+}
+
+int spong_potential_step_clock(const spong_field *field, const double z[2],
+                               double h, int order, double out[2],
+                               double *tau) {
+    if (tau == NULL) return 0;
+    return irk2_step_core((void *)field, spong_potential_rate_fj,
+                          spong_potential_rate_floor, z, h, order, out, 0, 1,
+                          tau);
 }

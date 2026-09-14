@@ -151,6 +151,21 @@ typedef struct {
  *
  * centered_available is nonzero when the caller holds a centered local jet
  * for this segment; see DELEGATION above.
+ *
+ * chart_order selects the PRIMARY chart stepper: 4 for the 2-stage Gauss
+ * tableau, anything else (6 is the intended value) for the 3-stage one.  It
+ * does NOT touch the floor-fallback ladder, which tries both orders on both
+ * charts by construction and is the reference's behaviour at the resolution
+ * floor.
+ *
+ * The parameter exists because the order was a compile-time fact and so
+ * could not be varied in an experiment that means anything: a wall bisection
+ * run at "GL4" and "GL6" through the Python module constant returned
+ * bit-identical brackets, because the constant it varied orders the PLANE
+ * steppers and this path was hard-coded GL6 either way.  An order knob that
+ * only the Python oracle honours would answer a question about the oracle;
+ * the backend is what phone and WebASM targets ship, so the knob belongs
+ * here.
  */
 SPONG_API int spong_continue_curve(
     const spong_continue_field *field,
@@ -163,6 +178,7 @@ SPONG_API int spong_continue_curve(
     const double *shallow_gate,              /* may be NULL */
     size_t max_steps,
     int centered_available,
+    int chart_order,                         /* 4, or 6 for the default */
     double *points, size_t point_capacity,
     spong_continue_result *result);
 

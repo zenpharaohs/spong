@@ -2,10 +2,11 @@
 
 ## The local statement
 
-The production Hadamard/Poincare graph transform is an accurate floating
-proposal, but a small fixed-point residual is not an enclosure of the exact
-algebraic saddle.  `spong.local_certificate` supplies the missing local
-statement independently.
+The Hadamard/Poincare graph transform is an accurate floating proposal, but a
+small fixed-point residual is not an enclosure of the exact algebraic saddle.
+`spong_local_launch_decimal` supplies the load-bearing local statement in the
+native GMP backend; `spong.local_certificate` retains the independent
+Python/Fraction oracle.
 
 Let the Sturm isolating interval contain the critical coordinate `b_c`, put
 `a_c=B(b_c)/A(b_c)`, and use the binary64 Hessian eigenframe as an **exact
@@ -63,7 +64,7 @@ centres, prove the global lifted-flow enclosure.
 
 ## Deterministic refusal and work bounds
 
-The Python oracle returns a fixed integer status:
+The Python adapter preserves the fixed local integer status:
 
 | code | meaning |
 |---:|---|
@@ -80,8 +81,10 @@ therefore a bounded algorithmic result, not a tolerance-dependent false
 certificate.
 
 The ordinary degree-2 qualification model closes all eight stable/unstable
-oriented launches at `R=0.1`; the test suite replays every positive exact face
-margin and the handoff of a decreasing-loss launch.
+oriented launches natively.  The difficult pair uses the Frobenius cone at
+the dyadic value represented by `0.1/32`; the other six close at the requested
+`R=0.1`.  The test suite checks the one-sheet handoff and exact refusal of an
+invalid critical-root interval.
 
 The handoff itself is tested on the same model
 (`tests/test_local_certificate.py`).  On 2026-08-29 five of the eight
@@ -115,9 +118,9 @@ without new information; a comparison should be made at a fibre near the
 saddles, and following a branch to the box wall will want the slaved
 asymptotics of the stable-escape work rather than level slabs.
 
-## C backend shape and timing boundary
+## C backend and timing boundary
 
-The oracle is deliberately arranged like a future GMP C kernel:
+The native entry point follows the oracle's C-shaped contract:
 
 - two rectangular interval-coefficient arrays for `(F_u,F_s)` plus arrays for
   centered loss and `y`;
@@ -132,8 +135,6 @@ The oracle is deliberately arranged like a future GMP C kernel:
   one test).  This is a cost policy, not a soundness one: any slope whose
   face inequalities close is a valid cone.
 
-The C port should preserve these statuses and counters and be differentially
-tested against the `Fraction` oracle before it replaces any production path.
 Timing should report three quantities separately:
 
 1. the existing floating Poincare graph proposal;
@@ -141,6 +142,18 @@ Timing should report three quantities separately:
    enumeration;
 3. proposal plus certification end to end.
 
-For now `sturm.materialize_validated_launches` is opt-in.  This keeps current
-portrait timings comparable while the Python exact oracle is intentionally
-slow, and establishes a stable contract for the later C benchmark.
+The finite-plane development orchestrator now uses the native Frobenius launch
+for ordinary materialization.  All eight oriented degree-2 launches complete
+in roughly 20--25 seconds on the reference development machine, versus the much
+slower Python/Fraction replay.
+
+The downstream fixed-`b` `y(b)` tube and target-fibre projection have also
+crossed that boundary through `spong_b_parameter_handoff_decimal` in
+`spong_smale.h`.  The floating Poincare graph proposal is now a public C
+routine as well.  The exact Frobenius cone now cuts a native fixed-`b` section
+directly, so the old exact piecewise trapping tube around the numerical graph
+is a development-only oracle rather than a production dependency.  The
+ordinary fixed-sheet global tube and its initial fibre projection use
+`spong_sheet_flow_tube_decimal`; the two-coordinate Python fallback is also
+development-only and disabled by default (the oracle replay requires
+`allow_development_fallbacks=True`).

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "spong_exact.h"
+#include "spong_jet.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,7 +14,7 @@ extern "C" {
 typedef struct {
     size_t u_count;
     size_t s_count;
-    double *coefficients;  /* packed [component][u][s], two components */
+    double *coefficients; /* packed [component][u][s], two components */
 } spong_vector_polynomial;
 
 /*
@@ -28,17 +29,35 @@ typedef struct {
  * The result receives its one and only binary64 rounding on export.
  */
 SPONG_API int spong_poincare_pullback_decimal(
-    const char *const *normal_coefficients,
-    size_t normal_u_count,
-    size_t normal_s_count,
-    const double selected_map[6],
-    const char *unstable_eigenvalue,
-    const char *stable_eigenvalue,
-    uint64_t precision_bits,
-    spong_vector_polynomial *result);
+    const char *const *normal_coefficients, size_t normal_u_count,
+    size_t normal_s_count, const double selected_map[6],
+    const char *unstable_eigenvalue, const char *stable_eigenvalue,
+    uint64_t precision_bits, spong_vector_polynomial *result);
 
-SPONG_API void spong_vector_polynomial_destroy(
-    spong_vector_polynomial *polynomial);
+SPONG_API void spong_vector_polynomial_destroy(spong_vector_polynomial *polynomial);
+
+typedef struct {
+    size_t iterations;
+    double relative_change;
+    int finite;
+} spong_poincare_graph_result;
+
+/*
+ * Floating proposal for the invariant graph in Poincare coordinates.
+ *
+ * This is deliberately not a certificate.  It is the fast Hadamard graph
+ * fixed point used to propose the centre line for the exact graph-tube
+ * verifier.  x and graph must each have graph_count entries.  The function
+ * returns 0 for a well-formed request (including non-convergence, reported
+ * by relative_change); -1 for invalid input and -2 on allocation failure.
+ */
+SPONG_API int
+spong_poincare_graph_proposal(const spong_jet *jet, const double frame[4],
+                              const double selected_map[6], double departing_eigenvalue,
+                              double transverse_eigenvalue, double alpha0,
+                              double alpha1, int orientation, size_t graph_count,
+                              double tolerance, size_t max_iterations, double *x,
+                              double *graph, spong_poincare_graph_result *result);
 
 #ifdef __cplusplus
 }

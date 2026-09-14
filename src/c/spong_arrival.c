@@ -110,6 +110,36 @@ static int full_and_two_half(const spong_jet *jet, const double z[2],
         && isfinite(end[0]) && isfinite(end[1]);
 }
 
+/* One raw-flow trial used only to locate a clock section after the ordinary
+ * acceptance path has established that its proposed step crosses it.  The
+ * independent variable here already IS unnormalized gradient-flow time, so
+ * the elapsed clock is exactly dt; only the loss event needs localization. */
+static int clock_trial(const arrival *s, const double z[2], double dt,
+                       int order,
+                       double value, double finish_r, double turn_reject,
+                       int have_last, const double last_direction[2],
+                       double half[2], double mid[2], double *richardson,
+                       double *next_value) {
+    SPONG_FP_EXACT
+    double full[2];
+    if (!full_and_two_half(s->jet, z, -dt, order, full, mid, half))
+        return 0;
+    double chord = hypot(half[0]-z[0], half[1]-z[1]);
+    *richardson = hypot(full[0]-half[0], full[1]-half[1]);
+    *next_value = spong_jet_potential(s->jet, half[0], half[1]);
+    double tolerance = 2e-7*fmax3(chord, 0.05*finish_r, 1e-13);
+    if (!isfinite(*next_value) || *next_value >= value
+            || *richardson > tolerance)
+        return 0;
+    if (have_last && chord > 0.0) {
+        double d0 = half[0]-z[0], d1 = half[1]-z[1];
+        double cosine = (d0*last_direction[0]+d1*last_direction[1])
+            /(chord*hypot(last_direction[0], last_direction[1]));
+        if (cosine < turn_reject) return 0;
+    }
+    return 1;
+}
+
 static void finish(arrival *s, int term, const double physical[2]) {
     SPONG_FP_EXACT
     s->out->term = term;
@@ -145,6 +175,12 @@ static void run(arrival *s) {
     double last_direction[2] = {0.0, 0.0};
     int term = SPONG_ARR_BUDGET;
     double physical[2] = {r->a0, r->b0};
+    int clock_started = r->clock && r->clock_started;
+    int clock_done = 0, clock_failed = 0;
+    if (r->clock && !(isfinite(r->clock_start_value)
+            && isfinite(r->clock_stop_value)
+            && r->clock_start_value > r->clock_stop_value))
+        clock_failed = 1;
     for (size_t iteration = 0; iteration < r->max_steps; iteration++) {
         physical[0] = z[0]+ca; physical[1] = z[1]+cb;
         if (hypot(physical[0]-at, physical[1]-bt) < finish_r) {
@@ -157,9 +193,24 @@ static void run(arrival *s) {
         if (!(isfinite(value) && value > 0.0)) {
             term = SPONG_ARR_INVALID_POTENTIAL; break;
         }
+        if (r->clock && !clock_failed && !clock_started) {
+            double tol = 256.0*DBL_EPSILON*(1.0+fabs(r->clock_start_value));
+            if (fabs(value-r->clock_start_value) <= tol)
+                clock_started = 1;
+            else if (value < r->clock_start_value)
+                clock_failed = 1;
+        }
+        if (r->clock && !clock_failed && clock_started && !clock_done) {
+            double tol = 256.0*DBL_EPSILON*(1.0+fabs(r->clock_stop_value));
+            if (fabs(value-r->clock_stop_value) <= tol)
+                clock_done = 1;
+            else if (value < r->clock_stop_value)
+                clock_failed = 1;
+        }
         int have = 0;
         double zn[2] = {0, 0}, accepted_mid[2] = {0, 0};
         double trial_dt = dt;
+        int accepted_boundary = 0;  /* 1 start, 2 stop */
         for (int retry = 0; retry < 16 && !have; retry++) {
             double h = -trial_dt;
             for (int k = 0; k < 2; k++) {
@@ -184,6 +235,57 @@ static void run(arrival *s) {
                         continue;
                     }
                 }
+                int boundary = 0;
+                double boundary_value = NAN;
+                if (r->clock && !clock_failed && !clock_done) {
+                    boundary = clock_started ? 2 : 1;
+                    boundary_value = clock_started ? r->clock_stop_value
+                                                   : r->clock_start_value;
+                }
+                if (boundary != 0 && next_value <= boundary_value) {
+                    /* The accepted raw-time step crosses the next loss
+                     * section.  Bisect in raw time with the same pure order
+                     * and the same trajectory acceptance tests. */
+                    double lo = 0.0, hi = trial_dt, best_dt = trial_dt;
+                    double best_half[2] = {half[0], half[1]};
+                    double best_mid[2] = {mid[0], mid[1]};
+                    double best_richardson = richardson;
+                    double best_value = next_value;
+                    double level_tol = 256.0*DBL_EPSILON
+                        *(1.0+fabs(boundary_value));
+                    for (int event_it = 0; event_it < 60; event_it++) {
+                        double event_dt = 0.5*(lo+hi);
+                        double event_half[2], event_mid[2];
+                        double event_richardson, event_value;
+                        if (!clock_trial(s, z, event_dt, order, value, finish_r,
+                                         turn_reject, have_last,
+                                         last_direction, event_half, event_mid,
+                                         &event_richardson, &event_value)) {
+                            hi = event_dt;
+                            continue;
+                        }
+                        if (event_value <= boundary_value) {
+                            hi = event_dt;
+                            best_dt = event_dt;
+                            best_half[0] = event_half[0];
+                            best_half[1] = event_half[1];
+                            best_mid[0] = event_mid[0];
+                            best_mid[1] = event_mid[1];
+                            best_richardson = event_richardson;
+                            best_value = event_value;
+                            if (fabs(event_value-boundary_value) <= level_tol)
+                                break;
+                        } else {
+                            lo = event_dt;
+                        }
+                    }
+                    trial_dt = best_dt;
+                    half[0] = best_half[0]; half[1] = best_half[1];
+                    mid[0] = best_mid[0]; mid[1] = best_mid[1];
+                    richardson = best_richardson;
+                    next_value = best_value;
+                    accepted_boundary = boundary;
+                }
                 zn[0] = half[0]; zn[1] = half[1];
                 accepted_mid[0] = mid[0]; accepted_mid[1] = mid[1];
                 if (richardson > o->max_richardson)
@@ -201,6 +303,12 @@ static void run(arrival *s) {
         last_direction[1] = z[1]-previous[1];
         have_last = 1;
         o->accepted++;
+        if (r->clock && !clock_failed && clock_started && !clock_done) {
+            o->tau += trial_dt;
+            o->clock_steps++;
+        }
+        if (accepted_boundary == 1) clock_started = 1;
+        else if (accepted_boundary == 2) clock_done = 1;
         dt = fmin(dt_cap, 1.5*trial_dt);
         double p0[2] = {previous[0]+ca, previous[1]+cb};
         int captured = 0;
@@ -218,6 +326,10 @@ static void run(arrival *s) {
             p0[0] = p1[0]; p0[1] = p1[1];
         }
         if (captured) break;
+    }
+    if (r->clock) {
+        o->clock_started = clock_started && !clock_failed;
+        o->clock_available = clock_done && !clock_failed;
     }
     finish(s, term, physical);
 }
@@ -242,8 +354,14 @@ int spong_centered_arrival(
     double scale = fmax(fmax(fabs(request->at), fabs(request->bt)),
                         fmax(fabs(request->a0), fabs(request->b0)));
     s.geometry_floor = 128.0*DBL_EPSILON*(1.0+scale);
-    if (request->primary_order == 8) { s.orders[0] = 8; s.orders[1] = 6; }
-    else { s.orders[0] = 6; s.orders[1] = 8; }
+    /* Order schedule; see the table in spong_potential.c.  4 -> (4, 6) so
+     * that GL4 is reachable at all, and a NEGATIVE primary_order requests
+     * pure |order| in both slots for convergence work. */
+    int po = request->primary_order;
+    if (po < 0) { s.orders[0] = -po; s.orders[1] = -po; }
+    else if (po == 8) { s.orders[0] = 8; s.orders[1] = 6; }
+    else if (po == 4) { s.orders[0] = 4; s.orders[1] = 6; }
+    else              { s.orders[0] = 6; s.orders[1] = 8; }
     s.out = result;
     run(&s);
     return result->term;

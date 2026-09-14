@@ -728,8 +728,21 @@ def build_local_jet(m: Model, interval, source: str,
     return base
 
 
-def build_stubs(m: Model, point, minima) -> tuple[InvariantStub, ...]:
-    """Materialize and certify the four local invariant-manifold stubs."""
+def build_stubs(m: Model, point, minima,
+                resolution_level: int = 0) -> tuple[InvariantStub, ...]:
+    """Materialize and certify the four local invariant-manifold stubs.
+
+    ``resolution_level`` is a development/convergence axis: level k
+    multiplies every graph grid interval by ``2**k`` while preserving the
+    same reach and coarse/fine nesting.  Production remains level zero.
+    """
+    if resolution_level < 0:
+        raise ValueError("stub resolution_level must be nonnegative")
+    grid_scale = 2**int(resolution_level)
+
+    def refined_n(n):
+        return (int(n)-1)*grid_scale+1
+
     local = point.local
     if local is None or not local.poincare:
         return ()
@@ -783,8 +796,10 @@ def build_stubs(m: Model, point, minima) -> tuple[InvariantStub, ...]:
                         solved[key] = centered_graph(n, current_reach)
                 return solved[key]
 
-            def evaluate(current_reach, conditioned, coarse_n=257,
+            def evaluate(current_reach, conditioned, coarse_n=None,
                          quick=False):
+                if coarse_n is None:
+                    coarse_n = refined_n(257)
                 fine_n = 2*coarse_n-1
                 coarse, dc = graph_at(conditioned, coarse_n, current_reach)
                 if not (np.all(np.isfinite(coarse))
@@ -1140,7 +1155,7 @@ def build_stubs(m: Model, point, minima) -> tuple[InvariantStub, ...]:
                 for conditioned in modes:
                     # A larger interval may need a finer representation even
                     # though its invariant graph remains perfectly regular.
-                    for coarse_n in (257, 513, 1025, 2049):
+                    for coarse_n in map(refined_n, (257, 513, 1025, 2049)):
                         try:
                             trial = evaluate(
                                 candidate_reach, conditioned, coarse_n,

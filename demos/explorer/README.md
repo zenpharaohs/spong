@@ -140,6 +140,18 @@ distribution and the case can never be certified -- at `b = 0` the network
 outputs `a·g(0) = 0` whatever `a` is, so it is not a two-parameter family
 there.  The integer distribution alone produced that about one draw in nine.
 
+**Separated maximal-critical candidates** fix `f(x) = 1+x` and uniform
+moments, prescribe
+
+    B(b) = product_{k=0}^{d-1} (b - (-1)^k Lambda^k),
+
+and recover the coefficients of `g` exactly from
+`B_j = g_j <f,x^j>`.  Degree and `Lambda` are live inspector controls.  At
+the default `Lambda = 30`, exact Sturm counts attain the algebraic ceiling
+`4d-2` for every advertised degree `1 <= d <= 8`; changing `Lambda` is an
+experiment, not a promise that the ceiling remains attained.  These are
+generated inverse cases rather than eight hard-coded zoo entries.
+
 **Wall families** are the one zoo object that is a path rather than a point,
 which is why a slider suits them and the CLI cannot really offer one.  Sliding
 Λ from `below` through the wall to `above` shows the saddle connection form

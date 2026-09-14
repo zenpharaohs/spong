@@ -87,6 +87,32 @@ def test_never_returns_the_vacuous_zero_B_solution(mu):
         assert d.model.N != (), pts
 
 
+# --------------------------------------- separated linear-target family
+
+def test_separated_linear_family_prescribes_B_exactly():
+    case = inverse.separated_linear_case(5, F(30))
+    expected = (F(1), F(-30), F(900), F(-27000), F(810000))
+    assert case.beta_roots == expected
+    for root in expected:
+        assert P.eval_at(case.model.beta, root) == 0
+
+
+@pytest.mark.parametrize("degree", range(1, 9))
+def test_separated_linear_family_attains_algebraic_ceiling_through_d8(degree):
+    """Exact evidence for the inspector's advertised range, not a numerical
+    root count and not a claim yet proved for arbitrary degree."""
+    case = inverse.separated_linear_case(degree, F(30))
+    h = case.model.critical_reduced
+    assert P.degree(h) == case.algebraic_ceiling == 4 * degree - 2
+    assert sturm.count_roots(h) == case.algebraic_ceiling
+
+
+def test_separated_linear_family_rejects_an_orthogonal_monomial():
+    # f = 1 - 3x/2 has <f,x> = 0, so g_1 cannot control B_1.
+    with pytest.raises(ValueError, match=r"<f,x\^1> is zero"):
+        inverse.separated_linear_case(2, fpoly=(F(1), F(-3, 2)))
+
+
 # ------------------------------------------------------------ preconditions
 
 def test_rejects_activation_with_vanishing_constant_term(mu):

@@ -1,48 +1,46 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <float.h>
+#include <gmp.h>
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "spong/spong_resolution.h"
-#include "spong/spong_exact.h"
-#include "spong/spong_topology.h"
-#include "spong/spong_geometry.h"
-#include "spong/spong_local.h"
-#include "spong/spong_continue.h"
-#include "spong/spong_gauss2.h"
-#include "spong/spong_jet.h"
 #include "spong/spong_arrival.h"
+#include "spong/spong_continue.h"
+#include "spong/spong_exact.h"
+#include "spong/spong_gauss2.h"
+#include "spong/spong_geometry.h"
+#include "spong/spong_jet.h"
+#include "spong/spong_local.h"
 #include "spong/spong_potential.h"
+#include "spong/spong_resolution.h"
+#include "spong/spong_smale.h"
+#include "spong/spong_topology.h"
 
 typedef struct {
-    PyObject_HEAD
-    Py_ssize_t na, nap, napp, nb, nbp, nbpp, nn, nnp;
+    PyObject_HEAD Py_ssize_t na, nap, napp, nb, nbp, nbpp, nn, nnp;
     double *a, *ap, *app, *b, *bp, *bpp, *n, *np;
 } Kernel;
 
 /* Adapter over spong_jet (spong/spong_jet.h): owns the coefficient
  * storage; the jet view is what the library computes on. */
 typedef struct {
-    PyObject_HEAD
-    double **c[2];
+    PyObject_HEAD double **c[2];
     size_t *n[2];
     int rows[2];
     spong_jet jet;
 } LocalKernel;
 
 typedef struct {
-    PyObject_HEAD
-    spong_sturm_plan *plan;
+    PyObject_HEAD spong_sturm_plan *plan;
     spong_sturm_analysis analysis;
 } NativeSturmPlan;
 
 typedef struct {
-    PyObject_HEAD
-    Py_buffer first;
+    PyObject_HEAD Py_buffer first;
     Py_buffer second;
     spong_contact_scan *scan;
 } NativeContactScan;
@@ -123,12 +121,9 @@ static void Kernel_dealloc(Kernel *self) {
 
 static int Kernel_init(Kernel *self, PyObject *args, PyObject *kwds) {
     PyObject *a, *ap, *app, *b, *bp, *bpp, *n, *np;
-    static char *kwlist[] = {
-        "a", "ap", "app", "b", "bp", "bpp", "n", "np", NULL
-    };
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwds, "OOOOOOOO", kwlist,
-            &a, &ap, &app, &b, &bp, &bpp, &n, &np)) {
+    static char *kwlist[] = {"a", "ap", "app", "b", "bp", "bpp", "n", "np", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOOOOOO", kwlist, &a, &ap, &app, &b,
+                                     &bp, &bpp, &n, &np)) {
         return -1;
     }
     if (copy_seq(a, &self->a, &self->na) < 0 ||
@@ -144,10 +139,8 @@ static int Kernel_init(Kernel *self, PyObject *args, PyObject *kwds) {
     return 0;
 }
 
-static void eval_base(Kernel *k, double x,
-                      double *A, double *Ap, double *App,
-                      double *B, double *Bp, double *Bpp,
-                      double *Nv, double *Np) {
+static void eval_base(Kernel *k, double x, double *A, double *Ap, double *App,
+                      double *B, double *Bp, double *Bpp, double *Nv, double *Np) {
     *A = horner(k->a, k->na, x);
     *Ap = horner(k->ap, k->nap, x);
     *App = horner(k->app, k->napp, x);
@@ -179,11 +172,9 @@ static double fast_fj(void *ctx, double w, double b, double *jac) {
     double A2 = A * A;
     double A3 = A2 * A;
     double asp = Bp / A - B * Ap / A2;
-    double aspp = ((Bpp * A - B * App) / A2
-                   - 2.0 * Ap * (Bp * A - B * Ap) / A3);
+    double aspp = ((Bpp * A - B * App) / A2 - 2.0 * Ap * (Bp * A - B * Ap) / A3);
     double up = B * Nv / A2;
-    double upp = ((Bp * Nv + B * Np) / A2
-                  - 2.0 * B * Nv * Ap / A3);
+    double upp = ((Bp * Nv + B * Np) / A2 - 2.0 * B * Nv * Ap / A3);
     double Pv = up + Ap * w * w - 2.0 * A * w * asp;
     double D = 2.0 * A * w - asp * Pv;
     if (jac != NULL) {
@@ -202,9 +193,8 @@ static double fast_fj(void *ctx, double w, double b, double *jac) {
  * term. */
 typedef double (*FLOOR)(void *, double, double);
 
-static void floor_parts(Kernel *k, double b, double w,
-                        double *A_, double *EA_, double *asp_, double *Easp_,
-                        double *Pv_, double *EP_) {
+static void floor_parts(Kernel *k, double b, double w, double *A_, double *EA_,
+                        double *asp_, double *Easp_, double *Pv_, double *EP_) {
     double A = horner(k->a, k->na, b), Ap = horner(k->ap, k->nap, b);
     double B = horner(k->b, k->nb, b), Bp = horner(k->bp, k->nbp, b);
     double Nv = horner(k->n, k->nn, b);
@@ -217,18 +207,22 @@ static void floor_parts(Kernel *k, double b, double w,
     double t1 = Bp / A;
     double Et1 = (EBp + fabs(t1) * EA) / aA + fabs(t1);
     double t2 = B * Ap / A2;
-    double Et2 = (fabs(Ap) * EB + fabs(B) * EAp) / A2
-                 + fabs(t2) * (2.0 * EA / aA + 1.0);
+    double Et2 =
+        (fabs(Ap) * EB + fabs(B) * EAp) / A2 + fabs(t2) * (2.0 * EA / aA + 1.0);
     double asp = t1 - t2;
     double Easp = Et1 + Et2 + fabs(asp);
     double up = B * Nv / A2;
-    double Eup = (fabs(Nv) * EB + fabs(B) * EN) / A2
-                 + fabs(up) * (2.0 * EA / aA + 1.0);
+    double Eup = (fabs(Nv) * EB + fabs(B) * EN) / A2 + fabs(up) * (2.0 * EA / aA + 1.0);
     double Pv = up + Ap * w * w - 2.0 * A * w * asp;
-    double EP = Eup + w * w * EAp + fabs(Ap * w * w)
-                + 2.0 * fabs(w) * (fabs(asp) * EA + aA * Easp)
-                + 2.0 * fabs(A * w * asp) + fabs(Pv);
-    *A_ = A; *EA_ = EA; *asp_ = asp; *Easp_ = Easp; *Pv_ = Pv; *EP_ = EP;
+    double EP = Eup + w * w * EAp + fabs(Ap * w * w) +
+                2.0 * fabs(w) * (fabs(asp) * EA + aA * Easp) + 2.0 * fabs(A * w * asp) +
+                fabs(Pv);
+    *A_ = A;
+    *EA_ = EA;
+    *asp_ = asp;
+    *Easp_ = Easp;
+    *Pv_ = Pv;
+    *EP_ = EP;
 }
 
 static double slow_floor(void *ctx, double b, double w) {
@@ -243,8 +237,8 @@ static double fast_floor(void *ctx, double w, double b) {
     double A, EA, asp, Easp, Pv, EP;
     floor_parts((Kernel *)ctx, b, w, &A, &EA, &asp, &Easp, &Pv, &EP);
     double D = 2.0 * A * w - asp * Pv;
-    double ED = 2.0 * fabs(w) * EA + fabs(asp) * EP + fabs(Pv) * Easp
-                + fabs(asp * Pv) + fabs(D);
+    double ED = 2.0 * fabs(w) * EA + fabs(asp) * EP + fabs(Pv) * Easp + fabs(asp * Pv) +
+                fabs(D);
     double f = Pv / D;
     return DBL_EPSILON * ((EP + fabs(f) * ED) / fabs(D) + fabs(f));
 }
@@ -252,8 +246,7 @@ static double fast_floor(void *ctx, double w, double b) {
 typedef double (*FJ)(void *, double, double, double *);
 
 /* fl may be NULL: then only the tol*(1+|K|) test applies. */
-static double gl4_step(void *ctx, FJ fj, FLOOR fl,
-                       double x, double y, double h) {
+static double gl4_step(void *ctx, FJ fj, FLOOR fl, double x, double y, double h) {
     const double c1 = 0.5 - SQRT3 / 6.0;
     const double c2 = 0.5 + SQRT3 / 6.0;
     const double a11 = 0.25;
@@ -278,9 +271,8 @@ static double gl4_step(void *ctx, FJ fj, FLOOR fl,
             converged = 1;
             break;
         }
-        if (fl != NULL && it > 0
-                && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1)
-                && fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)) {
+        if (fl != NULL && it > 0 && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1) &&
+            fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)) {
             converged = 1;
             break;
         }
@@ -301,7 +293,8 @@ static double gl4_step(void *ctx, FJ fj, FLOOR fl,
             break;
         }
     }
-    if (!converged) return NAN;
+    if (!converged)
+        return NAN;
     return y + h * 0.5 * (K1 + K2);
 }
 
@@ -315,8 +308,7 @@ static double gl4_step(void *ctx, FJ fj, FLOOR fl,
  * IS small forward error and no refinement is needed; the only guard required
  * is the ill-conditioning trip below.  Must stay bit-comparable with
  * gauss.gl6_scalar -- tests/test_native_parity.py pins that. */
-static double gl6_step(void *ctx, FJ fj, FLOOR fl,
-                       double x, double y, double h) {
+static double gl6_step(void *ctx, FJ fj, FLOOR fl, double x, double y, double h) {
     const double c1 = 0.5 - SQRT15 / 10.0;
     const double c2 = 0.5;
     const double c3 = 0.5 + SQRT15 / 10.0;
@@ -343,146 +335,157 @@ static double gl6_step(void *ctx, FJ fj, FLOOR fl,
      * of the production C path made a finite arrival fail at the spatial
      * step floor even though the stage equations still had a usable basin. */
     for (int pass = 0; pass < 2 && !converged; pass++) {
-      K1 = fj(ctx, x, y, NULL);
-      K2 = K1;
-      K3 = K1;
-      for (int it = 0; it < NEWTON_MAX; it++) {
-        double Y1 = y + h * (a11 * K1 + a12 * K2 + a13 * K3);
-        double Y2 = y + h * (a21 * K1 + a22 * K2 + a23 * K3);
-        double Y3 = y + h * (a31 * K1 + a32 * K2 + a33 * K3);
-        double r1 = K1 - fj(ctx, x1, Y1, NULL);
-        double r2 = K2 - fj(ctx, x2, Y2, NULL);
-        double r3 = K3 - fj(ctx, x3, Y3, NULL);
-        double m = fabs(K1);
-        if (fabs(K2) > m) m = fabs(K2);
-        if (fabs(K3) > m) m = fabs(K3);
-        double r = fabs(r1);
-        if (fabs(r2) > r) r = fabs(r2);
-        if (fabs(r3) > r) r = fabs(r3);
-        if (r < NEWTON_TOL * (1.0 + m)) {
-            converged = 1;
-            break;
-        }
-        if (fl != NULL && it > 0
-                && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1)
-                && fabs(r2) <= NOISE_C * fl(ctx, x2, Y2)
-                && fabs(r3) <= NOISE_C * fl(ctx, x3, Y3)) {
-            converged = 1;
-            break;
-        }
-        double J1, J2, J3;
-        (void)fj(ctx, x1, Y1, &J1);
-        (void)fj(ctx, x2, Y2, &J2);
-        (void)fj(ctx, x3, Y3, &J3);
-        double m11 = 1.0 - h * a11 * J1;
-        double m12 = -h * a12 * J1;
-        double m13 = -h * a13 * J1;
-        double m21 = -h * a21 * J2;
-        double m22 = 1.0 - h * a22 * J2;
-        double m23 = -h * a23 * J2;
-        double m31 = -h * a31 * J3;
-        double m32 = -h * a32 * J3;
-        double m33 = 1.0 - h * a33 * J3;
-        /* ROW-SCALE first: the adjugate forms TRIPLE products, so unscaled it
-         * overflows ~1e150 against the 2x2's ~1e300.  Found out of sample as a
-         * NaN step on a random portrait GL4 handled.  Scaling row i and r_i by
-         * the row inf-norm leaves dK unchanged and bounds every entry by 1, so
-         * the Hadamard ratio is just |det| of the scaled matrix. */
-        double n1 = fabs(m11);
-        if (fabs(m12) > n1) n1 = fabs(m12);
-        if (fabs(m13) > n1) n1 = fabs(m13);
-        double n2 = fabs(m21);
-        if (fabs(m22) > n2) n2 = fabs(m22);
-        if (fabs(m23) > n2) n2 = fabs(m23);
-        double n3 = fabs(m31);
-        if (fabs(m32) > n3) n3 = fabs(m32);
-        if (fabs(m33) > n3) n3 = fabs(m33);
-        if (n1 == 0.0 || n2 == 0.0 || n3 == 0.0) {
-            return NAN;
-        }
-        /* Row-equilibrate, then LU with PARTIAL PIVOTING: half the flops of
-         * an adjugate, determinant just as free (product of pivots), and every
-         * multiplier bounded by 1 -- removing the overflow hazard structurally
-         * (the unscaled adjugate died at |h*J| ~ 1e150 on triple products).
-         * Must stay bit-comparable with gauss.gl6_scalar. */
-        double A_[3][3] = {{m11 / n1, m12 / n1, m13 / n1},
-                           {m21 / n2, m22 / n2, m23 / n2},
-                           {m31 / n3, m32 / n3, m33 / n3}};
-        double v_[3] = {r1 / n1, r2 / n2, r3 / n3};
-        double det = 1.0;
-        for (int col = 0; col < 3; col++) {
-            int p = col;
-            double big = fabs(A_[col][col]);
-            for (int row = col + 1; row < 3; row++) {
-                if (fabs(A_[row][col]) > big) {
-                    big = fabs(A_[row][col]);
-                    p = row;
-                }
+        K1 = fj(ctx, x, y, NULL);
+        K2 = K1;
+        K3 = K1;
+        for (int it = 0; it < NEWTON_MAX; it++) {
+            double Y1 = y + h * (a11 * K1 + a12 * K2 + a13 * K3);
+            double Y2 = y + h * (a21 * K1 + a22 * K2 + a23 * K3);
+            double Y3 = y + h * (a31 * K1 + a32 * K2 + a33 * K3);
+            double r1 = K1 - fj(ctx, x1, Y1, NULL);
+            double r2 = K2 - fj(ctx, x2, Y2, NULL);
+            double r3 = K3 - fj(ctx, x3, Y3, NULL);
+            double m = fabs(K1);
+            if (fabs(K2) > m)
+                m = fabs(K2);
+            if (fabs(K3) > m)
+                m = fabs(K3);
+            double r = fabs(r1);
+            if (fabs(r2) > r)
+                r = fabs(r2);
+            if (fabs(r3) > r)
+                r = fabs(r3);
+            if (r < NEWTON_TOL * (1.0 + m)) {
+                converged = 1;
+                break;
             }
-            if (p != col) {
-                for (int k2 = 0; k2 < 3; k2++) {
-                    double t = A_[col][k2];
-                    A_[col][k2] = A_[p][k2];
-                    A_[p][k2] = t;
-                }
-                double t = v_[col];
-                v_[col] = v_[p];
-                v_[p] = t;
-                det = -det;
+            if (fl != NULL && it > 0 && fabs(r1) <= NOISE_C * fl(ctx, x1, Y1) &&
+                fabs(r2) <= NOISE_C * fl(ctx, x2, Y2) &&
+                fabs(r3) <= NOISE_C * fl(ctx, x3, Y3)) {
+                converged = 1;
+                break;
             }
-            double piv = A_[col][col];
-            det *= piv;
-            if (piv == 0.0) break;
-            for (int row = col + 1; row < 3; row++) {
-                double f2 = A_[row][col] / piv;
-                for (int k2 = col; k2 < 3; k2++) {
-                    A_[row][k2] -= f2 * A_[col][k2];
-                }
-                v_[row] -= f2 * v_[col];
+            double J1, J2, J3;
+            (void)fj(ctx, x1, Y1, &J1);
+            (void)fj(ctx, x2, Y2, &J2);
+            (void)fj(ctx, x3, Y3, &J3);
+            double m11 = 1.0 - h * a11 * J1;
+            double m12 = -h * a12 * J1;
+            double m13 = -h * a13 * J1;
+            double m21 = -h * a21 * J2;
+            double m22 = 1.0 - h * a22 * J2;
+            double m23 = -h * a23 * J2;
+            double m31 = -h * a31 * J3;
+            double m32 = -h * a32 * J3;
+            double m33 = 1.0 - h * a33 * J3;
+            /* ROW-SCALE first: the adjugate forms TRIPLE products, so unscaled it
+             * overflows ~1e150 against the 2x2's ~1e300.  Found out of sample as a
+             * NaN step on a random portrait GL4 handled.  Scaling row i and r_i by
+             * the row inf-norm leaves dK unchanged and bounds every entry by 1, so
+             * the Hadamard ratio is just |det| of the scaled matrix. */
+            double n1 = fabs(m11);
+            if (fabs(m12) > n1)
+                n1 = fabs(m12);
+            if (fabs(m13) > n1)
+                n1 = fabs(m13);
+            double n2 = fabs(m21);
+            if (fabs(m22) > n2)
+                n2 = fabs(m22);
+            if (fabs(m23) > n2)
+                n2 = fabs(m23);
+            double n3 = fabs(m31);
+            if (fabs(m32) > n3)
+                n3 = fabs(m32);
+            if (fabs(m33) > n3)
+                n3 = fabs(m33);
+            if (n1 == 0.0 || n2 == 0.0 || n3 == 0.0) {
+                return NAN;
             }
-        }
-        /* |det| of the equilibrated matrix IS the Hadamard ratio */
-        if (fabs(det) < STAGE_GUARD) {
-            return NAN;         /* caller rejects the step; it halves */
-        }
-        double d3 = v_[2] / A_[2][2];
-        double d2 = (v_[1] - A_[1][2] * d3) / A_[1][1];
-        double d1 = (v_[0] - A_[0][1] * d2 - A_[0][2] * d3) / A_[0][0];
-        double alpha = 1.0;
-        if (pass == 1) {
-            double phi = 0.5 * (r1*r1 + r2*r2 + r3*r3);
-            int accepted = 0;
-            for (int ls = 0; ls <= 12; ls++) {
-                double C1 = K1 - alpha*d1;
-                double C2 = K2 - alpha*d2;
-                double C3 = K3 - alpha*d3;
-                double Z1 = y + h * (a11*C1 + a12*C2 + a13*C3);
-                double Z2 = y + h * (a21*C1 + a22*C2 + a23*C3);
-                double Z3 = y + h * (a31*C1 + a32*C2 + a33*C3);
-                double q1 = C1 - fj(ctx, x1, Z1, NULL);
-                double q2 = C2 - fj(ctx, x2, Z2, NULL);
-                double q3 = C3 - fj(ctx, x3, Z3, NULL);
-                double phic = 0.5 * (q1*q1 + q2*q2 + q3*q3);
-                if (isfinite(phic)
-                        && phic <= phi * (1.0 - 1e-4 * alpha)) {
-                    accepted = 1;
+            /* Row-equilibrate, then LU with PARTIAL PIVOTING: half the flops of
+             * an adjugate, determinant just as free (product of pivots), and every
+             * multiplier bounded by 1 -- removing the overflow hazard structurally
+             * (the unscaled adjugate died at |h*J| ~ 1e150 on triple products).
+             * Must stay bit-comparable with gauss.gl6_scalar. */
+            double A_[3][3] = {{m11 / n1, m12 / n1, m13 / n1},
+                               {m21 / n2, m22 / n2, m23 / n2},
+                               {m31 / n3, m32 / n3, m33 / n3}};
+            double v_[3] = {r1 / n1, r2 / n2, r3 / n3};
+            double det = 1.0;
+            for (int col = 0; col < 3; col++) {
+                int p = col;
+                double big = fabs(A_[col][col]);
+                for (int row = col + 1; row < 3; row++) {
+                    if (fabs(A_[row][col]) > big) {
+                        big = fabs(A_[row][col]);
+                        p = row;
+                    }
+                }
+                if (p != col) {
+                    for (int k2 = 0; k2 < 3; k2++) {
+                        double t = A_[col][k2];
+                        A_[col][k2] = A_[p][k2];
+                        A_[p][k2] = t;
+                    }
+                    double t = v_[col];
+                    v_[col] = v_[p];
+                    v_[p] = t;
+                    det = -det;
+                }
+                double piv = A_[col][col];
+                det *= piv;
+                if (piv == 0.0)
                     break;
+                for (int row = col + 1; row < 3; row++) {
+                    double f2 = A_[row][col] / piv;
+                    for (int k2 = col; k2 < 3; k2++) {
+                        A_[row][k2] -= f2 * A_[col][k2];
+                    }
+                    v_[row] -= f2 * v_[col];
                 }
-                alpha *= 0.5;
             }
-            if (!accepted) break;
+            /* |det| of the equilibrated matrix IS the Hadamard ratio */
+            if (fabs(det) < STAGE_GUARD) {
+                return NAN; /* caller rejects the step; it halves */
+            }
+            double d3 = v_[2] / A_[2][2];
+            double d2 = (v_[1] - A_[1][2] * d3) / A_[1][1];
+            double d1 = (v_[0] - A_[0][1] * d2 - A_[0][2] * d3) / A_[0][0];
+            double alpha = 1.0;
+            if (pass == 1) {
+                double phi = 0.5 * (r1 * r1 + r2 * r2 + r3 * r3);
+                int accepted = 0;
+                for (int ls = 0; ls <= 12; ls++) {
+                    double C1 = K1 - alpha * d1;
+                    double C2 = K2 - alpha * d2;
+                    double C3 = K3 - alpha * d3;
+                    double Z1 = y + h * (a11 * C1 + a12 * C2 + a13 * C3);
+                    double Z2 = y + h * (a21 * C1 + a22 * C2 + a23 * C3);
+                    double Z3 = y + h * (a31 * C1 + a32 * C2 + a33 * C3);
+                    double q1 = C1 - fj(ctx, x1, Z1, NULL);
+                    double q2 = C2 - fj(ctx, x2, Z2, NULL);
+                    double q3 = C3 - fj(ctx, x3, Z3, NULL);
+                    double phic = 0.5 * (q1 * q1 + q2 * q2 + q3 * q3);
+                    if (isfinite(phic) && phic <= phi * (1.0 - 1e-4 * alpha)) {
+                        accepted = 1;
+                        break;
+                    }
+                    alpha *= 0.5;
+                }
+                if (!accepted)
+                    break;
+            }
+            K1 -= alpha * d1;
+            K2 -= alpha * d2;
+            K3 -= alpha * d3;
+            double d = fmax(fabs(d1), fmax(fabs(d2), fabs(d3)));
+            /* A tiny line-search alpha is not convergence: the undamped Newton
+             * correction measures the stage-equation error.  Using alpha*d here
+             * can accept a stalled Armijo iteration as a solution. */
+            (void)d; /* convergence is certified by the residual at loop head */
         }
-        K1 -= alpha*d1;
-        K2 -= alpha*d2;
-        K3 -= alpha*d3;
-        double d = fmax(fabs(d1), fmax(fabs(d2), fabs(d3)));
-        /* A tiny line-search alpha is not convergence: the undamped Newton
-         * correction measures the stage-equation error.  Using alpha*d here
-         * can accept a stalled Armijo iteration as a solution. */
-        (void)d;  /* convergence is certified by the residual at loop head */
-      }
     }
-    if (!converged) return NAN;
+    if (!converged)
+        return NAN;
     return y + h * (5.0 / 18.0 * K1 + 4.0 / 9.0 * K2 + 5.0 / 18.0 * K3);
 }
 
@@ -535,9 +538,11 @@ static PyObject *Kernel_slow_fixed_point(Kernel *self, PyObject *args) {
     PyObject *grid_obj;
     double tol = 1e-13;
     int max_iter = 40;
-    if (!PyArg_ParseTuple(args, "O|di", &grid_obj, &tol, &max_iter)) return NULL;
+    if (!PyArg_ParseTuple(args, "O|di", &grid_obj, &tol, &max_iter))
+        return NULL;
     PyObject *grid = PySequence_Fast(grid_obj, "b_grid must be a sequence");
-    if (grid == NULL) return NULL;
+    if (grid == NULL)
+        return NULL;
     Py_ssize_t n = PySequence_Fast_GET_SIZE(grid);
     if (n < 5) {
         Py_DECREF(grid);
@@ -554,15 +559,22 @@ static PyObject *Kernel_slow_fixed_point(Kernel *self, PyObject *args) {
     double *wp = PyMem_Malloc((size_t)n * sizeof(double));
     double *wn = PyMem_Malloc((size_t)n * sizeof(double));
     if (!b || !A || !Ap || !asp || !up || !w || !wp || !wn) {
-        PyMem_Free(b); PyMem_Free(A); PyMem_Free(Ap); PyMem_Free(asp);
-        PyMem_Free(up); PyMem_Free(w); PyMem_Free(wp); PyMem_Free(wn);
+        PyMem_Free(b);
+        PyMem_Free(A);
+        PyMem_Free(Ap);
+        PyMem_Free(asp);
+        PyMem_Free(up);
+        PyMem_Free(w);
+        PyMem_Free(wp);
+        PyMem_Free(wn);
         Py_DECREF(grid);
         return PyErr_NoMemory();
     }
     PyObject **items = PySequence_Fast_ITEMS(grid);
     for (Py_ssize_t i = 0; i < n; i++) {
         b[i] = PyFloat_AsDouble(items[i]);
-        if (PyErr_Occurred()) goto fail;
+        if (PyErr_Occurred())
+            goto fail;
     }
     Py_DECREF(grid);
     grid = NULL;
@@ -581,8 +593,7 @@ static PyObject *Kernel_slow_fixed_point(Kernel *self, PyObject *args) {
     }
     for (Py_ssize_t i = 0; i < n; i++) {
         double App, B, Bp, Bpp, Nv, Np;
-        eval_base(self, b[i], &A[i], &Ap[i], &App,
-                  &B, &Bp, &Bpp, &Nv, &Np);
+        eval_base(self, b[i], &A[i], &Ap[i], &App, &B, &Bp, &Bpp, &Nv, &Np);
         double A2 = A[i] * A[i];
         asp[i] = Bp / A[i] - B * Ap[i] / A2;
         up[i] = B * Nv / A2;
@@ -591,55 +602,74 @@ static PyObject *Kernel_slow_fixed_point(Kernel *self, PyObject *args) {
     double rel = INFINITY;
     int it = 0;
     for (it = 1; it <= max_iter; it++) {
-        wp[0] = (-25.0*w[0] + 48.0*w[1] - 36.0*w[2]
-                 + 16.0*w[3] - 3.0*w[4]) / (12.0*h);
-        wp[1] = (-3.0*w[0] - 10.0*w[1] + 18.0*w[2]
-                 - 6.0*w[3] + w[4]) / (12.0*h);
+        wp[0] = (-25.0 * w[0] + 48.0 * w[1] - 36.0 * w[2] + 16.0 * w[3] - 3.0 * w[4]) /
+                (12.0 * h);
+        wp[1] =
+            (-3.0 * w[0] - 10.0 * w[1] + 18.0 * w[2] - 6.0 * w[3] + w[4]) / (12.0 * h);
         for (Py_ssize_t i = 2; i < n - 2; i++) {
-            wp[i] = (w[i-2] - 8.0*w[i-1] + 8.0*w[i+1] - w[i+2])
-                    / (12.0*h);
+            wp[i] =
+                (w[i - 2] - 8.0 * w[i - 1] + 8.0 * w[i + 1] - w[i + 2]) / (12.0 * h);
         }
-        wp[n-2] = (3.0*w[n-1] + 10.0*w[n-2] - 18.0*w[n-3]
-                   + 6.0*w[n-4] - w[n-5]) / (12.0*h);
-        wp[n-1] = (25.0*w[n-1] - 48.0*w[n-2] + 36.0*w[n-3]
-                   - 16.0*w[n-4] + 3.0*w[n-5]) / (12.0*h);
+        wp[n - 2] = (3.0 * w[n - 1] + 10.0 * w[n - 2] - 18.0 * w[n - 3] +
+                     6.0 * w[n - 4] - w[n - 5]) /
+                    (12.0 * h);
+        wp[n - 1] = (25.0 * w[n - 1] - 48.0 * w[n - 2] + 36.0 * w[n - 3] -
+                     16.0 * w[n - 4] + 3.0 * w[n - 5]) /
+                    (12.0 * h);
         double scale = 0.0, change = 0.0;
         for (Py_ssize_t i = 0; i < n; i++) {
-            double Pv = up[i] + Ap[i] * w[i] * w[i]
-                        - 2.0 * A[i] * w[i] * asp[i];
+            double Pv = up[i] + Ap[i] * w[i] * w[i] - 2.0 * A[i] * w[i] * asp[i];
             wn[i] = Pv * (asp[i] + wp[i]) / (2.0 * A[i]);
             if (!isfinite(wn[i])) {
                 rel = INFINITY;
                 goto done;
             }
-            if (fabs(wn[i]) > scale) scale = fabs(wn[i]);
-            if (fabs(wn[i] - w[i]) > change) change = fabs(wn[i] - w[i]);
+            if (fabs(wn[i]) > scale)
+                scale = fabs(wn[i]);
+            if (fabs(wn[i] - w[i]) > change)
+                change = fabs(wn[i] - w[i]);
         }
         rel = change / fmax(scale, 1e-300);
-        double *tmp = w; w = wn; wn = tmp;
-        if (rel < tol) break;
+        double *tmp = w;
+        w = wn;
+        wn = tmp;
+        if (rel < tol)
+            break;
     }
-    if (it > max_iter) it = max_iter;
-done:
-    {
-        PyObject *out = PyList_New(n);
-        if (out == NULL) goto fail;
-        for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject *v = PyFloat_FromDouble(w[i]);
-            if (v == NULL) {
-                Py_DECREF(out);
-                goto fail;
-            }
-            PyList_SET_ITEM(out, i, v);
+    if (it > max_iter)
+        it = max_iter;
+done: {
+    PyObject *out = PyList_New(n);
+    if (out == NULL)
+        goto fail;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *v = PyFloat_FromDouble(w[i]);
+        if (v == NULL) {
+            Py_DECREF(out);
+            goto fail;
         }
-        PyMem_Free(b); PyMem_Free(A); PyMem_Free(Ap); PyMem_Free(asp);
-        PyMem_Free(up); PyMem_Free(w); PyMem_Free(wp); PyMem_Free(wn);
-        return Py_BuildValue("Nid", out, it, rel);
+        PyList_SET_ITEM(out, i, v);
     }
+    PyMem_Free(b);
+    PyMem_Free(A);
+    PyMem_Free(Ap);
+    PyMem_Free(asp);
+    PyMem_Free(up);
+    PyMem_Free(w);
+    PyMem_Free(wp);
+    PyMem_Free(wn);
+    return Py_BuildValue("Nid", out, it, rel);
+}
 fail:
     Py_XDECREF(grid);
-    PyMem_Free(b); PyMem_Free(A); PyMem_Free(Ap); PyMem_Free(asp);
-    PyMem_Free(up); PyMem_Free(w); PyMem_Free(wp); PyMem_Free(wn);
+    PyMem_Free(b);
+    PyMem_Free(A);
+    PyMem_Free(Ap);
+    PyMem_Free(asp);
+    PyMem_Free(up);
+    PyMem_Free(w);
+    PyMem_Free(wp);
+    PyMem_Free(wn);
     return NULL;
 }
 
@@ -647,17 +677,28 @@ fail:
  * moved verbatim to src/c/spong_gauss2.c (spong/spong_gauss2.h): the
  * compute backend is a self-contained C99 library and the Python extension
  * is one adapter over it.  The names below keep every call site unchanged. */
-#define irk2_step(ctx, fj, z, h, order, out) \
+#define irk2_step(ctx, fj, z, h, order, out)                                           \
     spong_irk2_step((void *)(ctx), (fj), (z), (h), (order), (out))
 
 /* A plain-array view of a Kernel's coefficients for the library field. */
 static spong_field kernel_field(const Kernel *k) {
     spong_field f;
-    f.A = k->a;  f.nA = (size_t)k->na;   f.Ap = k->ap;   f.nAp = (size_t)k->nap;
-    f.App = k->app; f.nApp = (size_t)k->napp;
-    f.B = k->b;  f.nB = (size_t)k->nb;   f.Bp = k->bp;   f.nBp = (size_t)k->nbp;
-    f.Bpp = k->bpp; f.nBpp = (size_t)k->nbpp;
-    f.N = k->n;  f.nN = (size_t)k->nn;   f.Np = k->np;   f.nNp = (size_t)k->nnp;
+    f.A = k->a;
+    f.nA = (size_t)k->na;
+    f.Ap = k->ap;
+    f.nAp = (size_t)k->nap;
+    f.App = k->app;
+    f.nApp = (size_t)k->napp;
+    f.B = k->b;
+    f.nB = (size_t)k->nb;
+    f.Bp = k->bp;
+    f.nBp = (size_t)k->nbp;
+    f.Bpp = k->bpp;
+    f.nBpp = (size_t)k->nbpp;
+    f.N = k->n;
+    f.nN = (size_t)k->nn;
+    f.Np = k->np;
+    f.nNp = (size_t)k->nnp;
     f.C = 0.0;
     return f;
 }
@@ -665,7 +706,8 @@ static spong_field kernel_field(const Kernel *k) {
 static PyObject *Kernel_normalized_step(Kernel *self, PyObject *args) {
     double a, b, h;
     int order = 6;
-    if (!PyArg_ParseTuple(args, "ddd|i", &a, &b, &h, &order)) return NULL;
+    if (!PyArg_ParseTuple(args, "ddd|i", &a, &b, &h, &order))
+        return NULL;
     if (order != 4 && order != 6 && order != 8) {
         PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8");
         return NULL;
@@ -681,7 +723,8 @@ static PyObject *Kernel_normalized_step(Kernel *self, PyObject *args) {
 static PyObject *Kernel_potential_step(Kernel *self, PyObject *args) {
     double a, b, h;
     int order = 6;
-    if (!PyArg_ParseTuple(args, "ddd|i", &a, &b, &h, &order)) return NULL;
+    if (!PyArg_ParseTuple(args, "ddd|i", &a, &b, &h, &order))
+        return NULL;
     if (order != 4 && order != 6 && order != 8) {
         PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8");
         return NULL;
@@ -693,6 +736,38 @@ static PyObject *Kernel_potential_step(Kernel *self, PyObject *args) {
     return Py_BuildValue("dd", out[0], out[1]);
 }
 
+static PyObject *Kernel_normalized_step_clock(Kernel *self, PyObject *args) {
+    double a, b, h;
+    int order = 6;
+    if (!PyArg_ParseTuple(args, "ddd|i", &a, &b, &h, &order))
+        return NULL;
+    if (order != 4 && order != 6 && order != 8) {
+        PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8");
+        return NULL;
+    }
+    double z[2] = {a, b}, out[2], tau;
+    spong_field field = kernel_field(self);
+    if (!spong_normalized_step_clock(&field, z, h, order, out, &tau))
+        return Py_BuildValue("ddd", NAN, NAN, NAN);
+    return Py_BuildValue("ddd", out[0], out[1], tau);
+}
+
+static PyObject *Kernel_potential_step_clock(Kernel *self, PyObject *args) {
+    double a, b, h;
+    int order = 6;
+    if (!PyArg_ParseTuple(args, "ddd|i", &a, &b, &h, &order))
+        return NULL;
+    if (order != 4 && order != 6 && order != 8) {
+        PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8");
+        return NULL;
+    }
+    double z[2] = {a, b}, out[2], tau;
+    spong_field field = kernel_field(self);
+    if (!spong_potential_step_clock(&field, z, h, order, out, &tau))
+        return Py_BuildValue("ddd", NAN, NAN, NAN);
+    return Py_BuildValue("ddd", out[0], out[1], tau);
+}
+
 /* Loss, gradient and Hessian by the library's Horner kernels -- the SAME
  * arithmetic the native steps and segments use.  The Python oracle loops
  * evaluate through these so that parity compares loop logic, not
@@ -700,7 +775,8 @@ static PyObject *Kernel_potential_step(Kernel *self, PyObject *args) {
  * |b| > 32). */
 static PyObject *Kernel_loss(Kernel *self, PyObject *args) {
     double a, b, C;
-    if (!PyArg_ParseTuple(args, "ddd", &a, &b, &C)) return NULL;
+    if (!PyArg_ParseTuple(args, "ddd", &a, &b, &C))
+        return NULL;
     spong_field field = kernel_field(self);
     field.C = C;
     return PyFloat_FromDouble(spong_field_loss(&field, a, b));
@@ -708,7 +784,8 @@ static PyObject *Kernel_loss(Kernel *self, PyObject *args) {
 
 static PyObject *Kernel_gradient(Kernel *self, PyObject *args) {
     double a, b, g[2];
-    if (!PyArg_ParseTuple(args, "dd", &a, &b)) return NULL;
+    if (!PyArg_ParseTuple(args, "dd", &a, &b))
+        return NULL;
     spong_field field = kernel_field(self);
     spong_field_gradient(&field, a, b, g);
     return Py_BuildValue("dd", g[0], g[1]);
@@ -716,7 +793,8 @@ static PyObject *Kernel_gradient(Kernel *self, PyObject *args) {
 
 static PyObject *Kernel_hessian(Kernel *self, PyObject *args) {
     double a, b, H[2][2];
-    if (!PyArg_ParseTuple(args, "dd", &a, &b)) return NULL;
+    if (!PyArg_ParseTuple(args, "dd", &a, &b))
+        return NULL;
     spong_field field = kernel_field(self);
     spong_field_hessian(&field, a, b, H);
     return Py_BuildValue("ddd", H[0][0], H[0][1], H[1][1]);
@@ -736,9 +814,11 @@ static void LocalKernel_dealloc(LocalKernel *self) {
 static int LocalKernel_init(LocalKernel *self, PyObject *args, PyObject *kwds) {
     PyObject *grad;
     static char *kwlist[] = {"grad", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &grad)) return -1;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &grad))
+        return -1;
     PyObject *comps = PySequence_Fast(grad, "grad must have two components");
-    if (comps == NULL) return -1;
+    if (comps == NULL)
+        return -1;
     if (PySequence_Fast_GET_SIZE(comps) != 2) {
         Py_DECREF(comps);
         PyErr_SetString(PyExc_ValueError, "grad must have two components");
@@ -747,17 +827,22 @@ static int LocalKernel_init(LocalKernel *self, PyObject *args, PyObject *kwds) {
     PyObject **ci = PySequence_Fast_ITEMS(comps);
     for (int d = 0; d < 2; d++) {
         PyObject *rows = PySequence_Fast(ci[d], "component must contain rows");
-        if (rows == NULL) { Py_DECREF(comps); return -1; }
+        if (rows == NULL) {
+            Py_DECREF(comps);
+            return -1;
+        }
         Py_ssize_t nr = PySequence_Fast_GET_SIZE(rows);
         if (nr < 1 || nr > INT_MAX) {
-            Py_DECREF(rows); Py_DECREF(comps);
+            Py_DECREF(rows);
+            Py_DECREF(comps);
             PyErr_SetString(PyExc_ValueError, "invalid local jet row count");
             return -1;
         }
         self->c[d] = PyMem_Calloc((size_t)nr, sizeof(*self->c[d]));
         self->n[d] = PyMem_Calloc((size_t)nr, sizeof(*self->n[d]));
         if (self->c[d] == NULL || self->n[d] == NULL) {
-            Py_DECREF(rows); Py_DECREF(comps);
+            Py_DECREF(rows);
+            Py_DECREF(comps);
             PyErr_NoMemory();
             return -1;
         }
@@ -766,7 +851,9 @@ static int LocalKernel_init(LocalKernel *self, PyObject *args, PyObject *kwds) {
         for (Py_ssize_t r = 0; r < nr; r++) {
             Py_ssize_t len = 0;
             if (copy_seq(ri[r], &self->c[d][r], &len) < 0) {
-                Py_DECREF(rows); Py_DECREF(comps); return -1;
+                Py_DECREF(rows);
+                Py_DECREF(comps);
+                return -1;
             }
             self->n[d][r] = (size_t)len;
         }
@@ -792,7 +879,7 @@ typedef struct {
 
 static double local_curve_fj(void *opaque, double x, double y, double *jac) {
     LocalCurveContext *ctx = (LocalCurveContext *)opaque;
-    int i = ctx->independent, d = 1-i;
+    int i = ctx->independent, d = 1 - i;
     double z[2], g[2], H[2][2];
     z[i] = x;
     z[d] = y;
@@ -800,22 +887,26 @@ static double local_curve_fj(void *opaque, double x, double y, double *jac) {
     if (!isfinite(g[i]) || !isfinite(g[d]) || fabs(g[i]) < 1e-300)
         return NAN;
     if (jac != NULL)
-        *jac = (H[d][d]*g[i] - g[d]*H[i][d])/(g[i]*g[i]);
-    return g[d]/g[i];
+        *jac = (H[d][d] * g[i] - g[d] * H[i][d]) / (g[i] * g[i]);
+    return g[d] / g[i];
 }
 
 static PyObject *LocalKernel_gradient(LocalKernel *self, PyObject *args) {
     double z[2], g[2];
-    if (!PyArg_ParseTuple(args, "dd", &z[0], &z[1])) return NULL;
+    if (!PyArg_ParseTuple(args, "dd", &z[0], &z[1]))
+        return NULL;
     local_poly(self, z, g, NULL);
     return Py_BuildValue("dd", g[0], g[1]);
 }
 
 static PyObject *LocalKernel_normalized_step(LocalKernel *self, PyObject *args) {
-    double z[2], h, out[2]; int order = 6;
-    if (!PyArg_ParseTuple(args, "ddd|i", &z[0], &z[1], &h, &order)) return NULL;
+    double z[2], h, out[2];
+    int order = 6;
+    if (!PyArg_ParseTuple(args, "ddd|i", &z[0], &z[1], &h, &order))
+        return NULL;
     if (order != 4 && order != 6 && order != 8) {
-        PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8"); return NULL;
+        PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8");
+        return NULL;
     }
     if (!spong_jet_normalized_step(&self->jet, z, h, order, out))
         return Py_BuildValue("dd", NAN, NAN);
@@ -823,10 +914,13 @@ static PyObject *LocalKernel_normalized_step(LocalKernel *self, PyObject *args) 
 }
 
 static PyObject *LocalKernel_raw_step(LocalKernel *self, PyObject *args) {
-    double z[2], h, out[2]; int order = 6;
-    if (!PyArg_ParseTuple(args, "ddd|i", &z[0], &z[1], &h, &order)) return NULL;
+    double z[2], h, out[2];
+    int order = 6;
+    if (!PyArg_ParseTuple(args, "ddd|i", &z[0], &z[1], &h, &order))
+        return NULL;
     if (order != 4 && order != 6 && order != 8) {
-        PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8"); return NULL;
+        PyErr_SetString(PyExc_ValueError, "order must be 4, 6, or 8");
+        return NULL;
     }
     if (!spong_jet_raw_step(&self->jet, z, h, order, out))
         return Py_BuildValue("dd", NAN, NAN);
@@ -838,39 +932,37 @@ static PyObject *LocalKernel_raw_step(LocalKernel *self, PyObject *args) {
  * here when the kernel is present (shared-arithmetic doctrine). */
 static PyObject *LocalKernel_potential(LocalKernel *self, PyObject *args) {
     double da, db;
-    if (!PyArg_ParseTuple(args, "dd", &da, &db)) return NULL;
+    if (!PyArg_ParseTuple(args, "dd", &da, &db))
+        return NULL;
     return PyFloat_FromDouble(spong_jet_potential(&self->jet, da, db));
 }
 
 static PyObject *LocalKernel_curve_step(LocalKernel *self, PyObject *args) {
     double x, y, h;
     int independent, order = 6;
-    if (!PyArg_ParseTuple(
-            args, "dddi|i", &x, &y, &h, &independent, &order)) return NULL;
-    if ((independent != 0 && independent != 1)
-            || (order != 4 && order != 6)) {
-        PyErr_SetString(
-            PyExc_ValueError,
-            "independent must be 0 or 1 and order must be 4 or 6");
+    if (!PyArg_ParseTuple(args, "dddi|i", &x, &y, &h, &independent, &order))
+        return NULL;
+    if ((independent != 0 && independent != 1) || (order != 4 && order != 6)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "independent must be 0 or 1 and order must be 4 or 6");
         return NULL;
     }
     LocalCurveContext ctx = {self, independent};
     /* No floor for the jet chart yet: the old absolute test applies, as
      * before, until its running-error bound is written. */
-    double out = order == 6
-        ? gl6_step(&ctx, local_curve_fj, NULL, x, y, h)
-        : gl4_step(&ctx, local_curve_fj, NULL, x, y, h);
+    double out = order == 6 ? gl6_step(&ctx, local_curve_fj, NULL, x, y, h)
+                            : gl4_step(&ctx, local_curve_fj, NULL, x, y, h);
     return PyFloat_FromDouble(out);
 }
 
-static PyObject *LocalKernel_graph_fixed_point(LocalKernel *self,
-                                                PyObject *args) {
+static PyObject *LocalKernel_graph_fixed_point(LocalKernel *self, PyObject *args) {
     PyObject *grid_obj, *frame_obj;
     double lu, ls, tol = 1e-13;
     int max_iter = 80;
-    if (!PyArg_ParseTuple(args, "OOdd|di", &grid_obj, &frame_obj,
-                          &lu, &ls, &tol, &max_iter)) return NULL;
-    if (!(lu*ls < 0.0) || !(tol > 0.0) || max_iter < 1) {
+    if (!PyArg_ParseTuple(args, "OOdd|di", &grid_obj, &frame_obj, &lu, &ls, &tol,
+                          &max_iter))
+        return NULL;
+    if (!(lu * ls < 0.0) || !(tol > 0.0) || max_iter < 1) {
         PyErr_SetString(PyExc_ValueError,
                         "graph and transverse eigenvalues must have opposite signs");
         return NULL;
@@ -878,11 +970,14 @@ static PyObject *LocalKernel_graph_fixed_point(LocalKernel *self,
     PyObject *grid = PySequence_Fast(grid_obj, "u_grid must be a sequence");
     PyObject *frame = PySequence_Fast(frame_obj, "frame must have four entries");
     if (grid == NULL || frame == NULL) {
-        Py_XDECREF(grid); Py_XDECREF(frame); return NULL;
+        Py_XDECREF(grid);
+        Py_XDECREF(frame);
+        return NULL;
     }
     Py_ssize_t n = PySequence_Fast_GET_SIZE(grid);
     if (n < 5 || PySequence_Fast_GET_SIZE(frame) != 4) {
-        Py_DECREF(grid); Py_DECREF(frame);
+        Py_DECREF(grid);
+        Py_DECREF(frame);
         PyErr_SetString(PyExc_ValueError,
                         "need at least five grid points and a 2x2 frame");
         return NULL;
@@ -891,30 +986,40 @@ static PyObject *LocalKernel_graph_fixed_point(LocalKernel *self,
     PyObject **fi = PySequence_Fast_ITEMS(frame);
     for (int i = 0; i < 4; i++) {
         V[i] = PyFloat_AsDouble(fi[i]);
-        if (PyErr_Occurred()) { Py_DECREF(grid); Py_DECREF(frame); return NULL; }
+        if (PyErr_Occurred()) {
+            Py_DECREF(grid);
+            Py_DECREF(frame);
+            return NULL;
+        }
     }
     Py_DECREF(frame);
-    double *u = PyMem_Malloc((size_t)n*sizeof(double));
+    double *u = PyMem_Malloc((size_t)n * sizeof(double));
     double *f = PyMem_Calloc((size_t)n, sizeof(double));
-    double *fp = PyMem_Malloc((size_t)n*sizeof(double));
-    double *fn = PyMem_Malloc((size_t)n*sizeof(double));
+    double *fp = PyMem_Malloc((size_t)n * sizeof(double));
+    double *fn = PyMem_Malloc((size_t)n * sizeof(double));
     if (!u || !f || !fp || !fn) {
-        PyMem_Free(u); PyMem_Free(f); PyMem_Free(fp); PyMem_Free(fn);
-        Py_DECREF(grid); return PyErr_NoMemory();
+        PyMem_Free(u);
+        PyMem_Free(f);
+        PyMem_Free(fp);
+        PyMem_Free(fn);
+        Py_DECREF(grid);
+        return PyErr_NoMemory();
     }
     PyObject **gi = PySequence_Fast_ITEMS(grid);
     for (Py_ssize_t i = 0; i < n; i++) {
         u[i] = PyFloat_AsDouble(gi[i]);
-        if (PyErr_Occurred()) goto graph_fail;
+        if (PyErr_Occurred())
+            goto graph_fail;
     }
-    Py_DECREF(grid); grid = NULL;
+    Py_DECREF(grid);
+    grid = NULL;
     double h = u[1] - u[0];
     if (!isfinite(h) || h == 0.0) {
         PyErr_SetString(PyExc_ValueError, "grid spacing must be nonzero");
         goto graph_fail;
     }
     for (Py_ssize_t i = 1; i < n - 1; i++)
-        if (fabs((u[i+1]-u[i])-h) > 1e-12*fabs(h)) {
+        if (fabs((u[i + 1] - u[i]) - h) > 1e-12 * fabs(h)) {
             PyErr_SetString(PyExc_ValueError, "grid must be uniform");
             goto graph_fail;
         }
@@ -922,112 +1027,157 @@ static PyObject *LocalKernel_graph_fixed_point(LocalKernel *self,
     double rel = INFINITY;
     int it;
     for (it = 1; it <= max_iter; it++) {
-        fp[0] = (-25*f[0]+48*f[1]-36*f[2]+16*f[3]-3*f[4])/(12*h);
-        fp[1] = (-3*f[0]-10*f[1]+18*f[2]-6*f[3]+f[4])/(12*h);
-        for (Py_ssize_t i = 2; i < n-2; i++)
-            fp[i] = (f[i-2]-8*f[i-1]+8*f[i+1]-f[i+2])/(12*h);
-        fp[n-2] = (3*f[n-1]+10*f[n-2]-18*f[n-3]+6*f[n-4]-f[n-5])/(12*h);
-        fp[n-1] = (25*f[n-1]-48*f[n-2]+36*f[n-3]-16*f[n-4]+3*f[n-5])/(12*h);
+        fp[0] = (-25 * f[0] + 48 * f[1] - 36 * f[2] + 16 * f[3] - 3 * f[4]) / (12 * h);
+        fp[1] = (-3 * f[0] - 10 * f[1] + 18 * f[2] - 6 * f[3] + f[4]) / (12 * h);
+        for (Py_ssize_t i = 2; i < n - 2; i++)
+            fp[i] = (f[i - 2] - 8 * f[i - 1] + 8 * f[i + 1] - f[i + 2]) / (12 * h);
+        fp[n - 2] =
+            (3 * f[n - 1] + 10 * f[n - 2] - 18 * f[n - 3] + 6 * f[n - 4] - f[n - 5]) /
+            (12 * h);
+        fp[n - 1] = (25 * f[n - 1] - 48 * f[n - 2] + 36 * f[n - 3] - 16 * f[n - 4] +
+                     3 * f[n - 5]) /
+                    (12 * h);
         double scale = 0.0, change = 0.0;
         for (Py_ssize_t i = 0; i < n; i++) {
             /* Columns of V are unstable and stable unit eigenvectors. */
-            double z[2] = {V[0]*u[i] + V[1]*f[i],
-                           V[2]*u[i] + V[3]*f[i]};
+            double z[2] = {V[0] * u[i] + V[1] * f[i], V[2] * u[i] + V[3] * f[i]};
             double g[2];
             local_poly(self, z, g, NULL);
-            double vu = V[0]*g[0] + V[2]*g[1];
-            double vs = V[1]*g[0] + V[3]*g[1];
-            double Ru = vu - lu*u[i];
-            double Rs = vs - ls*f[i];
-            fn[i] = (fp[i]*(lu*u[i] + Ru) - Rs)/ls;
-            if (i == 0) fn[i] = 0.0;
-            if (!isfinite(fn[i])) { rel = INFINITY; goto graph_done; }
+            double vu = V[0] * g[0] + V[2] * g[1];
+            double vs = V[1] * g[0] + V[3] * g[1];
+            double Ru = vu - lu * u[i];
+            double Rs = vs - ls * f[i];
+            fn[i] = (fp[i] * (lu * u[i] + Ru) - Rs) / ls;
+            if (i == 0)
+                fn[i] = 0.0;
+            if (!isfinite(fn[i])) {
+                rel = INFINITY;
+                goto graph_done;
+            }
             scale = fmax(scale, fabs(fn[i]));
-            change = fmax(change, fabs(fn[i]-f[i]));
+            change = fmax(change, fabs(fn[i] - f[i]));
         }
-        rel = change/fmax(scale, 1e-300);
-        double *tmp = f; f = fn; fn = tmp;
-        if (rel < tol) break;
+        rel = change / fmax(scale, 1e-300);
+        double *tmp = f;
+        f = fn;
+        fn = tmp;
+        if (rel < tol)
+            break;
     }
-    if (it > max_iter) it = max_iter;
-graph_done:
-    {
-        PyObject *out = PyList_New(n);
-        if (out == NULL) goto graph_fail;
-        for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject *x = PyFloat_FromDouble(f[i]);
-            if (x == NULL) { Py_DECREF(out); goto graph_fail; }
-            PyList_SET_ITEM(out, i, x);
+    if (it > max_iter)
+        it = max_iter;
+graph_done: {
+    PyObject *out = PyList_New(n);
+    if (out == NULL)
+        goto graph_fail;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *x = PyFloat_FromDouble(f[i]);
+        if (x == NULL) {
+            Py_DECREF(out);
+            goto graph_fail;
         }
-        PyMem_Free(u); PyMem_Free(f); PyMem_Free(fp); PyMem_Free(fn);
-        return Py_BuildValue("Nid", out, it, rel);
+        PyList_SET_ITEM(out, i, x);
     }
+    PyMem_Free(u);
+    PyMem_Free(f);
+    PyMem_Free(fp);
+    PyMem_Free(fn);
+    return Py_BuildValue("Nid", out, it, rel);
+}
 graph_fail:
     Py_XDECREF(grid);
-    PyMem_Free(u); PyMem_Free(f); PyMem_Free(fp); PyMem_Free(fn);
+    PyMem_Free(u);
+    PyMem_Free(f);
+    PyMem_Free(fp);
+    PyMem_Free(fn);
     return NULL;
 }
 
-static PyObject *LocalKernel_graph_transform(LocalKernel *self,
-                                              PyObject *args) {
+static PyObject *LocalKernel_graph_transform(LocalKernel *self, PyObject *args) {
     PyObject *grid_obj, *frame_obj, *f_obj;
     double lu, ls;
-    if (!PyArg_ParseTuple(args, "OOddO", &grid_obj, &frame_obj,
-                          &lu, &ls, &f_obj)) return NULL;
+    if (!PyArg_ParseTuple(args, "OOddO", &grid_obj, &frame_obj, &lu, &ls, &f_obj))
+        return NULL;
     PyObject *grid = PySequence_Fast(grid_obj, "u_grid must be a sequence");
     PyObject *frame = PySequence_Fast(frame_obj, "frame must have four entries");
     PyObject *fs = PySequence_Fast(f_obj, "graph must be a sequence");
     if (!grid || !frame || !fs) {
-        Py_XDECREF(grid); Py_XDECREF(frame); Py_XDECREF(fs); return NULL;
+        Py_XDECREF(grid);
+        Py_XDECREF(frame);
+        Py_XDECREF(fs);
+        return NULL;
     }
     Py_ssize_t n = PySequence_Fast_GET_SIZE(grid);
-    if (n < 5 || PySequence_Fast_GET_SIZE(fs) != n
-            || PySequence_Fast_GET_SIZE(frame) != 4) {
-        Py_DECREF(grid); Py_DECREF(frame); Py_DECREF(fs);
+    if (n < 5 || PySequence_Fast_GET_SIZE(fs) != n ||
+        PySequence_Fast_GET_SIZE(frame) != 4) {
+        Py_DECREF(grid);
+        Py_DECREF(frame);
+        Py_DECREF(fs);
         PyErr_SetString(PyExc_ValueError, "incompatible graph transform inputs");
         return NULL;
     }
-    double V[4], *u = PyMem_Malloc((size_t)n*sizeof(double));
-    double *f = PyMem_Malloc((size_t)n*sizeof(double));
-    double *fp = PyMem_Malloc((size_t)n*sizeof(double));
+    double V[4], *u = PyMem_Malloc((size_t)n * sizeof(double));
+    double *f = PyMem_Malloc((size_t)n * sizeof(double));
+    double *fp = PyMem_Malloc((size_t)n * sizeof(double));
     if (!u || !f || !fp) {
-        PyMem_Free(u); PyMem_Free(f); PyMem_Free(fp);
-        Py_DECREF(grid); Py_DECREF(frame); Py_DECREF(fs);
+        PyMem_Free(u);
+        PyMem_Free(f);
+        PyMem_Free(fp);
+        Py_DECREF(grid);
+        Py_DECREF(frame);
+        Py_DECREF(fs);
         return PyErr_NoMemory();
     }
     PyObject **vi = PySequence_Fast_ITEMS(frame);
-    for (int j = 0; j < 4; j++) V[j] = PyFloat_AsDouble(vi[j]);
+    for (int j = 0; j < 4; j++)
+        V[j] = PyFloat_AsDouble(vi[j]);
     PyObject **ui = PySequence_Fast_ITEMS(grid);
     PyObject **xi = PySequence_Fast_ITEMS(fs);
     for (Py_ssize_t i = 0; i < n; i++) {
-        u[i] = PyFloat_AsDouble(ui[i]); f[i] = PyFloat_AsDouble(xi[i]);
+        u[i] = PyFloat_AsDouble(ui[i]);
+        f[i] = PyFloat_AsDouble(xi[i]);
     }
-    Py_DECREF(grid); Py_DECREF(frame); Py_DECREF(fs);
-    if (PyErr_Occurred()) goto transform_fail;
-    double h = u[1]-u[0];
-    fp[0] = (-25*f[0]+48*f[1]-36*f[2]+16*f[3]-3*f[4])/(12*h);
-    fp[1] = (-3*f[0]-10*f[1]+18*f[2]-6*f[3]+f[4])/(12*h);
-    for (Py_ssize_t i = 2; i < n-2; i++)
-        fp[i] = (f[i-2]-8*f[i-1]+8*f[i+1]-f[i+2])/(12*h);
-    fp[n-2] = (3*f[n-1]+10*f[n-2]-18*f[n-3]+6*f[n-4]-f[n-5])/(12*h);
-    fp[n-1] = (25*f[n-1]-48*f[n-2]+36*f[n-3]-16*f[n-4]+3*f[n-5])/(12*h);
+    Py_DECREF(grid);
+    Py_DECREF(frame);
+    Py_DECREF(fs);
+    if (PyErr_Occurred())
+        goto transform_fail;
+    double h = u[1] - u[0];
+    fp[0] = (-25 * f[0] + 48 * f[1] - 36 * f[2] + 16 * f[3] - 3 * f[4]) / (12 * h);
+    fp[1] = (-3 * f[0] - 10 * f[1] + 18 * f[2] - 6 * f[3] + f[4]) / (12 * h);
+    for (Py_ssize_t i = 2; i < n - 2; i++)
+        fp[i] = (f[i - 2] - 8 * f[i - 1] + 8 * f[i + 1] - f[i + 2]) / (12 * h);
+    fp[n - 2] =
+        (3 * f[n - 1] + 10 * f[n - 2] - 18 * f[n - 3] + 6 * f[n - 4] - f[n - 5]) /
+        (12 * h);
+    fp[n - 1] =
+        (25 * f[n - 1] - 48 * f[n - 2] + 36 * f[n - 3] - 16 * f[n - 4] + 3 * f[n - 5]) /
+        (12 * h);
     PyObject *out = PyList_New(n);
-    if (out == NULL) goto transform_fail;
+    if (out == NULL)
+        goto transform_fail;
     for (Py_ssize_t i = 0; i < n; i++) {
-        double z[2] = {V[0]*u[i]+V[1]*f[i], V[2]*u[i]+V[3]*f[i]}, g[2];
+        double z[2] = {V[0] * u[i] + V[1] * f[i], V[2] * u[i] + V[3] * f[i]}, g[2];
         local_poly(self, z, g, NULL);
-        double vu = V[0]*g[0]+V[2]*g[1];
-        double vs = V[1]*g[0]+V[3]*g[1];
-        double Ru = vu-lu*u[i], Rs = vs-ls*f[i];
-        double value = i == 0 ? 0.0 : (fp[i]*(lu*u[i]+Ru)-Rs)/ls;
+        double vu = V[0] * g[0] + V[2] * g[1];
+        double vs = V[1] * g[0] + V[3] * g[1];
+        double Ru = vu - lu * u[i], Rs = vs - ls * f[i];
+        double value = i == 0 ? 0.0 : (fp[i] * (lu * u[i] + Ru) - Rs) / ls;
         PyObject *x = PyFloat_FromDouble(value);
-        if (x == NULL) { Py_DECREF(out); goto transform_fail; }
+        if (x == NULL) {
+            Py_DECREF(out);
+            goto transform_fail;
+        }
         PyList_SET_ITEM(out, i, x);
     }
-    PyMem_Free(u); PyMem_Free(f); PyMem_Free(fp);
+    PyMem_Free(u);
+    PyMem_Free(f);
+    PyMem_Free(fp);
     return out;
 transform_fail:
-    PyMem_Free(u); PyMem_Free(f); PyMem_Free(fp);
+    PyMem_Free(u);
+    PyMem_Free(f);
+    PyMem_Free(fp);
     return NULL;
 }
 
@@ -1035,97 +1185,80 @@ static PyObject *LocalKernel_poincare_graph(LocalKernel *self, PyObject *args) {
     PyObject *frame_obj, *map_obj;
     double ld, lt, alpha0, alpha1, tol = 1e-12;
     int sign, n, max_iter = 80;
-    if (!PyArg_ParseTuple(args, "OOddddii|di", &frame_obj, &map_obj,
-                          &ld, &lt, &alpha0, &alpha1, &sign, &n,
-                          &tol, &max_iter)) return NULL;
-    if (!(alpha0 > 0 && alpha1 > alpha0) || (sign != -1 && sign != 1)
-            || n < 5 || !(ld*lt < 0)) {
+    if (!PyArg_ParseTuple(args, "OOddddii|di", &frame_obj, &map_obj, &ld, &lt, &alpha0,
+                          &alpha1, &sign, &n, &tol, &max_iter))
+        return NULL;
+    if (!(alpha0 > 0 && alpha1 > alpha0) || (sign != -1 && sign != 1) || n < 5 ||
+        max_iter < 1 || !(ld * lt < 0)) {
         PyErr_SetString(PyExc_ValueError, "invalid Poincare graph parameters");
         return NULL;
     }
     double V[4], M[6];
     PyObject *fr = PySequence_Fast(frame_obj, "frame needs four entries");
     PyObject *mp = PySequence_Fast(map_obj, "map needs six entries");
-    if (!fr || !mp || PySequence_Fast_GET_SIZE(fr) != 4
-            || PySequence_Fast_GET_SIZE(mp) != 6) {
-        Py_XDECREF(fr); Py_XDECREF(mp);
-        PyErr_SetString(PyExc_ValueError, "frame/map size mismatch"); return NULL;
+    if (!fr || !mp || PySequence_Fast_GET_SIZE(fr) != 4 ||
+        PySequence_Fast_GET_SIZE(mp) != 6) {
+        Py_XDECREF(fr);
+        Py_XDECREF(mp);
+        PyErr_SetString(PyExc_ValueError, "frame/map size mismatch");
+        return NULL;
     }
-    for (int i=0;i<4;i++) V[i]=PyFloat_AsDouble(PySequence_Fast_ITEMS(fr)[i]);
-    for (int i=0;i<6;i++) M[i]=PyFloat_AsDouble(PySequence_Fast_ITEMS(mp)[i]);
-    Py_DECREF(fr); Py_DECREF(mp);
-    if (PyErr_Occurred()) return NULL;
-    double *x=PyMem_Malloc((size_t)n*sizeof(double));
-    double *h=PyMem_Calloc((size_t)n,sizeof(double));
-    double *hn=PyMem_Malloc((size_t)n*sizeof(double));
-    double *Q=PyMem_Malloc((size_t)n*sizeof(double));
-    if (!x||!h||!hn||!Q) {
-        PyMem_Free(x);PyMem_Free(h);PyMem_Free(hn);PyMem_Free(Q);
+    for (int i = 0; i < 4; i++)
+        V[i] = PyFloat_AsDouble(PySequence_Fast_ITEMS(fr)[i]);
+    for (int i = 0; i < 6; i++)
+        M[i] = PyFloat_AsDouble(PySequence_Fast_ITEMS(mp)[i]);
+    Py_DECREF(fr);
+    Py_DECREF(mp);
+    if (PyErr_Occurred())
+        return NULL;
+    double *x = PyMem_Malloc((size_t)n * sizeof(double));
+    double *h = PyMem_Malloc((size_t)n * sizeof(double));
+    if (!x || !h) {
+        PyMem_Free(x);
+        PyMem_Free(h);
         return PyErr_NoMemory();
     }
-    double dt=log(alpha1/alpha0)/(n-1), rho=fabs(ld), nu=fabs(lt);
-    double kappa=nu/rho, q=kappa*dt, decay=exp(-q);
-    double w0, w1;
-    if (fabs(q) < 1e-3) {
-        /*
-         * Exact exponential weights for linearly interpolated forcing.
-         * Their direct expressions lose every useful bit when kappa*dt is
-         * small (the stable chart can readily have kappa < 1e-15).
-         */
-        double q2=q*q, q3=q2*q, q4=q2*q2;
-        w1=dt*(0.5-q/6.0+q2/24.0-q3/120.0+q4/720.0);
-        w0=dt*(0.5-q/3.0+q2/8.0-q3/30.0+q4/144.0);
-    } else {
-        w1=dt*(q-1.0+decay)/(q*q);
-        w0=dt*(1.0-decay*(1.0+q))/(q*q);
+    spong_poincare_graph_result proposal;
+    int status = spong_poincare_graph_proposal(&self->jet, V, M, ld, lt, alpha0, alpha1,
+                                               sign, (size_t)n, tol, (size_t)max_iter,
+                                               x, h, &proposal);
+    if (status == -2) {
+        PyMem_Free(x);
+        PyMem_Free(h);
+        return PyErr_NoMemory();
     }
-    for(int i=0;i<n;i++) x[i]=alpha0*exp(dt*i);
-    double rel=INFINITY; int it;
-    double orient=ld>0?1.0:-1.0;
-    for(it=1;it<=max_iter;it++) {
-        Q[0]=0.0; int valid=1;
-        for(int i=1;i<n;i++) {
-            double u=sign*x[i], s=h[i];
-            double U=u+M[0]*u*u+M[1]*u*s+M[2]*s*s;
-            double S=s+M[3]*u*u+M[4]*u*s+M[5]*s*s;
-            double z[2]={V[0]*U+V[1]*S,V[2]*U+V[3]*S},g[2];
-            local_poly(self,z,g,NULL);
-            double ve0=V[0]*g[0]+V[2]*g[1];
-            double ve1=V[1]*g[0]+V[3]*g[1];
-            double j00=1+2*M[0]*u+M[1]*s, j01=M[1]*u+2*M[2]*s;
-            double j10=2*M[3]*u+M[4]*s, j11=1+M[4]*u+2*M[5]*s;
-            double det=j00*j11-j01*j10;
-            if (!(fabs(det)>1e-14) || !isfinite(det)) {valid=0;break;}
-            double vu=(j11*ve0-j01*ve1)/det;
-            double vs=(-j10*ve0+j00*ve1)/det;
-            double vx=sign*orient*vu, vy=orient*vs;
-            if (!(fabs(vx)>1e-300) || !isfinite(vx)) {valid=0;break;}
-            /* t=log(x): h_t + (nu/rho)h = x*vy/vx + kappa*h. */
-            Q[i]=x[i]*vy/vx+kappa*s;
+    if (status != 0) {
+        PyMem_Free(x);
+        PyMem_Free(h);
+        PyErr_SetString(PyExc_ValueError, "invalid Poincare graph parameters");
+        return NULL;
+    }
+    PyObject *xo = PyList_New(n), *ho = PyList_New(n);
+    if (!xo || !ho) {
+        Py_XDECREF(xo);
+        Py_XDECREF(ho);
+        goto pg_fail;
+    }
+    for (int i = 0; i < n; i++) {
+        PyObject *a = PyFloat_FromDouble(x[i]), *b = PyFloat_FromDouble(h[i]);
+        if (!a || !b) {
+            Py_XDECREF(a);
+            Py_XDECREF(b);
+            Py_DECREF(xo);
+            Py_DECREF(ho);
+            goto pg_fail;
         }
-        if(!valid){rel=INFINITY;break;}
-        hn[0]=0.0; double scale=0,change=0;
-        for(int i=1;i<n;i++) {
-            hn[i]=decay*hn[i-1]+w0*Q[i-1]+w1*Q[i];
-            scale=fmax(scale,fabs(hn[i]));
-            change=fmax(change,fabs(hn[i]-h[i]));
-        }
-        rel=change/fmax(scale,1e-300);
-        double *tmp=h;h=hn;hn=tmp;
-        if(rel<tol)break;
+        PyList_SET_ITEM(xo, i, a);
+        PyList_SET_ITEM(ho, i, b);
     }
-    if(it>max_iter)it=max_iter;
-    PyObject *xo=PyList_New(n),*ho=PyList_New(n);
-    if(!xo||!ho){Py_XDECREF(xo);Py_XDECREF(ho);goto pg_fail;}
-    for(int i=0;i<n;i++){
-        PyObject *a=PyFloat_FromDouble(x[i]),*b=PyFloat_FromDouble(h[i]);
-        if(!a||!b){Py_XDECREF(a);Py_XDECREF(b);Py_DECREF(xo);Py_DECREF(ho);goto pg_fail;}
-        PyList_SET_ITEM(xo,i,a);PyList_SET_ITEM(ho,i,b);
-    }
-    PyMem_Free(x);PyMem_Free(h);PyMem_Free(hn);PyMem_Free(Q);
-    return Py_BuildValue("NNid",xo,ho,it,rel);
+    PyMem_Free(x);
+    PyMem_Free(h);
+    return Py_BuildValue("NNid", xo, ho, (int)proposal.iterations,
+                         proposal.relative_change);
 pg_fail:
-    PyMem_Free(x);PyMem_Free(h);PyMem_Free(hn);PyMem_Free(Q);return NULL;
+    PyMem_Free(x);
+    PyMem_Free(h);
+    return NULL;
 }
 
 static PyMethodDef LocalKernel_methods[] = {
@@ -1139,14 +1272,13 @@ static PyMethodDef LocalKernel_methods[] = {
      "The centered potential difference (exact evaluator)."},
     {"curve_step", (PyCFunction)LocalKernel_curve_step, METH_VARARGS,
      "One centered integral-curve graph GL4 or GL6 step."},
-    {"graph_fixed_point", (PyCFunction)LocalKernel_graph_fixed_point,
-     METH_VARARGS, "Hadamard invariant graph in the Hessian eigenframe."},
-    {"graph_transform", (PyCFunction)LocalKernel_graph_transform,
-     METH_VARARGS, "One Hadamard graph-transform iteration."},
-    {"poincare_graph", (PyCFunction)LocalKernel_poincare_graph,
-     METH_VARARGS, "Poincare-conditioned integrating-factor graph fixed point."},
-    {NULL, NULL, 0, NULL}
-};
+    {"graph_fixed_point", (PyCFunction)LocalKernel_graph_fixed_point, METH_VARARGS,
+     "Hadamard invariant graph in the Hessian eigenframe."},
+    {"graph_transform", (PyCFunction)LocalKernel_graph_transform, METH_VARARGS,
+     "One Hadamard graph-transform iteration."},
+    {"poincare_graph", (PyCFunction)LocalKernel_poincare_graph, METH_VARARGS,
+     "Poincare-conditioned integrating-factor graph fixed point."},
+    {NULL, NULL, 0, NULL}};
 
 static PyObject *Kernel_curve_diagnostics(Kernel *self, PyObject *args) {
     PyObject *curve;
@@ -1155,31 +1287,27 @@ static PyObject *Kernel_curve_diagnostics(Kernel *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O|dn", &curve, &digit_budget, &start))
         return NULL;
     Py_buffer view = {0};
-    if (contact_buffer(curve, &view) < 0) return NULL;
-    if (start < 1) start = 1;
+    if (contact_buffer(curve, &view) < 0)
+        return NULL;
+    if (start < 1)
+        start = 1;
     spong_curve_diagnostics_result result;
     int status = spong_curve_diagnostics(
-        self->a, (size_t)self->na,
-        self->ap, (size_t)self->nap,
-        self->b, (size_t)self->nb,
-        self->bp, (size_t)self->nbp,
-        (const double *)view.buf, (size_t)view.shape[0],
-        (size_t)start, digit_budget, &result);
+        self->a, (size_t)self->na, self->ap, (size_t)self->nap, self->b,
+        (size_t)self->nb, self->bp, (size_t)self->nbp, (const double *)view.buf,
+        (size_t)view.shape[0], (size_t)start, digit_budget, &result);
     PyBuffer_Release(&view);
     if (status != 0) {
         PyErr_SetString(PyExc_ValueError, "invalid curve diagnostics input");
         return NULL;
     }
     return Py_BuildValue(
-        "dKKd", result.angle_energy,
-        (unsigned long long)result.angle_resolved,
-        (unsigned long long)result.angle_unresolved,
-        result.backbone_residual);
+        "dKKd", result.angle_energy, (unsigned long long)result.angle_resolved,
+        (unsigned long long)result.angle_unresolved, result.backbone_residual);
 }
 
 static PyTypeObject LocalKernelType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "spong._native.LocalKernel",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "spong._native.LocalKernel",
     .tp_basicsize = sizeof(LocalKernel),
     .tp_dealloc = (destructor)LocalKernel_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -1206,6 +1334,10 @@ static PyMethodDef Kernel_methods[] = {
      "One 2D normalized-gradient ascent step by GL4, GL6, or GL8."},
     {"potential_step", (PyCFunction)Kernel_potential_step, METH_VARARGS,
      "One constant-potential-rate Gauss step on the loss field."},
+    {"normalized_step_clock", (PyCFunction)Kernel_normalized_step_clock, METH_VARARGS,
+     "One normalized-gradient step and its stage-quadrature proper time."},
+    {"potential_step_clock", (PyCFunction)Kernel_potential_step_clock, METH_VARARGS,
+     "One potential-rate step and its stage-quadrature proper time."},
     {"loss", (PyCFunction)Kernel_loss, METH_VARARGS,
      "L(a, b) with the given C, by the library's Horner kernels."},
     {"gradient", (PyCFunction)Kernel_gradient, METH_VARARGS,
@@ -1214,28 +1346,22 @@ static PyMethodDef Kernel_methods[] = {
      "(H11, H12, H22) at (a, b) by the library's Horner kernels."},
     {"curve_diagnostics", (PyCFunction)Kernel_curve_diagnostics, METH_VARARGS,
      "Batched angle-energy and backbone-tail certificates."},
-    {NULL, NULL, 0, NULL}
-};
+    {NULL, NULL, 0, NULL}};
 
-static PyObject *native_resolution_preflight(
-        PyObject *self, PyObject *args) {
+static PyObject *native_resolution_preflight(PyObject *self, PyObject *args) {
     (void)self;
     spong_morse_analysis analysis;
     spong_resolution_policy policy;
     unsigned int enabled;
     if (!PyArg_ParseTuple(
-            args, "ppppdpdpdIddd",
-            &analysis.exact_morse,
-            &analysis.A_positive,
+            args, "ppppdpdpdIddd", &analysis.exact_morse, &analysis.A_positive,
             &analysis.critical_coordinates_binary64_distinct,
             &analysis.has_root_collision_margin,
             &analysis.root_collision_margin_log2_eps,
             &analysis.has_hessian_relative_nonsingularity,
             &analysis.min_hessian_relative_nonsingularity,
-            &analysis.has_gamma_target_product,
-            &analysis.max_gamma_target_product_log2,
-            &enabled,
-            &policy.min_root_collision_margin_log2_eps,
+            &analysis.has_gamma_target_product, &analysis.max_gamma_target_product_log2,
+            &enabled, &policy.min_root_collision_margin_log2_eps,
             &policy.max_hessian_condition_loss_bits,
             &policy.max_gamma_target_product_log2))
         return NULL;
@@ -1245,13 +1371,11 @@ static PyObject *native_resolution_preflight(
         PyErr_SetString(PyExc_RuntimeError, "native resolution preflight failed");
         return NULL;
     }
-    return Py_BuildValue(
-        "iiI", (int)out.status, (int)out.primary_reason,
-        (unsigned int)out.reason_mask);
+    return Py_BuildValue("iiI", (int)out.status, (int)out.primary_reason,
+                         (unsigned int)out.reason_mask);
 }
 
-static PyObject *native_resolution_finalize(
-        PyObject *self, PyObject *args) {
+static PyObject *native_resolution_finalize(PyObject *self, PyObject *args) {
     (void)self;
     int certified, branch_aborted;
     if (!PyArg_ParseTuple(args, "pp", &certified, &branch_aborted))
@@ -1261,9 +1385,8 @@ static PyObject *native_resolution_finalize(
         PyErr_SetString(PyExc_RuntimeError, "native resolution finalize failed");
         return NULL;
     }
-    return Py_BuildValue(
-        "iiI", (int)out.status, (int)out.primary_reason,
-        (unsigned int)out.reason_mask);
+    return Py_BuildValue("iiI", (int)out.status, (int)out.primary_reason,
+                         (unsigned int)out.reason_mask);
 }
 
 static PyObject *native_topology_decide(PyObject *self, PyObject *args) {
@@ -1271,12 +1394,10 @@ static PyObject *native_topology_decide(PyObject *self, PyObject *args) {
     spong_topology_analysis analysis;
     unsigned long long value[12];
     int branch_aborted;
-    if (!PyArg_ParseTuple(
-            args, "KKKKKKKKKKKKp",
-            &value[0], &value[1], &value[2], &value[3],
-            &value[4], &value[5], &value[6], &value[7],
-            &value[8], &value[9], &value[10], &value[11],
-            &branch_aborted))
+    if (!PyArg_ParseTuple(args, "KKKKKKKKKKKKp", &value[0], &value[1], &value[2],
+                          &value[3], &value[4], &value[5], &value[6], &value[7],
+                          &value[8], &value[9], &value[10], &value[11],
+                          &branch_aborted))
         return NULL;
     analysis.saddle_count = (uint64_t)value[0];
     analysis.branch_count = (uint64_t)value[1];
@@ -1296,23 +1417,22 @@ static PyObject *native_topology_decide(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "invalid topology analysis");
         return NULL;
     }
-    return Py_BuildValue(
-        "iiisKK", (int)result.certified, (int)result.audit_complete,
-        (int)result.branch_inventory_certified,
-        spong_topology_reason_name(result.primary_reason),
-        (unsigned long long)result.expected_stable,
-        (unsigned long long)result.expected_unstable);
+    return Py_BuildValue("iiisKK", (int)result.certified, (int)result.audit_complete,
+                         (int)result.branch_inventory_certified,
+                         spong_topology_reason_name(result.primary_reason),
+                         (unsigned long long)result.expected_stable,
+                         (unsigned long long)result.expected_unstable);
 }
 
 static PyObject *native_sturm_analyze(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *coefficients;
     unsigned long long max_bits, max_coefficients, max_steps;
-    if (!PyArg_ParseTuple(args, "OKKK", &coefficients, &max_bits,
-                          &max_coefficients, &max_steps))
+    if (!PyArg_ParseTuple(args, "OKKK", &coefficients, &max_bits, &max_coefficients,
+                          &max_steps))
         return NULL;
-    PyObject *seq = PySequence_Fast(
-        coefficients, "coefficients must be a nonempty sequence");
+    PyObject *seq =
+        PySequence_Fast(coefficients, "coefficients must be a nonempty sequence");
     if (seq == NULL)
         return NULL;
     Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
@@ -1321,10 +1441,8 @@ static PyObject *native_sturm_analyze(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "coefficient sequence is empty");
         return NULL;
     }
-    const char **text = (const char **)PyMem_Calloc(
-        (size_t)n, sizeof(char *));
-    PyObject **owned = (PyObject **)PyMem_Calloc(
-        (size_t)n, sizeof(PyObject *));
+    const char **text = (const char **)PyMem_Calloc((size_t)n, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc((size_t)n, sizeof(PyObject *));
     if (text == NULL || owned == NULL) {
         PyMem_Free(text);
         PyMem_Free(owned);
@@ -1340,31 +1458,24 @@ static PyObject *native_sturm_analyze(PyObject *self, PyObject *args) {
         if (text[i] == NULL)
             goto exact_cleanup;
     }
-    spong_exact_policy policy = {
-        (uint64_t)max_bits, (uint64_t)max_coefficients, (uint64_t)max_steps
-    };
+    spong_exact_policy policy = {(uint64_t)max_bits, (uint64_t)max_coefficients,
+                                 (uint64_t)max_steps};
     spong_sturm_analysis out;
-    (void)spong_sturm_analyze_decimal(
-        text, (size_t)n, &policy, &out);
+    (void)spong_sturm_analyze_decimal(text, (size_t)n, &policy, &out);
     for (Py_ssize_t i = 0; i < n; ++i)
         Py_XDECREF(owned[i]);
     PyMem_Free(text);
     PyMem_Free(owned);
     Py_DECREF(seq);
     return Py_BuildValue(
-        "{s:i,s:I,s:I,s:i,s:i,s:K,s:K,s:K,s:K}",
-        "status", (int)out.status,
+        "{s:i,s:I,s:I,s:i,s:i,s:K,s:K,s:K,s:K}", "status", (int)out.status,
         "distinct_real_roots", (unsigned int)out.distinct_real_roots,
-        "repeated_real_roots", (unsigned int)out.repeated_real_roots,
-        "input_degree", (int)out.input_degree,
-        "squarefree_degree", (int)out.squarefree_degree,
-        "prs_steps", (unsigned long long)out.work.prs_steps,
-        "chain_polynomials",
-            (unsigned long long)out.work.chain_polynomials,
-        "chain_coefficients",
-            (unsigned long long)out.work.chain_coefficients,
-        "peak_coefficient_bits",
-            (unsigned long long)out.work.peak_coefficient_bits);
+        "repeated_real_roots", (unsigned int)out.repeated_real_roots, "input_degree",
+        (int)out.input_degree, "squarefree_degree", (int)out.squarefree_degree,
+        "prs_steps", (unsigned long long)out.work.prs_steps, "chain_polynomials",
+        (unsigned long long)out.work.chain_polynomials, "chain_coefficients",
+        (unsigned long long)out.work.chain_coefficients, "peak_coefficient_bits",
+        (unsigned long long)out.work.peak_coefficient_bits);
 
 exact_cleanup:
     for (Py_ssize_t i = 0; i < n; ++i)
@@ -1375,18 +1486,15 @@ exact_cleanup:
     return NULL;
 }
 
-static PyObject *native_sturm_count_interval(
-        PyObject *self, PyObject *args) {
+static PyObject *native_sturm_count_interval(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *coefficients, *lo_num, *lo_den, *hi_num, *hi_den;
     unsigned long long max_bits, max_coefficients, max_steps;
-    if (!PyArg_ParseTuple(
-            args, "OOOOOKKK", &coefficients,
-            &lo_num, &lo_den, &hi_num, &hi_den,
-            &max_bits, &max_coefficients, &max_steps))
+    if (!PyArg_ParseTuple(args, "OOOOOKKK", &coefficients, &lo_num, &lo_den, &hi_num,
+                          &hi_den, &max_bits, &max_coefficients, &max_steps))
         return NULL;
-    PyObject *seq = PySequence_Fast(
-        coefficients, "coefficients must be a nonempty sequence");
+    PyObject *seq =
+        PySequence_Fast(coefficients, "coefficients must be a nonempty sequence");
     if (seq == NULL)
         return NULL;
     Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
@@ -1395,10 +1503,8 @@ static PyObject *native_sturm_count_interval(
         PyErr_SetString(PyExc_ValueError, "coefficient sequence is empty");
         return NULL;
     }
-    const char **text = (const char **)PyMem_Calloc(
-        (size_t)n, sizeof(char *));
-    PyObject **owned = (PyObject **)PyMem_Calloc(
-        (size_t)n, sizeof(PyObject *));
+    const char **text = (const char **)PyMem_Calloc((size_t)n, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc((size_t)n, sizeof(PyObject *));
     PyObject *bounds[4] = {NULL, NULL, NULL, NULL};
     if (text == NULL || owned == NULL) {
         PyMem_Free(text);
@@ -1427,17 +1533,17 @@ static PyObject *native_sturm_count_interval(
         if (bound_text[i] == NULL)
             goto interval_cleanup;
     }
-    spong_exact_policy policy = {
-        (uint64_t)max_bits, (uint64_t)max_coefficients, (uint64_t)max_steps
-    };
+    spong_exact_policy policy = {(uint64_t)max_bits, (uint64_t)max_coefficients,
+                                 (uint64_t)max_steps};
     spong_sturm_analysis analysis;
     spong_sturm_plan *plan = NULL;
     uint32_t count = 0;
-    int created = spong_sturm_plan_create_decimal(
-        text, (size_t)n, &policy, &plan, &analysis);
-    int counted = (created == 0) ? spong_sturm_plan_count(
-        plan, bound_text[0], bound_text[1],
-        bound_text[2], bound_text[3], &count) : -1;
+    int created =
+        spong_sturm_plan_create_decimal(text, (size_t)n, &policy, &plan, &analysis);
+    int counted = (created == 0)
+                      ? spong_sturm_plan_count(plan, bound_text[0], bound_text[1],
+                                               bound_text[2], bound_text[3], &count)
+                      : -1;
     spong_sturm_plan_destroy(plan);
     for (int i = 0; i < 4; ++i)
         Py_XDECREF(bounds[i]);
@@ -1451,16 +1557,12 @@ static PyObject *native_sturm_count_interval(
         return NULL;
     }
     return Py_BuildValue(
-        "{s:i,s:I,s:K,s:K,s:K,s:K}",
-        "status", (int)analysis.status,
-        "count", (unsigned int)count,
-        "prs_steps", (unsigned long long)analysis.work.prs_steps,
-        "chain_polynomials",
-            (unsigned long long)analysis.work.chain_polynomials,
-        "chain_coefficients",
-            (unsigned long long)analysis.work.chain_coefficients,
+        "{s:i,s:I,s:K,s:K,s:K,s:K}", "status", (int)analysis.status, "count",
+        (unsigned int)count, "prs_steps", (unsigned long long)analysis.work.prs_steps,
+        "chain_polynomials", (unsigned long long)analysis.work.chain_polynomials,
+        "chain_coefficients", (unsigned long long)analysis.work.chain_coefficients,
         "peak_coefficient_bits",
-            (unsigned long long)analysis.work.peak_coefficient_bits);
+        (unsigned long long)analysis.work.peak_coefficient_bits);
 
 interval_cleanup:
     for (int i = 0; i < 4; ++i)
@@ -1479,20 +1581,16 @@ static void NativeSturmPlan_dealloc(NativeSturmPlan *self) {
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-static int NativeSturmPlan_init(
-        NativeSturmPlan *self, PyObject *args, PyObject *kwds) {
+static int NativeSturmPlan_init(NativeSturmPlan *self, PyObject *args, PyObject *kwds) {
     PyObject *coefficients;
     unsigned long long max_bits = 0, max_coefficients = 0, max_steps = 0;
-    static char *kwlist[] = {
-        "coefficients", "max_coefficient_bits", "max_chain_coefficients",
-        "max_prs_steps", NULL
-    };
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwds, "O|KKK", kwlist, &coefficients, &max_bits,
-            &max_coefficients, &max_steps))
+    static char *kwlist[] = {"coefficients", "max_coefficient_bits",
+                             "max_chain_coefficients", "max_prs_steps", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|KKK", kwlist, &coefficients,
+                                     &max_bits, &max_coefficients, &max_steps))
         return -1;
-    PyObject *seq = PySequence_Fast(
-        coefficients, "coefficients must be a nonempty sequence");
+    PyObject *seq =
+        PySequence_Fast(coefficients, "coefficients must be a nonempty sequence");
     if (seq == NULL)
         return -1;
     Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
@@ -1501,10 +1599,8 @@ static int NativeSturmPlan_init(
         PyErr_SetString(PyExc_ValueError, "coefficient sequence is empty");
         return -1;
     }
-    const char **text = (const char **)PyMem_Calloc(
-        (size_t)n, sizeof(char *));
-    PyObject **owned = (PyObject **)PyMem_Calloc(
-        (size_t)n, sizeof(PyObject *));
+    const char **text = (const char **)PyMem_Calloc((size_t)n, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc((size_t)n, sizeof(PyObject *));
     if (text == NULL || owned == NULL) {
         PyMem_Free(text);
         PyMem_Free(owned);
@@ -1522,17 +1618,14 @@ static int NativeSturmPlan_init(
         if (text[i] == NULL)
             goto cleanup;
     }
-    spong_exact_policy policy = {
-        (uint64_t)max_bits, (uint64_t)max_coefficients, (uint64_t)max_steps
-    };
+    spong_exact_policy policy = {(uint64_t)max_bits, (uint64_t)max_coefficients,
+                                 (uint64_t)max_steps};
     spong_sturm_plan_destroy(self->plan);
     self->plan = NULL;
-    if (spong_sturm_plan_create_decimal(
-            text, (size_t)n, &policy, &self->plan, &self->analysis) != 0) {
-        PyErr_Format(
-            PyExc_ArithmeticError,
-            "native Sturm plan refused with status %d",
-            (int)self->analysis.status);
+    if (spong_sturm_plan_create_decimal(text, (size_t)n, &policy, &self->plan,
+                                        &self->analysis) != 0) {
+        PyErr_Format(PyExc_ArithmeticError, "native Sturm plan refused with status %d",
+                     (int)self->analysis.status);
         goto cleanup;
     }
     result = 0;
@@ -1545,10 +1638,9 @@ cleanup:
     return result;
 }
 
-static int rational_text(
-        PyObject *value, PyObject **numerator, PyObject **denominator,
-        PyObject **numerator_text, PyObject **denominator_text,
-        const char **num, const char **den) {
+static int rational_text(PyObject *value, PyObject **numerator, PyObject **denominator,
+                         PyObject **numerator_text, PyObject **denominator_text,
+                         const char **num, const char **den) {
     *numerator = *denominator = *numerator_text = *denominator_text = NULL;
     *num = *den = NULL;
     if (value == Py_None)
@@ -1566,23 +1658,20 @@ static int rational_text(
     return (*num != NULL && *den != NULL) ? 0 : -1;
 }
 
-static PyObject *NativeSturmPlan_count(
-        NativeSturmPlan *self, PyObject *args) {
+static PyObject *NativeSturmPlan_count(NativeSturmPlan *self, PyObject *args) {
     PyObject *lower, *upper;
     if (!PyArg_ParseTuple(args, "OO", &lower, &upper))
         return NULL;
     PyObject *objects[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
     const char *lo_num, *lo_den, *hi_num, *hi_den;
-    if (rational_text(
-            lower, &objects[0], &objects[1], &objects[2], &objects[3],
-            &lo_num, &lo_den) != 0
-            || rational_text(
-                upper, &objects[4], &objects[5], &objects[6], &objects[7],
-                &hi_num, &hi_den) != 0)
+    if (rational_text(lower, &objects[0], &objects[1], &objects[2], &objects[3],
+                      &lo_num, &lo_den) != 0 ||
+        rational_text(upper, &objects[4], &objects[5], &objects[6], &objects[7],
+                      &hi_num, &hi_den) != 0)
         goto cleanup;
     uint32_t count;
-    if (spong_sturm_plan_count(
-            self->plan, lo_num, lo_den, hi_num, hi_den, &count) != 0) {
+    if (spong_sturm_plan_count(self->plan, lo_num, lo_den, hi_num, hi_den, &count) !=
+        0) {
         PyErr_SetString(PyExc_ValueError, "invalid rational interval");
         goto cleanup;
     }
@@ -1595,16 +1684,14 @@ cleanup:
     return NULL;
 }
 
-static PyObject *NativeSturmPlan_sign_at(
-        NativeSturmPlan *self, PyObject *args) {
+static PyObject *NativeSturmPlan_sign_at(NativeSturmPlan *self, PyObject *args) {
     PyObject *value;
     if (!PyArg_ParseTuple(args, "O", &value))
         return NULL;
     PyObject *objects[4] = {NULL, NULL, NULL, NULL};
     const char *num, *den;
-    if (rational_text(
-            value, &objects[0], &objects[1], &objects[2], &objects[3],
-            &num, &den) != 0)
+    if (rational_text(value, &objects[0], &objects[1], &objects[2], &objects[3], &num,
+                      &den) != 0)
         goto cleanup;
     int32_t sign;
     if (spong_sturm_plan_sign_at(self->plan, num, den, &sign) != 0) {
@@ -1620,21 +1707,21 @@ cleanup:
     return NULL;
 }
 
-static PyObject *NativeSturmPlan_sign_polynomial_at_root(
-        NativeSturmPlan *self, PyObject *args, PyObject *kwds) {
+static PyObject *NativeSturmPlan_sign_polynomial_at_root(NativeSturmPlan *self,
+                                                         PyObject *args,
+                                                         PyObject *kwds) {
     PyObject *coefficients, *lower, *upper;
     int exact = 0;
     unsigned long long max_bisections = 160, max_endpoint_bits = 0;
     static char *kwlist[] = {
-        "coefficients", "lower", "upper", "exact",
-        "max_bisections", "max_endpoint_bits", NULL
-    };
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwds, "OOO|pKK", kwlist, &coefficients, &lower, &upper,
-            &exact, &max_bisections, &max_endpoint_bits))
+        "coefficients",      "lower", "upper", "exact", "max_bisections",
+        "max_endpoint_bits", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOO|pKK", kwlist, &coefficients,
+                                     &lower, &upper, &exact, &max_bisections,
+                                     &max_endpoint_bits))
         return NULL;
-    PyObject *seq = PySequence_Fast(
-        coefficients, "coefficients must be a nonempty integer sequence");
+    PyObject *seq = PySequence_Fast(coefficients,
+                                    "coefficients must be a nonempty integer sequence");
     if (seq == NULL)
         return NULL;
     Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
@@ -1643,10 +1730,8 @@ static PyObject *NativeSturmPlan_sign_polynomial_at_root(
         PyErr_SetString(PyExc_ValueError, "coefficient sequence is empty");
         return NULL;
     }
-    const char **text = (const char **)PyMem_Calloc(
-        (size_t)n, sizeof(char *));
-    PyObject **owned = (PyObject **)PyMem_Calloc(
-        (size_t)n, sizeof(PyObject *));
+    const char **text = (const char **)PyMem_Calloc((size_t)n, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc((size_t)n, sizeof(PyObject *));
     PyObject *objects[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
     if (text == NULL || owned == NULL) {
         PyMem_Free(text);
@@ -1664,28 +1749,24 @@ static PyObject *NativeSturmPlan_sign_polynomial_at_root(
             goto cleanup;
     }
     const char *lo_num, *lo_den, *hi_num, *hi_den;
-    if (rational_text(
-            lower, &objects[0], &objects[1], &objects[2], &objects[3],
-            &lo_num, &lo_den) != 0
-            || rational_text(
-                upper, &objects[4], &objects[5], &objects[6], &objects[7],
-                &hi_num, &hi_den) != 0)
+    if (rational_text(lower, &objects[0], &objects[1], &objects[2], &objects[3],
+                      &lo_num, &lo_den) != 0 ||
+        rational_text(upper, &objects[4], &objects[5], &objects[6], &objects[7],
+                      &hi_num, &hi_den) != 0)
         goto cleanup;
-    spong_algebraic_sign_policy policy = {
-        (uint64_t)max_bisections, (uint64_t)max_endpoint_bits
-    };
+    spong_algebraic_sign_policy policy = {(uint64_t)max_bisections,
+                                          (uint64_t)max_endpoint_bits};
     spong_algebraic_sign_result result;
     /* Exact GMP work on a const plan, touching no Python object: the plan is
      * read-only for the query, results are allocated per call, and the file
      * has no mutable statics.  Releasing here is what lets the contact scan
      * run its pairs concurrently -- it is ~80% of a portrait. */
     int evaluated;
-    Py_BEGIN_ALLOW_THREADS
-    evaluated = spong_sturm_plan_sign_polynomial_at_root(
-        self->plan, text, (size_t)n, lo_num, lo_den, hi_num, hi_den,
-        (uint32_t)exact, &policy, &result);
-    Py_END_ALLOW_THREADS
-    if (evaluated != 0 && result.status == SPONG_EXACT_INVALID_ARGUMENT) {
+    Py_BEGIN_ALLOW_THREADS evaluated = spong_sturm_plan_sign_polynomial_at_root(
+        self->plan, text, (size_t)n, lo_num, lo_den, hi_num, hi_den, (uint32_t)exact,
+        &policy, &result);
+    Py_END_ALLOW_THREADS if (evaluated != 0 &&
+                             result.status == SPONG_EXACT_INVALID_ARGUMENT) {
         PyErr_SetString(PyExc_ValueError, "invalid isolating interval");
         goto cleanup;
     }
@@ -1704,13 +1785,10 @@ static PyObject *NativeSturmPlan_sign_polynomial_at_root(
     PyMem_Free(text);
     PyMem_Free(owned);
     Py_DECREF(seq);
-    return Py_BuildValue(
-        "{s:i,s:N,s:I,s:K,s:K}",
-        "status", (int)result.status,
-        "sign", sign,
-        "resolved", (unsigned int)result.resolved,
-        "bisections", (unsigned long long)result.bisections,
-        "max_endpoint_bits", (unsigned long long)result.max_endpoint_bits);
+    return Py_BuildValue("{s:i,s:N,s:I,s:K,s:K}", "status", (int)result.status, "sign",
+                         sign, "resolved", (unsigned int)result.resolved, "bisections",
+                         (unsigned long long)result.bisections, "max_endpoint_bits",
+                         (unsigned long long)result.max_endpoint_bits);
 
 cleanup:
     for (size_t i = 0; i < 8; ++i)
@@ -1723,48 +1801,38 @@ cleanup:
     return NULL;
 }
 
-static PyObject *NativeSturmPlan_refine(
-        NativeSturmPlan *self, PyObject *args) {
+static PyObject *NativeSturmPlan_refine(NativeSturmPlan *self, PyObject *args) {
     PyObject *lower, *upper, *relative_width;
     unsigned long long max_bisections = 0, max_endpoint_bits = 0;
-    if (!PyArg_ParseTuple(
-            args, "OOO|KK", &lower, &upper, &relative_width,
-            &max_bisections, &max_endpoint_bits))
+    if (!PyArg_ParseTuple(args, "OOO|KK", &lower, &upper, &relative_width,
+                          &max_bisections, &max_endpoint_bits))
         return NULL;
-    PyObject *objects[12] = {
-        NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL
-    };
+    PyObject *objects[12] = {NULL, NULL, NULL, NULL, NULL, NULL,
+                             NULL, NULL, NULL, NULL, NULL, NULL};
     const char *lo_num, *lo_den, *hi_num, *hi_den, *rel_num, *rel_den;
-    if (rational_text(
-            lower, &objects[0], &objects[1], &objects[2], &objects[3],
-            &lo_num, &lo_den) != 0
-            || rational_text(
-                upper, &objects[4], &objects[5], &objects[6], &objects[7],
-                &hi_num, &hi_den) != 0
-            || rational_text(
-                relative_width, &objects[8], &objects[9],
-                &objects[10], &objects[11], &rel_num, &rel_den) != 0)
+    if (rational_text(lower, &objects[0], &objects[1], &objects[2], &objects[3],
+                      &lo_num, &lo_den) != 0 ||
+        rational_text(upper, &objects[4], &objects[5], &objects[6], &objects[7],
+                      &hi_num, &hi_den) != 0 ||
+        rational_text(relative_width, &objects[8], &objects[9], &objects[10],
+                      &objects[11], &rel_num, &rel_den) != 0)
         goto cleanup;
-    spong_refinement_policy policy = {
-        (uint64_t)max_bisections, (uint64_t)max_endpoint_bits
-    };
+    spong_refinement_policy policy = {(uint64_t)max_bisections,
+                                      (uint64_t)max_endpoint_bits};
     spong_refinement_work work;
     spong_root_interval *interval = NULL;
     int refined;
-    Py_BEGIN_ALLOW_THREADS
-    refined = spong_sturm_plan_refine(
-        self->plan, lo_num, lo_den, hi_num, hi_den, rel_num, rel_den,
-        &policy, &interval, &work);
-    Py_END_ALLOW_THREADS
-    PyObject *item = Py_None;
+    Py_BEGIN_ALLOW_THREADS refined =
+        spong_sturm_plan_refine(self->plan, lo_num, lo_den, hi_num, hi_den, rel_num,
+                                rel_den, &policy, &interval, &work);
+    Py_END_ALLOW_THREADS PyObject *item = Py_None;
     Py_INCREF(item);
     if (refined == 0) {
         Py_DECREF(item);
-        item = Py_BuildValue(
-            "ssssI", interval->lower_numerator, interval->lower_denominator,
-            interval->upper_numerator, interval->upper_denominator,
-            (unsigned int)interval->exact);
+        item =
+            Py_BuildValue("ssssI", interval->lower_numerator,
+                          interval->lower_denominator, interval->upper_numerator,
+                          interval->upper_denominator, (unsigned int)interval->exact);
         if (item == NULL) {
             spong_root_intervals_destroy(interval, 1);
             goto cleanup;
@@ -1773,73 +1841,62 @@ static PyObject *NativeSturmPlan_refine(
     spong_root_intervals_destroy(interval, refined == 0 ? 1 : 0);
     for (size_t i = 0; i < 12; ++i)
         Py_XDECREF(objects[i]);
-    return Py_BuildValue(
-        "{s:i,s:N,s:K,s:K}",
-        "status", (int)work.status,
-        "interval", item,
-        "bisections", (unsigned long long)work.bisections,
-        "max_endpoint_bits",
-            (unsigned long long)work.max_endpoint_bits);
+    return Py_BuildValue("{s:i,s:N,s:K,s:K}", "status", (int)work.status, "interval",
+                         item, "bisections", (unsigned long long)work.bisections,
+                         "max_endpoint_bits",
+                         (unsigned long long)work.max_endpoint_bits);
 cleanup:
     for (size_t i = 0; i < 12; ++i)
         Py_XDECREF(objects[i]);
     return NULL;
 }
 
-static PyObject *NativeSturmPlan_stats(
-        NativeSturmPlan *self, PyObject *Py_UNUSED(ignored)) {
+static PyObject *NativeSturmPlan_stats(NativeSturmPlan *self,
+                                       PyObject *Py_UNUSED(ignored)) {
     return Py_BuildValue(
-        "{s:i,s:I,s:I,s:i,s:i,s:n,s:K,s:K,s:K,s:K,s:K}",
-        "status", (int)self->analysis.status,
-        "distinct_real_roots",
-            (unsigned int)self->analysis.distinct_real_roots,
-        "repeated_real_roots",
-            (unsigned int)self->analysis.repeated_real_roots,
-        "input_degree", (int)self->analysis.input_degree,
-        "squarefree_degree", (int)self->analysis.squarefree_degree,
-        "sturm_chain_length",
-            (Py_ssize_t)spong_sturm_plan_chain_length(self->plan),
+        "{s:i,s:I,s:I,s:i,s:i,s:n,s:K,s:K,s:K,s:K,s:K}", "status",
+        (int)self->analysis.status, "distinct_real_roots",
+        (unsigned int)self->analysis.distinct_real_roots, "repeated_real_roots",
+        (unsigned int)self->analysis.repeated_real_roots, "input_degree",
+        (int)self->analysis.input_degree, "squarefree_degree",
+        (int)self->analysis.squarefree_degree, "sturm_chain_length",
+        (Py_ssize_t)spong_sturm_plan_chain_length(self->plan),
         "sturm_chain_coefficients",
-            (unsigned long long)spong_sturm_plan_chain_coefficients(self->plan),
+        (unsigned long long)spong_sturm_plan_chain_coefficients(self->plan),
         "prs_steps", (unsigned long long)self->analysis.work.prs_steps,
-        "chain_polynomials",
-            (unsigned long long)self->analysis.work.chain_polynomials,
+        "chain_polynomials", (unsigned long long)self->analysis.work.chain_polynomials,
         "chain_coefficients",
-            (unsigned long long)self->analysis.work.chain_coefficients,
+        (unsigned long long)self->analysis.work.chain_coefficients,
         "peak_coefficient_bits",
-            (unsigned long long)self->analysis.work.peak_coefficient_bits);
+        (unsigned long long)self->analysis.work.peak_coefficient_bits);
 }
 
-static PyObject *NativeSturmPlan_isolate(
-        NativeSturmPlan *self, PyObject *args) {
+static PyObject *NativeSturmPlan_isolate(NativeSturmPlan *self, PyObject *args) {
     unsigned long long max_nodes = 0, max_punctures = 0;
     unsigned long long max_endpoint_bits = 0, max_intervals = 0;
-    if (!PyArg_ParseTuple(
-            args, "|KKKK", &max_nodes, &max_punctures,
-            &max_endpoint_bits, &max_intervals))
+    if (!PyArg_ParseTuple(args, "|KKKK", &max_nodes, &max_punctures, &max_endpoint_bits,
+                          &max_intervals))
         return NULL;
-    spong_isolation_policy policy = {
-        (uint64_t)max_nodes, (uint64_t)max_punctures,
-        (uint64_t)max_endpoint_bits, (uint64_t)max_intervals
-    };
+    spong_isolation_policy policy = {(uint64_t)max_nodes, (uint64_t)max_punctures,
+                                     (uint64_t)max_endpoint_bits,
+                                     (uint64_t)max_intervals};
     spong_isolation_work work;
     spong_root_interval *intervals = NULL;
     size_t count = 0;
     int isolated;
-    Py_BEGIN_ALLOW_THREADS
-    isolated = spong_sturm_plan_isolate(
-        self->plan, &policy, &intervals, &count, &work);
-    Py_END_ALLOW_THREADS
-    PyObject *items = PyList_New(isolated == 0 ? (Py_ssize_t)count : 0);
+    Py_BEGIN_ALLOW_THREADS isolated =
+        spong_sturm_plan_isolate(self->plan, &policy, &intervals, &count, &work);
+    Py_END_ALLOW_THREADS PyObject *items =
+        PyList_New(isolated == 0 ? (Py_ssize_t)count : 0);
     if (items == NULL) {
         spong_root_intervals_destroy(intervals, count);
         return NULL;
     }
     for (size_t i = 0; i < count; ++i) {
         PyObject *item = Py_BuildValue(
-            "ssssI", intervals[i].lower_numerator,
-            intervals[i].lower_denominator, intervals[i].upper_numerator,
-            intervals[i].upper_denominator, (unsigned int)intervals[i].exact);
+            "ssssI", intervals[i].lower_numerator, intervals[i].lower_denominator,
+            intervals[i].upper_numerator, intervals[i].upper_denominator,
+            (unsigned int)intervals[i].exact);
         if (item == NULL) {
             Py_DECREF(items);
             spong_root_intervals_destroy(intervals, count);
@@ -1849,31 +1906,22 @@ static PyObject *NativeSturmPlan_isolate(
     }
     spong_root_intervals_destroy(intervals, count);
     return Py_BuildValue(
-        "{s:i,s:N,s:K,s:K,s:K,s:K,s:K,s:K}",
-        "status", (int)work.status,
-        "intervals", items,
-        "subdivision_nodes",
-            (unsigned long long)work.subdivision_nodes,
-        "variation_evaluations",
-            (unsigned long long)work.variation_evaluations,
-        "polynomial_evaluations",
-            (unsigned long long)work.polynomial_evaluations,
-        "puncture_halvings",
-            (unsigned long long)work.puncture_halvings,
-        "max_subdivision_depth",
-            (unsigned long long)work.max_subdivision_depth,
-        "max_endpoint_bits",
-            (unsigned long long)work.max_endpoint_bits);
+        "{s:i,s:N,s:K,s:K,s:K,s:K,s:K,s:K}", "status", (int)work.status, "intervals",
+        items, "subdivision_nodes", (unsigned long long)work.subdivision_nodes,
+        "variation_evaluations", (unsigned long long)work.variation_evaluations,
+        "polynomial_evaluations", (unsigned long long)work.polynomial_evaluations,
+        "puncture_halvings", (unsigned long long)work.puncture_halvings,
+        "max_subdivision_depth", (unsigned long long)work.max_subdivision_depth,
+        "max_endpoint_bits", (unsigned long long)work.max_endpoint_bits);
 }
 
 static int contact_buffer(PyObject *object, Py_buffer *view) {
-    if (PyObject_GetBuffer(
-            object, view, PyBUF_FORMAT | PyBUF_ND | PyBUF_STRIDES) < 0)
+    if (PyObject_GetBuffer(object, view, PyBUF_FORMAT | PyBUF_ND | PyBUF_STRIDES) < 0)
         return -1;
-    if (view->ndim != 2 || view->shape == NULL || view->shape[0] < 2
-            || view->shape[1] != 2 || view->itemsize != (Py_ssize_t)sizeof(double)
-            || view->format == NULL || strcmp(view->format, "d") != 0
-            || !PyBuffer_IsContiguous(view, 'C')) {
+    if (view->ndim != 2 || view->shape == NULL || view->shape[0] < 2 ||
+        view->shape[1] != 2 || view->itemsize != (Py_ssize_t)sizeof(double) ||
+        view->format == NULL || strcmp(view->format, "d") != 0 ||
+        !PyBuffer_IsContiguous(view, 'C')) {
         PyBuffer_Release(view);
         memset(view, 0, sizeof(*view));
         PyErr_SetString(
@@ -1886,24 +1934,24 @@ static int contact_buffer(PyObject *object, Py_buffer *view) {
 
 static void NativeContactScan_dealloc(NativeContactScan *self) {
     spong_contact_scan_destroy(self->scan);
-    if (self->second.obj != NULL) PyBuffer_Release(&self->second);
-    if (self->first.obj != NULL) PyBuffer_Release(&self->first);
+    if (self->second.obj != NULL)
+        PyBuffer_Release(&self->second);
+    if (self->first.obj != NULL)
+        PyBuffer_Release(&self->first);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-static int NativeContactScan_init(
-        NativeContactScan *self, PyObject *args, PyObject *kwds) {
+static int NativeContactScan_init(NativeContactScan *self, PyObject *args,
+                                  PyObject *kwds) {
     PyObject *first, *second;
     double tolerance;
     int self_scan = 0;
-    static char *kwlist[] = {
-        "first", "second", "tolerance", "self_scan", NULL
-    };
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwds, "OOd|p", kwlist,
-            &first, &second, &tolerance, &self_scan))
+    static char *kwlist[] = {"first", "second", "tolerance", "self_scan", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOd|p", kwlist, &first, &second,
+                                     &tolerance, &self_scan))
         return -1;
-    if (contact_buffer(first, &self->first) < 0) return -1;
+    if (contact_buffer(first, &self->first) < 0)
+        return -1;
     if (!self_scan && contact_buffer(second, &self->second) < 0) {
         PyBuffer_Release(&self->first);
         memset(&self->first, 0, sizeof(self->first));
@@ -1912,10 +1960,10 @@ static int NativeContactScan_init(
     self->scan = spong_contact_scan_create(
         (const double *)self->first.buf, (size_t)self->first.shape[0],
         self_scan ? NULL : (const double *)self->second.buf,
-        self_scan ? 0 : (size_t)self->second.shape[0],
-        tolerance, self_scan);
+        self_scan ? 0 : (size_t)self->second.shape[0], tolerance, self_scan);
     if (self->scan == NULL) {
-        if (self->second.obj != NULL) PyBuffer_Release(&self->second);
+        if (self->second.obj != NULL)
+            PyBuffer_Release(&self->second);
         PyBuffer_Release(&self->first);
         memset(&self->first, 0, sizeof(self->first));
         memset(&self->second, 0, sizeof(self->second));
@@ -1936,18 +1984,14 @@ static PyObject *NativeContactScan_iternext(NativeContactScan *self) {
         PyErr_SetNone(PyExc_StopIteration);
         return NULL;
     }
-    const char *kind = event.kind == SPONG_CONTACT_CROSS
-        ? "cross" : "ambiguous";
-    return Py_BuildValue(
-        "KKs(dd)",
-        (unsigned long long)event.first_segment,
-        (unsigned long long)event.second_segment,
-        kind, event.x, event.y);
+    const char *kind = event.kind == SPONG_CONTACT_CROSS ? "cross" : "ambiguous";
+    return Py_BuildValue("KKs(dd)", (unsigned long long)event.first_segment,
+                         (unsigned long long)event.second_segment, kind, event.x,
+                         event.y);
 }
 
 static PyTypeObject NativeContactScanType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "spong._native.ContactScan",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "spong._native.ContactScan",
     .tp_basicsize = sizeof(NativeContactScan),
     .tp_dealloc = (destructor)NativeContactScan_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -1963,8 +2007,7 @@ static PyMethodDef NativeSturmPlan_methods[] = {
      "Count distinct roots exactly on (lower, upper]."},
     {"sign_at", (PyCFunction)NativeSturmPlan_sign_at, METH_VARARGS,
      "Evaluate the exact sign of the original polynomial."},
-    {"sign_polynomial_at_root",
-     (PyCFunction)NativeSturmPlan_sign_polynomial_at_root,
+    {"sign_polynomial_at_root", (PyCFunction)NativeSturmPlan_sign_polynomial_at_root,
      METH_VARARGS | METH_KEYWORDS,
      "Certify an integer polynomial's sign at an isolated algebraic root."},
     {"refine", (PyCFunction)NativeSturmPlan_refine, METH_VARARGS,
@@ -1973,12 +2016,10 @@ static PyMethodDef NativeSturmPlan_methods[] = {
      "Isolate all distinct real roots exactly with bounded work."},
     {"stats", (PyCFunction)NativeSturmPlan_stats, METH_NOARGS,
      "Return exact-plan construction statistics."},
-    {NULL, NULL, 0, NULL}
-};
+    {NULL, NULL, 0, NULL}};
 
 static PyTypeObject NativeSturmPlanType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "spong._native.SturmPlan",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "spong._native.SturmPlan",
     .tp_basicsize = sizeof(NativeSturmPlan),
     .tp_dealloc = (destructor)NativeSturmPlan_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -1988,36 +2029,31 @@ static PyTypeObject NativeSturmPlanType = {
     .tp_new = PyType_GenericNew,
 };
 
-static PyObject *native_poincare_pullback(
-        PyObject *self, PyObject *args) {
+static PyObject *native_poincare_pullback(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *coefficients, *selected;
     Py_ssize_t nu, ns;
     const char *lambda_u, *lambda_s;
     unsigned long long precision_bits = 192;
-    if (!PyArg_ParseTuple(
-            args, "OnnOss|K", &coefficients, &nu, &ns, &selected,
-            &lambda_u, &lambda_s, &precision_bits))
+    if (!PyArg_ParseTuple(args, "OnnOss|K", &coefficients, &nu, &ns, &selected,
+                          &lambda_u, &lambda_s, &precision_bits))
         return NULL;
-    if (nu < 1 || ns < 1 || nu > PY_SSIZE_T_MAX/ns
-            || nu*ns > PY_SSIZE_T_MAX/2) {
+    if (nu < 1 || ns < 1 || nu > PY_SSIZE_T_MAX / ns || nu * ns > PY_SSIZE_T_MAX / 2) {
         PyErr_SetString(PyExc_ValueError, "invalid normal polynomial shape");
         return NULL;
     }
-    PyObject *seq = PySequence_Fast(
-        coefficients, "normal coefficients must be a flat sequence");
+    PyObject *seq =
+        PySequence_Fast(coefficients, "normal coefficients must be a flat sequence");
     if (seq == NULL)
         return NULL;
     Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
-    if (count != 2*nu*ns) {
+    if (count != 2 * nu * ns) {
         Py_DECREF(seq);
         PyErr_SetString(PyExc_ValueError, "normal coefficient count mismatch");
         return NULL;
     }
-    const char **text = (const char **)PyMem_Calloc(
-        (size_t)count, sizeof(char *));
-    PyObject **owned = (PyObject **)PyMem_Calloc(
-        (size_t)count, sizeof(PyObject *));
+    const char **text = (const char **)PyMem_Calloc((size_t)count, sizeof(char *));
+    PyObject **owned = (PyObject **)PyMem_Calloc((size_t)count, sizeof(PyObject *));
     if (text == NULL || owned == NULL) {
         PyMem_Free(text);
         PyMem_Free(owned);
@@ -2043,14 +2079,13 @@ static PyObject *native_poincare_pullback(
         goto cleanup;
     }
     spong_vector_polynomial result;
-    int status = spong_poincare_pullback_decimal(
-        text, (size_t)nu, (size_t)ns, map, lambda_u, lambda_s,
-        (uint64_t)precision_bits, &result);
+    int status =
+        spong_poincare_pullback_decimal(text, (size_t)nu, (size_t)ns, map, lambda_u,
+                                        lambda_s, (uint64_t)precision_bits, &result);
     PyMem_Free(map);
     if (status != SPONG_EXACT_OK) {
-        PyErr_Format(
-            PyExc_ArithmeticError,
-            "native Poincare pullback refused with status %d", status);
+        PyErr_Format(PyExc_ArithmeticError,
+                     "native Poincare pullback refused with status %d", status);
         goto cleanup;
     }
     PyObject *components = PyTuple_New(2);
@@ -2075,8 +2110,10 @@ static PyObject *native_poincare_pullback(
             }
             PyTuple_SET_ITEM(rows, (Py_ssize_t)i, row);
             for (size_t j = 0; j < result.s_count; ++j) {
-                PyObject *value = PyFloat_FromDouble(result.coefficients[
-                    (component*result.u_count+i)*result.s_count+j]);
+                PyObject *value = PyFloat_FromDouble(
+                    result.coefficients[(component * result.u_count + i) *
+                                            result.s_count +
+                                        j]);
                 if (value == NULL) {
                     Py_DECREF(components);
                     spong_vector_polynomial_destroy(&result);
@@ -2103,7 +2140,780 @@ cleanup:
     return NULL;
 }
 
-static PyTypeObject KernelType;   /* defined below; needed for the check */
+typedef struct {
+    PyObject *numerator;
+    PyObject *denominator;
+    spong_rational_input input;
+} RationalText;
+
+static void rational_text_clear(RationalText *value) {
+    Py_XDECREF(value->numerator);
+    Py_XDECREF(value->denominator);
+    memset(value, 0, sizeof(*value));
+}
+
+static int rational_text_from_object(PyObject *object, RationalText *out) {
+    memset(out, 0, sizeof(*out));
+    PyObject *numerator = PyObject_GetAttrString(object, "numerator");
+    PyObject *denominator = PyObject_GetAttrString(object, "denominator");
+    if (numerator == NULL || denominator == NULL) {
+        Py_XDECREF(numerator);
+        Py_XDECREF(denominator);
+        PyErr_SetString(PyExc_TypeError,
+                        "exact values must expose numerator/denominator");
+        return -1;
+    }
+    out->numerator = PyObject_Str(numerator);
+    out->denominator = PyObject_Str(denominator);
+    Py_DECREF(numerator);
+    Py_DECREF(denominator);
+    if (out->numerator == NULL || out->denominator == NULL) {
+        rational_text_clear(out);
+        return -1;
+    }
+    out->input.numerator = PyUnicode_AsUTF8(out->numerator);
+    out->input.denominator = PyUnicode_AsUTF8(out->denominator);
+    if (out->input.numerator == NULL || out->input.denominator == NULL) {
+        rational_text_clear(out);
+        return -1;
+    }
+    return 0;
+}
+
+typedef struct {
+    PyObject *sequence;
+    RationalText *text;
+    spong_rational_input *input;
+    Py_ssize_t count;
+} RationalSequence;
+
+static void rational_sequence_clear(RationalSequence *sequence) {
+    if (sequence->text != NULL) {
+        for (Py_ssize_t i = 0; i < sequence->count; ++i)
+            rational_text_clear(&sequence->text[i]);
+    }
+    PyMem_Free(sequence->text);
+    PyMem_Free(sequence->input);
+    Py_XDECREF(sequence->sequence);
+    memset(sequence, 0, sizeof(*sequence));
+}
+
+static int rational_sequence_from_object(PyObject *object, RationalSequence *out,
+                                         const char *message) {
+    memset(out, 0, sizeof(*out));
+    out->sequence = PySequence_Fast(object, message);
+    if (out->sequence == NULL)
+        return -1;
+    out->count = PySequence_Fast_GET_SIZE(out->sequence);
+    if (out->count < 1) {
+        PyErr_SetString(PyExc_ValueError, "exact coefficient array is empty");
+        rational_sequence_clear(out);
+        return -1;
+    }
+    out->text = (RationalText *)PyMem_Calloc((size_t)out->count, sizeof(RationalText));
+    out->input = (spong_rational_input *)PyMem_Calloc((size_t)out->count,
+                                                      sizeof(spong_rational_input));
+    if (out->text == NULL || out->input == NULL) {
+        PyErr_NoMemory();
+        rational_sequence_clear(out);
+        return -1;
+    }
+    PyObject **items = PySequence_Fast_ITEMS(out->sequence);
+    for (Py_ssize_t i = 0; i < out->count; ++i) {
+        if (rational_text_from_object(items[i], &out->text[i]) != 0) {
+            rational_sequence_clear(out);
+            return -1;
+        }
+        out->input[i] = out->text[i].input;
+    }
+    return 0;
+}
+
+static PyObject *owned_rational_tuple(const spong_owned_rational *value) {
+    if (value->numerator == NULL || value->denominator == NULL) {
+        Py_RETURN_NONE;
+    }
+    /* Python deliberately caps decimal-to-int conversions at roughly 4300
+     * digits.  Exact tube endpoints can legitimately exceed that while still
+     * fitting the backend's rational-bit budget.  Validate with GMP, export
+     * in base 16 (a power-of-two base has no CPython digit cap), and only then
+     * construct the frontend integer. */
+    mpz_t parsed;
+    mpz_init(parsed);
+    if (mpz_set_str(parsed, value->numerator, 10) != 0) {
+        mpz_clear(parsed);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "native certificate returned a bad numerator");
+        return NULL;
+    }
+    size_t digits = mpz_sizeinbase(parsed, 16) + 3;
+    char *hex = (char *)PyMem_Malloc(digits);
+    if (hex == NULL) {
+        mpz_clear(parsed);
+        return PyErr_NoMemory();
+    }
+    mpz_get_str(hex, 16, parsed);
+    char *end = NULL;
+    PyObject *numerator = PyLong_FromString(hex, &end, 16);
+    int numerator_complete = end != NULL && *end == '\0';
+    PyMem_Free(hex);
+    if (numerator == NULL || !numerator_complete) {
+        Py_XDECREF(numerator);
+        mpz_clear(parsed);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "native certificate returned a bad numerator");
+        return NULL;
+    }
+    if (mpz_set_str(parsed, value->denominator, 10) != 0) {
+        Py_DECREF(numerator);
+        mpz_clear(parsed);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "native certificate returned a bad denominator");
+        return NULL;
+    }
+    digits = mpz_sizeinbase(parsed, 16) + 3;
+    hex = (char *)PyMem_Malloc(digits);
+    if (hex == NULL) {
+        Py_DECREF(numerator);
+        mpz_clear(parsed);
+        return PyErr_NoMemory();
+    }
+    mpz_get_str(hex, 16, parsed);
+    end = NULL;
+    PyObject *denominator = PyLong_FromString(hex, &end, 16);
+    int denominator_complete = end != NULL && *end == '\0';
+    PyMem_Free(hex);
+    mpz_clear(parsed);
+    if (denominator == NULL || !denominator_complete) {
+        Py_DECREF(numerator);
+        Py_XDECREF(denominator);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "native certificate returned a bad denominator");
+        return NULL;
+    }
+    return Py_BuildValue("NN", numerator, denominator);
+}
+
+static PyObject *owned_interval_tuple(const spong_owned_rational_interval *value) {
+    if (value->lower.numerator == NULL || value->upper.numerator == NULL)
+        Py_RETURN_NONE;
+    PyObject *lower = owned_rational_tuple(&value->lower);
+    PyObject *upper = owned_rational_tuple(&value->upper);
+    if (lower == NULL || upper == NULL) {
+        Py_XDECREF(lower);
+        Py_XDECREF(upper);
+        return NULL;
+    }
+    return Py_BuildValue("NN", lower, upper);
+}
+
+static PyObject *native_b_parameter_handoff(PyObject *self, PyObject *args,
+                                            PyObject *kwds) {
+    (void)self;
+    PyObject *alpha_obj, *beta_obj, *n_obj, *constant_obj;
+    PyObject *centres_obj, *initial_obj, *target_obj;
+    PyObject *max_radius_obj = Py_None;
+    unsigned long long max_inflations = 32;
+    unsigned long long max_slab_bisections = 10;
+    unsigned long long max_projection_bisections = 24;
+    unsigned long long max_projection_subboxes = 4096;
+    unsigned long long max_rational_bits = 16384;
+    unsigned long long radius_round_bits = 192;
+    int verify_n_identity = 1;
+    static char *kwlist[] = {"alpha",
+                             "beta",
+                             "n",
+                             "loss_constant",
+                             "centres",
+                             "initial_y_interval",
+                             "target_level",
+                             "max_radius",
+                             "max_inflations",
+                             "max_slab_bisections",
+                             "max_projection_bisections",
+                             "max_projection_subboxes",
+                             "max_rational_bits",
+                             "radius_round_bits",
+                             "verify_n_identity",
+                             NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "OOOOOOO|OKKKKKKp", kwlist, &alpha_obj, &beta_obj, &n_obj,
+            &constant_obj, &centres_obj, &initial_obj, &target_obj, &max_radius_obj,
+            &max_inflations, &max_slab_bisections, &max_projection_bisections,
+            &max_projection_subboxes, &max_rational_bits, &radius_round_bits,
+            &verify_n_identity))
+        return NULL;
+
+    RationalSequence alpha = {0}, beta = {0}, n = {0};
+    RationalText constant = {0}, target = {0}, max_radius = {0};
+    RationalText initial[2] = {{0}, {0}};
+    PyObject *initial_seq = NULL, *centre_seq = NULL;
+    RationalText *centre_text = NULL;
+    spong_b_parameter_centre *centres = NULL;
+    PyObject **centre_rows = NULL;
+    Py_ssize_t centre_count = 0;
+    spong_b_parameter_result result;
+    memset(&result, 0, sizeof(result));
+
+    if (rational_sequence_from_object(alpha_obj, &alpha,
+                                      "alpha must be a nonempty sequence") != 0 ||
+        rational_sequence_from_object(beta_obj, &beta,
+                                      "beta must be a nonempty sequence") != 0 ||
+        rational_sequence_from_object(n_obj, &n, "n must be a nonempty sequence") !=
+            0 ||
+        rational_text_from_object(constant_obj, &constant) != 0 ||
+        rational_text_from_object(target_obj, &target) != 0)
+        goto cleanup;
+    if (max_radius_obj != Py_None &&
+        rational_text_from_object(max_radius_obj, &max_radius) != 0)
+        goto cleanup;
+    initial_seq =
+        PySequence_Fast(initial_obj, "initial_y_interval must contain lower and upper");
+    if (initial_seq == NULL)
+        goto cleanup;
+    if (PySequence_Fast_GET_SIZE(initial_seq) != 2) {
+        PyErr_SetString(PyExc_ValueError, "initial_y_interval must have length two");
+        goto cleanup;
+    }
+    for (int i = 0; i < 2; ++i)
+        if (rational_text_from_object(PySequence_Fast_ITEMS(initial_seq)[i],
+                                      &initial[i]) != 0)
+            goto cleanup;
+
+    centre_seq =
+        PySequence_Fast(centres_obj, "centres must be a sequence of (level,b,y)");
+    if (centre_seq == NULL)
+        goto cleanup;
+    centre_count = PySequence_Fast_GET_SIZE(centre_seq);
+    if (centre_count < 2) {
+        PyErr_SetString(PyExc_ValueError, "at least two centres are required");
+        goto cleanup;
+    }
+    centre_text =
+        (RationalText *)PyMem_Calloc((size_t)centre_count * 3, sizeof(RationalText));
+    centres = (spong_b_parameter_centre *)PyMem_Calloc(
+        (size_t)centre_count, sizeof(spong_b_parameter_centre));
+    centre_rows = (PyObject **)PyMem_Calloc((size_t)centre_count, sizeof(PyObject *));
+    if (centre_text == NULL || centres == NULL || centre_rows == NULL) {
+        PyErr_NoMemory();
+        goto cleanup;
+    }
+    for (Py_ssize_t i = 0; i < centre_count; ++i) {
+        centre_rows[i] = PySequence_Fast(PySequence_Fast_ITEMS(centre_seq)[i],
+                                         "each centre must be a (level,b,y) triple");
+        if (centre_rows[i] == NULL)
+            goto cleanup;
+        if (PySequence_Fast_GET_SIZE(centre_rows[i]) != 3) {
+            PyErr_SetString(PyExc_ValueError, "each centre must have length three");
+            goto cleanup;
+        }
+        PyObject **items = PySequence_Fast_ITEMS(centre_rows[i]);
+        for (int j = 0; j < 3; ++j)
+            if (rational_text_from_object(items[j], &centre_text[3 * i + j]) != 0)
+                goto cleanup;
+        centres[i].level = centre_text[3 * i].input;
+        centres[i].b = centre_text[3 * i + 1].input;
+        centres[i].y = centre_text[3 * i + 2].input;
+    }
+
+    spong_exact_loss_pencil pencil = {
+        alpha.input, (size_t)alpha.count, beta.input,    (size_t)beta.count,
+        n.input,     (size_t)n.count,     constant.input};
+    spong_b_parameter_policy policy = {(uint64_t)max_inflations,
+                                       (uint64_t)max_slab_bisections,
+                                       (uint64_t)max_projection_bisections,
+                                       (uint64_t)max_projection_subboxes,
+                                       (uint64_t)max_rational_bits,
+                                       (uint64_t)radius_round_bits,
+                                       (uint32_t)verify_n_identity};
+    Py_BEGIN_ALLOW_THREADS(void) spong_b_parameter_handoff_decimal(
+        &pencil, centres, (size_t)centre_count, &initial[0].input, &initial[1].input,
+        &target.input, max_radius_obj == Py_None ? NULL : &max_radius.input, &policy,
+        &result);
+    Py_END_ALLOW_THREADS
+
+        PyObject *target_b = owned_interval_tuple(&result.target_b);
+    PyObject *target_y = owned_interval_tuple(&result.target_y);
+    PyObject *minimum_face = owned_rational_tuple(&result.minimum_face_margin);
+    PyObject *minimum_norm =
+        owned_rational_tuple(&result.minimum_gradient_norm_squared);
+    if (target_b == NULL || target_y == NULL || minimum_face == NULL ||
+        minimum_norm == NULL) {
+        Py_XDECREF(target_b);
+        Py_XDECREF(target_y);
+        Py_XDECREF(minimum_face);
+        Py_XDECREF(minimum_norm);
+        goto cleanup;
+    }
+    PyObject *output = Py_BuildValue(
+        "{s:i,s:s,s:i,s:s,s:i,s:I,s:I,s:N,s:N,s:N,s:N,"
+        "s:{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}}",
+        "status", (int)result.status, "status_name",
+        spong_smale_status_name(result.status), "primary_reason",
+        (int)result.primary_reason, "reason_name",
+        spong_smale_reason_name(result.primary_reason), "b_direction",
+        (int)result.b_direction, "tube_validated", (unsigned int)result.tube_validated,
+        "projection_validated", (unsigned int)result.projection_validated, "target_b",
+        target_b, "target_y", target_y, "minimum_face_margin", minimum_face,
+        "minimum_gradient_norm_squared", minimum_norm, "work", "input_rationals",
+        (unsigned long long)result.work.input_rationals, "slabs_accepted",
+        (unsigned long long)result.work.slabs_accepted, "slab_bisections",
+        (unsigned long long)result.work.slab_bisections, "inflation_steps",
+        (unsigned long long)result.work.inflation_steps, "interval_evaluations",
+        (unsigned long long)result.work.interval_evaluations, "projection_subboxes",
+        (unsigned long long)result.work.projection_subboxes, "projection_depth",
+        (unsigned long long)result.work.projection_depth, "peak_rational_bits",
+        (unsigned long long)result.work.peak_rational_bits);
+    spong_b_parameter_result_destroy(&result);
+    result.status = SPONG_SMALE_INTERNAL_FAILURE;
+
+    for (Py_ssize_t i = 0; i < centre_count * 3; ++i)
+        rational_text_clear(&centre_text[i]);
+    for (Py_ssize_t i = 0; i < centre_count; ++i)
+        Py_XDECREF(centre_rows[i]);
+    PyMem_Free(centre_text);
+    PyMem_Free(centres);
+    PyMem_Free(centre_rows);
+    Py_DECREF(centre_seq);
+    Py_DECREF(initial_seq);
+    for (int i = 0; i < 2; ++i)
+        rational_text_clear(&initial[i]);
+    rational_text_clear(&constant);
+    rational_text_clear(&target);
+    rational_text_clear(&max_radius);
+    rational_sequence_clear(&alpha);
+    rational_sequence_clear(&beta);
+    rational_sequence_clear(&n);
+    return output;
+
+cleanup:
+    spong_b_parameter_result_destroy(&result);
+    if (centre_text != NULL)
+        for (Py_ssize_t i = 0; i < centre_count * 3; ++i)
+            rational_text_clear(&centre_text[i]);
+    if (centre_rows != NULL)
+        for (Py_ssize_t i = 0; i < centre_count; ++i)
+            Py_XDECREF(centre_rows[i]);
+    PyMem_Free(centre_text);
+    PyMem_Free(centres);
+    PyMem_Free(centre_rows);
+    Py_XDECREF(centre_seq);
+    Py_XDECREF(initial_seq);
+    for (int i = 0; i < 2; ++i)
+        rational_text_clear(&initial[i]);
+    rational_text_clear(&constant);
+    rational_text_clear(&target);
+    rational_text_clear(&max_radius);
+    rational_sequence_clear(&alpha);
+    rational_sequence_clear(&beta);
+    rational_sequence_clear(&n);
+    return NULL;
+}
+
+static PyObject *native_sheet_flow_tube(PyObject *self, PyObject *args,
+                                        PyObject *kwds) {
+    (void)self;
+    PyObject *alpha_obj, *beta_obj, *n_obj, *constant_obj;
+    PyObject *centres_obj, *initial_b_obj, *initial_y_obj;
+    PyObject *max_radius_obj = Py_None;
+    int sheet;
+    unsigned long long max_inflations = 32;
+    unsigned long long max_slab_bisections = 10;
+    unsigned long long max_projection_bisections = 24;
+    unsigned long long max_projection_subboxes = 4096;
+    unsigned long long max_rational_bits = 16384;
+    unsigned long long radius_round_bits = 192;
+    unsigned long long sqrt_bits = 192;
+    int verify_n_identity = 1;
+    static char *kwlist[] = {"alpha",
+                             "beta",
+                             "n",
+                             "loss_constant",
+                             "centres",
+                             "initial_b_interval",
+                             "initial_y_interval",
+                             "sheet",
+                             "max_radius",
+                             "max_inflations",
+                             "max_slab_bisections",
+                             "max_projection_bisections",
+                             "max_projection_subboxes",
+                             "max_rational_bits",
+                             "radius_round_bits",
+                             "sqrt_bits",
+                             "verify_n_identity",
+                             NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "OOOOOOOi|OKKKKKKKp", kwlist, &alpha_obj, &beta_obj, &n_obj,
+            &constant_obj, &centres_obj, &initial_b_obj, &initial_y_obj, &sheet,
+            &max_radius_obj, &max_inflations, &max_slab_bisections,
+            &max_projection_bisections, &max_projection_subboxes, &max_rational_bits,
+            &radius_round_bits, &sqrt_bits, &verify_n_identity))
+        return NULL;
+
+    RationalSequence alpha = {0}, beta = {0}, n = {0};
+    RationalText constant = {0}, max_radius = {0};
+    RationalText initial_b[2] = {{0}, {0}};
+    RationalText initial_y[2] = {{0}, {0}};
+    PyObject *initial_b_seq = NULL, *initial_y_seq = NULL, *centre_seq = NULL;
+    RationalText *centre_text = NULL;
+    spong_b_parameter_centre *centres = NULL;
+    PyObject **centre_rows = NULL;
+    Py_ssize_t centre_count = 0;
+    spong_sheet_tube_result result;
+    memset(&result, 0, sizeof(result));
+
+    if (rational_sequence_from_object(alpha_obj, &alpha,
+                                      "alpha must be a nonempty sequence") != 0 ||
+        rational_sequence_from_object(beta_obj, &beta,
+                                      "beta must be a nonempty sequence") != 0 ||
+        rational_sequence_from_object(n_obj, &n, "n must be a nonempty sequence") !=
+            0 ||
+        rational_text_from_object(constant_obj, &constant) != 0)
+        goto cleanup;
+    if (max_radius_obj != Py_None &&
+        rational_text_from_object(max_radius_obj, &max_radius) != 0)
+        goto cleanup;
+    initial_b_seq = PySequence_Fast(initial_b_obj,
+                                    "initial_b_interval must contain lower and upper");
+    initial_y_seq = PySequence_Fast(initial_y_obj,
+                                    "initial_y_interval must contain lower and upper");
+    if (initial_b_seq == NULL || initial_y_seq == NULL)
+        goto cleanup;
+    if (PySequence_Fast_GET_SIZE(initial_b_seq) != 2 ||
+        PySequence_Fast_GET_SIZE(initial_y_seq) != 2) {
+        PyErr_SetString(PyExc_ValueError,
+                        "initial intervals must each have length two");
+        goto cleanup;
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (rational_text_from_object(PySequence_Fast_ITEMS(initial_b_seq)[i],
+                                      &initial_b[i]) != 0 ||
+            rational_text_from_object(PySequence_Fast_ITEMS(initial_y_seq)[i],
+                                      &initial_y[i]) != 0)
+            goto cleanup;
+    }
+
+    centre_seq =
+        PySequence_Fast(centres_obj, "centres must be a sequence of (level,b,y)");
+    if (centre_seq == NULL)
+        goto cleanup;
+    centre_count = PySequence_Fast_GET_SIZE(centre_seq);
+    if (centre_count < 2) {
+        PyErr_SetString(PyExc_ValueError, "at least two centres are required");
+        goto cleanup;
+    }
+    centre_text =
+        (RationalText *)PyMem_Calloc((size_t)centre_count * 3, sizeof(RationalText));
+    centres = (spong_b_parameter_centre *)PyMem_Calloc(
+        (size_t)centre_count, sizeof(spong_b_parameter_centre));
+    centre_rows = (PyObject **)PyMem_Calloc((size_t)centre_count, sizeof(PyObject *));
+    if (centre_text == NULL || centres == NULL || centre_rows == NULL) {
+        PyErr_NoMemory();
+        goto cleanup;
+    }
+    for (Py_ssize_t i = 0; i < centre_count; ++i) {
+        centre_rows[i] = PySequence_Fast(PySequence_Fast_ITEMS(centre_seq)[i],
+                                         "each centre must be a (level,b,y) triple");
+        if (centre_rows[i] == NULL)
+            goto cleanup;
+        if (PySequence_Fast_GET_SIZE(centre_rows[i]) != 3) {
+            PyErr_SetString(PyExc_ValueError, "each centre must have length three");
+            goto cleanup;
+        }
+        PyObject **items = PySequence_Fast_ITEMS(centre_rows[i]);
+        for (int j = 0; j < 3; ++j)
+            if (rational_text_from_object(items[j], &centre_text[3 * i + j]) != 0)
+                goto cleanup;
+        centres[i].level = centre_text[3 * i].input;
+        centres[i].b = centre_text[3 * i + 1].input;
+        centres[i].y = centre_text[3 * i + 2].input;
+    }
+
+    spong_exact_loss_pencil pencil = {
+        alpha.input, (size_t)alpha.count, beta.input,    (size_t)beta.count,
+        n.input,     (size_t)n.count,     constant.input};
+    spong_sheet_tube_policy policy = {(uint64_t)max_inflations,
+                                      (uint64_t)max_slab_bisections,
+                                      (uint64_t)max_projection_bisections,
+                                      (uint64_t)max_projection_subboxes,
+                                      (uint64_t)max_rational_bits,
+                                      (uint64_t)radius_round_bits,
+                                      (uint64_t)sqrt_bits,
+                                      (uint32_t)verify_n_identity};
+    Py_BEGIN_ALLOW_THREADS(void) spong_sheet_flow_tube_decimal(
+        &pencil, centres, (size_t)centre_count, &initial_b[0].input,
+        &initial_b[1].input, &initial_y[0].input, &initial_y[1].input, (int32_t)sheet,
+        max_radius_obj == Py_None ? NULL : &max_radius.input, &policy, &result);
+    Py_END_ALLOW_THREADS
+
+        PyObject *terminal_b = owned_interval_tuple(&result.terminal_b);
+    PyObject *terminal_y = owned_interval_tuple(&result.terminal_y);
+    PyObject *minimum_face = owned_rational_tuple(&result.minimum_face_margin);
+    PyObject *minimum_norm =
+        owned_rational_tuple(&result.minimum_gradient_norm_squared);
+    if (terminal_b == NULL || terminal_y == NULL || minimum_face == NULL ||
+        minimum_norm == NULL) {
+        Py_XDECREF(terminal_b);
+        Py_XDECREF(terminal_y);
+        Py_XDECREF(minimum_face);
+        Py_XDECREF(minimum_norm);
+        goto cleanup;
+    }
+    PyObject *output = Py_BuildValue(
+        "{s:i,s:s,s:i,s:s,s:i,s:i,s:I,s:I,s:N,s:N,s:N,s:N,"
+        "s:{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}}",
+        "status", (int)result.status, "status_name",
+        spong_smale_status_name(result.status), "primary_reason",
+        (int)result.primary_reason, "reason_name",
+        spong_smale_reason_name(result.primary_reason), "level_direction",
+        (int)result.level_direction, "sheet", (int)result.sheet, "tube_validated",
+        (unsigned int)result.tube_validated, "projection_validated",
+        (unsigned int)result.projection_validated, "terminal_b", terminal_b,
+        "terminal_y", terminal_y, "minimum_face_margin", minimum_face,
+        "minimum_gradient_norm_squared", minimum_norm, "work", "input_rationals",
+        (unsigned long long)result.work.input_rationals, "slabs_accepted",
+        (unsigned long long)result.work.slabs_accepted, "slab_bisections",
+        (unsigned long long)result.work.slab_bisections, "inflation_steps",
+        (unsigned long long)result.work.inflation_steps, "interval_evaluations",
+        (unsigned long long)result.work.interval_evaluations, "projection_subboxes",
+        (unsigned long long)result.work.projection_subboxes, "projection_depth",
+        (unsigned long long)result.work.projection_depth, "peak_rational_bits",
+        (unsigned long long)result.work.peak_rational_bits);
+    spong_sheet_tube_result_destroy(&result);
+    result.status = SPONG_SMALE_INTERNAL_FAILURE;
+
+    for (Py_ssize_t i = 0; i < centre_count * 3; ++i)
+        rational_text_clear(&centre_text[i]);
+    for (Py_ssize_t i = 0; i < centre_count; ++i)
+        Py_XDECREF(centre_rows[i]);
+    PyMem_Free(centre_text);
+    PyMem_Free(centres);
+    PyMem_Free(centre_rows);
+    Py_DECREF(centre_seq);
+    Py_DECREF(initial_b_seq);
+    Py_DECREF(initial_y_seq);
+    for (int i = 0; i < 2; ++i) {
+        rational_text_clear(&initial_b[i]);
+        rational_text_clear(&initial_y[i]);
+    }
+    rational_text_clear(&constant);
+    rational_text_clear(&max_radius);
+    rational_sequence_clear(&alpha);
+    rational_sequence_clear(&beta);
+    rational_sequence_clear(&n);
+    return output;
+
+cleanup:
+    spong_sheet_tube_result_destroy(&result);
+    if (centre_text != NULL)
+        for (Py_ssize_t i = 0; i < centre_count * 3; ++i)
+            rational_text_clear(&centre_text[i]);
+    if (centre_rows != NULL)
+        for (Py_ssize_t i = 0; i < centre_count; ++i)
+            Py_XDECREF(centre_rows[i]);
+    PyMem_Free(centre_text);
+    PyMem_Free(centres);
+    PyMem_Free(centre_rows);
+    Py_XDECREF(centre_seq);
+    Py_XDECREF(initial_b_seq);
+    Py_XDECREF(initial_y_seq);
+    for (int i = 0; i < 2; ++i) {
+        rational_text_clear(&initial_b[i]);
+        rational_text_clear(&initial_y[i]);
+    }
+    rational_text_clear(&constant);
+    rational_text_clear(&max_radius);
+    rational_sequence_clear(&alpha);
+    rational_sequence_clear(&beta);
+    rational_sequence_clear(&n);
+    return NULL;
+}
+
+static PyObject *native_local_launch(PyObject *self, PyObject *args, PyObject *kwds) {
+    (void)self;
+    PyObject *alpha_obj, *beta_obj, *n_obj, *constant_obj;
+    PyObject *critical_obj, *frame_obj, *map_obj, *ld_obj, *reach_obj;
+    const char *source;
+    int orientation;
+    unsigned long long max_reach_halvings = 24, max_slope_doublings = 96;
+    unsigned long long tangent_bisections = 80, section_bisections = 40;
+    unsigned long long frobenius_subdivisions = 8, max_rational_bits = 16384;
+    int verify_n_identity = 1, require_frobenius = 1;
+    static char *kwlist[] = {"alpha",
+                             "beta",
+                             "n",
+                             "loss_constant",
+                             "critical_source",
+                             "critical_b_interval",
+                             "frame",
+                             "selected_map",
+                             "departing_eigenvalue",
+                             "desired_reach",
+                             "orientation",
+                             "max_reach_halvings",
+                             "max_slope_doublings",
+                             "tangent_bisections",
+                             "section_bisections",
+                             "frobenius_subdivisions",
+                             "max_rational_bits",
+                             "verify_n_identity",
+                             "require_frobenius",
+                             NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwds, "OOOOsOOOOOi|KKKKKKpp", kwlist, &alpha_obj, &beta_obj, &n_obj,
+            &constant_obj, &source, &critical_obj, &frame_obj, &map_obj, &ld_obj,
+            &reach_obj, &orientation, &max_reach_halvings, &max_slope_doublings,
+            &tangent_bisections, &section_bisections, &frobenius_subdivisions,
+            &max_rational_bits, &verify_n_identity, &require_frobenius))
+        return NULL;
+
+    RationalSequence alpha = {0}, beta = {0}, n = {0}, frame = {0}, map = {0};
+    RationalText constant = {0}, critical[2] = {{0}, {0}}, ld = {0}, reach = {0};
+    PyObject *critical_seq = NULL;
+    spong_local_launch_result result;
+    memset(&result, 0, sizeof(result));
+    if (rational_sequence_from_object(alpha_obj, &alpha, "alpha must be nonempty") ||
+        rational_sequence_from_object(beta_obj, &beta, "beta must be nonempty") ||
+        rational_sequence_from_object(n_obj, &n, "n must be nonempty") ||
+        rational_sequence_from_object(frame_obj, &frame, "frame must be a sequence") ||
+        rational_sequence_from_object(map_obj, &map,
+                                      "selected_map must be a sequence") ||
+        rational_text_from_object(constant_obj, &constant) ||
+        rational_text_from_object(ld_obj, &ld) ||
+        rational_text_from_object(reach_obj, &reach))
+        goto local_cleanup;
+    if (frame.count != 4 || map.count != 6) {
+        PyErr_SetString(PyExc_ValueError,
+                        "frame and selected_map must have 4 and 6 entries");
+        goto local_cleanup;
+    }
+    critical_seq = PySequence_Fast(critical_obj,
+                                   "critical_b_interval must contain lower and upper");
+    if (!critical_seq)
+        goto local_cleanup;
+    if (PySequence_Fast_GET_SIZE(critical_seq) != 2) {
+        PyErr_SetString(PyExc_ValueError, "critical_b_interval must have length two");
+        goto local_cleanup;
+    }
+    for (int i = 0; i < 2; i++)
+        if (rational_text_from_object(PySequence_Fast_ITEMS(critical_seq)[i],
+                                      &critical[i]))
+            goto local_cleanup;
+    int critical_source = !strcmp(source, "B")   ? SPONG_CRITICAL_ROOT_B
+                          : !strcmp(source, "N") ? SPONG_CRITICAL_ROOT_N
+                                                 : 0;
+    if (!critical_source) {
+        PyErr_SetString(PyExc_ValueError, "critical_source must be 'B' or 'N'");
+        goto local_cleanup;
+    }
+    spong_exact_loss_pencil pencil = {
+        alpha.input, (size_t)alpha.count, beta.input,    (size_t)beta.count,
+        n.input,     (size_t)n.count,     constant.input};
+    spong_local_launch_request request;
+    memset(&request, 0, sizeof(request));
+    request.critical_source = critical_source;
+    request.orientation = orientation;
+    request.critical_b.lower = critical[0].input;
+    request.critical_b.upper = critical[1].input;
+    for (int i = 0; i < 4; i++)
+        request.frame[i] = frame.input[i];
+    for (int i = 0; i < 6; i++)
+        request.selected_map[i] = map.input[i];
+    request.departing_eigenvalue = ld.input;
+    request.desired_reach = reach.input;
+    request.require_frobenius = (uint32_t)require_frobenius;
+    spong_local_launch_policy policy = {
+        (uint64_t)max_reach_halvings,     (uint64_t)max_slope_doublings,
+        (uint64_t)tangent_bisections,     (uint64_t)section_bisections,
+        (uint64_t)frobenius_subdivisions, (uint64_t)max_rational_bits,
+        (uint32_t)verify_n_identity};
+    Py_BEGIN_ALLOW_THREADS(void)
+        spong_local_launch_decimal(&pencil, &request, &policy, &result);
+    Py_END_ALLOW_THREADS PyObject *qreach = owned_rational_tuple(&result.reach);
+    PyObject *slope = owned_rational_tuple(&result.cone_slope);
+    PyObject *flow = owned_rational_tuple(&result.flow_margin);
+    PyObject *lower = owned_rational_tuple(&result.lower_face_margin);
+    PyObject *upper = owned_rational_tuple(&result.upper_face_margin);
+    PyObject *tangent = owned_interval_tuple(&result.tangent_slope);
+    PyObject *level = owned_rational_tuple(&result.section_level);
+    PyObject *section_b = owned_interval_tuple(&result.section_b);
+    PyObject *section_y = owned_interval_tuple(&result.section_y);
+    PyObject *b_section_b = owned_rational_tuple(&result.b_section_b);
+    PyObject *b_section_y = owned_interval_tuple(&result.b_section_y);
+    PyObject *b_section_level = owned_interval_tuple(&result.b_section_level);
+    if (!qreach || !slope || !flow || !lower || !upper || !tangent || !level ||
+        !section_b || !section_y || !b_section_b || !b_section_y || !b_section_level) {
+        Py_XDECREF(qreach);
+        Py_XDECREF(slope);
+        Py_XDECREF(flow);
+        Py_XDECREF(lower);
+        Py_XDECREF(upper);
+        Py_XDECREF(tangent);
+        Py_XDECREF(level);
+        Py_XDECREF(section_b);
+        Py_XDECREF(section_y);
+        Py_XDECREF(b_section_b);
+        Py_XDECREF(b_section_y);
+        Py_XDECREF(b_section_level);
+        goto local_cleanup;
+    }
+    PyObject *output = Py_BuildValue(
+        "{s:i,s:s,s:i,s:s,s:i,s:i,s:I,s:I,s:I,s:i,"
+        "s:N,s:N,s:N,s:N,s:N,s:N,s:N,s:N,s:N,s:N,s:N,s:N,"
+        "s:{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}}",
+        "status", (int)result.status, "status_name",
+        spong_smale_status_name(result.status), "primary_reason",
+        (int)result.primary_reason, "reason_name",
+        spong_smale_reason_name(result.primary_reason), "orientation",
+        result.orientation, "time_direction", result.time_direction, "validated",
+        (unsigned int)result.validated, "cone_power", (unsigned int)result.cone_power,
+        "b_section_validated", (unsigned int)result.b_section_validated, "b_direction",
+        result.b_direction, "reach", qreach, "cone_slope", slope, "flow_margin", flow,
+        "lower_face_margin", lower, "upper_face_margin", upper, "tangent_slope",
+        tangent, "section_level", level, "section_b", section_b, "section_y", section_y,
+        "b_section_b", b_section_b, "b_section_y", b_section_y, "b_section_level",
+        b_section_level, "work", "input_rationals",
+        (unsigned long long)result.work.input_rationals, "coefficient_intervals",
+        (unsigned long long)result.work.coefficient_intervals, "interval_evaluations",
+        (unsigned long long)result.work.interval_evaluations, "cone_tests",
+        (unsigned long long)result.work.cone_tests, "reach_halvings",
+        (unsigned long long)result.work.reach_halvings, "slope_doublings",
+        (unsigned long long)result.work.slope_doublings, "tangent_bisections",
+        (unsigned long long)result.work.tangent_bisections, "section_bisections",
+        (unsigned long long)result.work.section_bisections, "section_retries",
+        (unsigned long long)result.work.section_retries, "peak_rational_bits",
+        (unsigned long long)result.work.peak_rational_bits);
+    spong_local_launch_result_destroy(&result);
+    Py_DECREF(critical_seq);
+    for (int i = 0; i < 2; i++)
+        rational_text_clear(&critical[i]);
+    rational_text_clear(&constant);
+    rational_text_clear(&ld);
+    rational_text_clear(&reach);
+    rational_sequence_clear(&alpha);
+    rational_sequence_clear(&beta);
+    rational_sequence_clear(&n);
+    rational_sequence_clear(&frame);
+    rational_sequence_clear(&map);
+    return output;
+local_cleanup:
+    spong_local_launch_result_destroy(&result);
+    Py_XDECREF(critical_seq);
+    for (int i = 0; i < 2; i++)
+        rational_text_clear(&critical[i]);
+    rational_text_clear(&constant);
+    rational_text_clear(&ld);
+    rational_text_clear(&reach);
+    rational_sequence_clear(&alpha);
+    rational_sequence_clear(&beta);
+    rational_sequence_clear(&n);
+    rational_sequence_clear(&frame);
+    rational_sequence_clear(&map);
+    return NULL;
+}
+
+static PyTypeObject KernelType; /* defined below; needed for the check */
 
 /*
  * continue_curve(kernel, C, b0, w0, flow, targets, cap_r, box, ds, ds0,
@@ -2131,11 +2941,15 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     double C, b0, w0, cap_r, ds, ds0;
     int flow;
     int centered_available = 0;
+    int chart_order = 6;
     Py_ssize_t max_steps;
-    if (!PyArg_ParseTuple(args, "OdddiOdOddOn|i",
-                          &kobj, &C, &b0, &w0, &flow, &targets_obj,
-                          &cap_r, &box_obj, &ds, &ds0, &gate_obj,
-                          &max_steps, &centered_available)) {
+    if (!PyArg_ParseTuple(args, "OdddiOdOddOn|ii", &kobj, &C, &b0, &w0, &flow,
+                          &targets_obj, &cap_r, &box_obj, &ds, &ds0, &gate_obj,
+                          &max_steps, &centered_available, &chart_order)) {
+        return NULL;
+    }
+    if (chart_order != 4 && chart_order != 6) {
+        PyErr_SetString(PyExc_ValueError, "chart_order must be 4 or 6");
         return NULL;
     }
     if (!PyObject_TypeCheck(kobj, &KernelType)) {
@@ -2147,28 +2961,44 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     double *targets = NULL, *box = NULL, *gate = NULL;
     Py_ssize_t n_targets_flat = 0, n_box = 0, n_gate = 0;
     if (PySequence_Size(targets_obj) > 0) {
-        if (copy_seq(targets_obj, &targets, &n_targets_flat) < 0) return NULL;
+        if (copy_seq(targets_obj, &targets, &n_targets_flat) < 0)
+            return NULL;
     }
-    if (copy_seq(box_obj, &box, &n_box) < 0) { PyMem_Free(targets); return NULL; }
+    if (copy_seq(box_obj, &box, &n_box) < 0) {
+        PyMem_Free(targets);
+        return NULL;
+    }
     if (n_box != 4) {
-        PyMem_Free(targets); PyMem_Free(box);
+        PyMem_Free(targets);
+        PyMem_Free(box);
         PyErr_SetString(PyExc_ValueError, "box must have four entries");
         return NULL;
     }
     if (gate_obj != Py_None) {
         if (copy_seq(gate_obj, &gate, &n_gate) < 0) {
-            PyMem_Free(targets); PyMem_Free(box);
+            PyMem_Free(targets);
+            PyMem_Free(box);
             return NULL;
         }
     }
 
-    spong_continue_field field = {
-        k->a, k->ap, k->app, k->b, k->bp, k->bpp, k->n, k->np,
-        (size_t)k->na, (size_t)k->nap, (size_t)k->napp,
-        (size_t)k->nb, (size_t)k->nbp, (size_t)k->nbpp,
-        (size_t)k->nn, (size_t)k->nnp,
-        C
-    };
+    spong_continue_field field = {k->a,
+                                  k->ap,
+                                  k->app,
+                                  k->b,
+                                  k->bp,
+                                  k->bpp,
+                                  k->n,
+                                  k->np,
+                                  (size_t)k->na,
+                                  (size_t)k->nap,
+                                  (size_t)k->napp,
+                                  (size_t)k->nb,
+                                  (size_t)k->nbp,
+                                  (size_t)k->nbpp,
+                                  (size_t)k->nn,
+                                  (size_t)k->nnp,
+                                  C};
 
     spong_continue_result res;
     double *points = NULL;
@@ -2177,23 +3007,23 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     for (int attempt = 0; attempt < 3; attempt++) {
         double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
         if (grown == NULL) {
-            PyMem_Free(points); PyMem_Free(targets);
-            PyMem_Free(box); PyMem_Free(gate);
+            PyMem_Free(points);
+            PyMem_Free(targets);
+            PyMem_Free(box);
+            PyMem_Free(gate);
             return PyErr_NoMemory();
         }
         points = grown;
-        Py_BEGIN_ALLOW_THREADS
-        term = spong_continue_curve(
-            &field, b0, w0, flow,
-            targets, (size_t)(n_targets_flat / 2), cap_r,
-            box, ds, ds0, gate, (size_t)max_steps,
-            centered_available,
-            points, cap, &res);
-        Py_END_ALLOW_THREADS
-        if (term != SPONG_CONT_NEED_CAPACITY) break;
+        Py_BEGIN_ALLOW_THREADS term = spong_continue_curve(
+            &field, b0, w0, flow, targets, (size_t)(n_targets_flat / 2), cap_r, box, ds,
+            ds0, gate, (size_t)max_steps, centered_available, chart_order, points, cap,
+            &res);
+        Py_END_ALLOW_THREADS if (term != SPONG_CONT_NEED_CAPACITY) break;
         cap = res.n_points + 64;
     }
-    PyMem_Free(targets); PyMem_Free(box); PyMem_Free(gate);
+    PyMem_Free(targets);
+    PyMem_Free(box);
+    PyMem_Free(gate);
 
     if (term == SPONG_CONT_NEED_CAPACITY) {
         PyMem_Free(points);
@@ -2204,49 +3034,57 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     PyObject *blob = PyBytes_FromStringAndSize(
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
-    if (blob == NULL) return NULL;
+    if (blob == NULL)
+        return NULL;
     /* Diagnostics under the reference's engine_diag names: floor-ladder
      * rescue counts, and the step_failure record on that abort. */
     static const char *rescue_names[SPONG_RESCUE_COUNT] = {
-        "floor_fallback_slow_gl4", "floor_fallback_slow_gl6",
-        "floor_fallback_fast_gl4", "floor_fallback_fast_gl6",
-        "normalized_gl8", "normalized_gl6", "normalized_gl4",
+        "floor_fallback_slow_gl4", "floor_fallback_slow_gl6", "floor_fallback_fast_gl4",
+        "floor_fallback_fast_gl6", "normalized_gl8",          "normalized_gl6",
+        "normalized_gl4",
     };
     PyObject *diag = PyDict_New();
-    if (diag == NULL) { Py_DECREF(blob); return NULL; }
+    if (diag == NULL) {
+        Py_DECREF(blob);
+        return NULL;
+    }
     for (int i = 0; i < SPONG_RESCUE_COUNT; i++) {
-        if (res.rescues[i] == 0) continue;
-        PyObject *v = PyLong_FromUnsignedLongLong(
-            (unsigned long long)res.rescues[i]);
+        if (res.rescues[i] == 0)
+            continue;
+        PyObject *v = PyLong_FromUnsignedLongLong((unsigned long long)res.rescues[i]);
         if (v == NULL || PyDict_SetItemString(diag, rescue_names[i], v) < 0) {
-            Py_XDECREF(v); Py_DECREF(diag); Py_DECREF(blob); return NULL;
+            Py_XDECREF(v);
+            Py_DECREF(diag);
+            Py_DECREF(blob);
+            return NULL;
         }
         Py_DECREF(v);
     }
     if (res.term == SPONG_CONT_ABORT_STEP_FAILURE) {
         PyObject *fail = Py_BuildValue(
-            "{sdsdsdsdsssdsdsdsi}",
-            "b", res.fail_b, "w", res.fail_w, "cur", res.fail_cur,
-            "ds", ds, "chart", res.fail_slow ? "slow" : "fast",
-            "h", res.fail_h, "vb", res.fail_vb, "vw", res.fail_vw,
-            "retry", res.fail_retry);
+            "{sdsdsdsdsssdsdsdsi}", "b", res.fail_b, "w", res.fail_w, "cur",
+            res.fail_cur, "ds", ds, "chart", res.fail_slow ? "slow" : "fast", "h",
+            res.fail_h, "vb", res.fail_vb, "vw", res.fail_vw, "retry", res.fail_retry);
         if (fail == NULL || PyDict_SetItemString(diag, "step_failure", fail) < 0) {
-            Py_XDECREF(fail); Py_DECREF(diag); Py_DECREF(blob); return NULL;
+            Py_XDECREF(fail);
+            Py_DECREF(diag);
+            Py_DECREF(blob);
+            return NULL;
         }
         Py_DECREF(fail);
     }
-    PyObject *out = Py_BuildValue(
-        "(iiiddKKNN)", res.term, res.delegate_reason, res.switches,
-        res.b_end, res.w_end,
-        (unsigned long long)res.steps_taken,
-        (unsigned long long)res.steps_rejected, blob, diag);
+    PyObject *out =
+        Py_BuildValue("(iiiddKKNN)", res.term, res.delegate_reason, res.switches,
+                      res.b_end, res.w_end, (unsigned long long)res.steps_taken,
+                      (unsigned long long)res.steps_rejected, blob, diag);
     return out;
 }
 
 /*
  * potential_rate_segment(kernel, C, mode, a0, b0, targets, cap_r, box, ds,
  *                        n_levels, max_steps, critical, fraction,
- *                        primary_order)
+ *                        primary_order, stop_level, clock, clock_rtol,
+ *                        clock_atol, clock_start_level, clock_stop_level)
  *
  * One constant-potential-rate segment (spong/spong_potential.h), entirely
  * in C with the GIL released.  targets and critical are flat sequences of
@@ -2259,13 +3097,15 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     PyObject *kobj, *targets_obj, *box_obj, *critical_obj;
     double C, a0, b0, cap_r, ds, fraction;
     double stop_level = INFINITY;
-    int mode, primary_order;
+    double clock_rtol = 0.0, clock_atol = 0.0;
+    double clock_start_level = NAN, clock_stop_level = NAN;
+    int mode, primary_order, clock = 0;
     Py_ssize_t n_levels, max_steps;
-    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi|d",
-                          &kobj, &C, &mode, &a0, &b0, &targets_obj, &cap_r,
-                          &box_obj, &ds, &n_levels, &max_steps,
-                          &critical_obj, &fraction, &primary_order,
-                          &stop_level)) {
+    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi|didddd", &kobj, &C, &mode, &a0, &b0,
+                          &targets_obj, &cap_r, &box_obj, &ds, &n_levels, &max_steps,
+                          &critical_obj, &fraction, &primary_order, &stop_level, &clock,
+                          &clock_rtol, &clock_atol, &clock_start_level,
+                          &clock_stop_level)) {
         return NULL;
     }
     if (!PyObject_TypeCheck(kobj, &KernelType)) {
@@ -2276,35 +3116,51 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     double *targets = NULL, *box = NULL, *critical = NULL;
     Py_ssize_t n_targets_flat = 0, n_box = 0, n_critical_flat = 0;
     if (PySequence_Size(targets_obj) > 0) {
-        if (copy_seq(targets_obj, &targets, &n_targets_flat) < 0) return NULL;
+        if (copy_seq(targets_obj, &targets, &n_targets_flat) < 0)
+            return NULL;
     }
-    if (copy_seq(box_obj, &box, &n_box) < 0) { PyMem_Free(targets); return NULL; }
+    if (copy_seq(box_obj, &box, &n_box) < 0) {
+        PyMem_Free(targets);
+        return NULL;
+    }
     if (n_box != 4) {
-        PyMem_Free(targets); PyMem_Free(box);
+        PyMem_Free(targets);
+        PyMem_Free(box);
         PyErr_SetString(PyExc_ValueError, "box must have four entries");
         return NULL;
     }
     if (PySequence_Size(critical_obj) > 0) {
         if (copy_seq(critical_obj, &critical, &n_critical_flat) < 0) {
-            PyMem_Free(targets); PyMem_Free(box);
+            PyMem_Free(targets);
+            PyMem_Free(box);
             return NULL;
         }
     }
     spong_field field = kernel_field(k);
     field.C = C;
     spong_potential_request req;
+    memset(&req, 0, sizeof(req));
     req.mode = mode;
-    req.a0 = a0; req.b0 = b0;
-    req.targets = targets; req.n_targets = (size_t)(n_targets_flat / 2);
+    req.a0 = a0;
+    req.b0 = b0;
+    req.targets = targets;
+    req.n_targets = (size_t)(n_targets_flat / 2);
     req.cap_r = cap_r;
-    for (int i = 0; i < 4; i++) req.box[i] = box[i];
+    for (int i = 0; i < 4; i++)
+        req.box[i] = box[i];
     req.ds = ds;
     req.n_levels = (size_t)n_levels;
     req.max_steps = (size_t)max_steps;
-    req.critical = critical; req.n_critical = (size_t)(n_critical_flat / 2);
+    req.critical = critical;
+    req.n_critical = (size_t)(n_critical_flat / 2);
     req.critical_step_fraction = fraction;
     req.primary_order = primary_order;
     req.stop_level = stop_level;
+    req.clock = clock;
+    req.clock_rtol = clock_rtol;
+    req.clock_atol = clock_atol;
+    req.clock_start_level = clock_start_level;
+    req.clock_stop_level = clock_stop_level;
 
     spong_potential_result res;
     double *points = NULL;
@@ -2313,18 +3169,21 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     for (int attempt = 0; attempt < 3; attempt++) {
         double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
         if (grown == NULL) {
-            PyMem_Free(points); PyMem_Free(targets);
-            PyMem_Free(box); PyMem_Free(critical);
+            PyMem_Free(points);
+            PyMem_Free(targets);
+            PyMem_Free(box);
+            PyMem_Free(critical);
             return PyErr_NoMemory();
         }
         points = grown;
-        Py_BEGIN_ALLOW_THREADS
-        term = spong_potential_rate_segment(&field, &req, points, cap, &res);
-        Py_END_ALLOW_THREADS
-        if (term != SPONG_POT_NEED_CAPACITY) break;
+        Py_BEGIN_ALLOW_THREADS term =
+            spong_potential_rate_segment(&field, &req, points, cap, &res);
+        Py_END_ALLOW_THREADS if (term != SPONG_POT_NEED_CAPACITY) break;
         cap = res.n_points + 64;
     }
-    PyMem_Free(targets); PyMem_Free(box); PyMem_Free(critical);
+    PyMem_Free(targets);
+    PyMem_Free(box);
+    PyMem_Free(critical);
     if (term < 0) {
         PyMem_Free(points);
         PyErr_SetString(PyExc_ValueError, "potential_rate_segment: bad request");
@@ -2339,23 +3198,26 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     PyObject *blob = PyBytes_FromStringAndSize(
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
-    if (blob == NULL) return NULL;
+    if (blob == NULL)
+        return NULL;
     return Py_BuildValue(
-        "(iddiddddKKKKKKddN)", res.term, res.a_end, res.b_end,
-        res.captured, res.captured_a, res.captured_b,
-        res.event_level, res.level_step,
+        "(iddiddddKKKKKKdddddKKiiN)", res.term, res.a_end, res.b_end, res.captured,
+        res.captured_a, res.captured_b, res.event_level, res.level_step,
         (unsigned long long)res.accepted, (unsigned long long)res.rejected,
         (unsigned long long)res.critical_capped,
-        (unsigned long long)res.arclength_steps,
-        (unsigned long long)res.gl8_attempted,
-        (unsigned long long)res.gl8_accepted,
-        res.max_richardson, res.max_interpolation_error, blob);
+        (unsigned long long)res.arclength_steps, (unsigned long long)res.gl8_attempted,
+        (unsigned long long)res.gl8_accepted, res.max_richardson,
+        res.max_interpolation_error, res.tau, res.max_clock_error,
+        res.max_clock_error_ratio, (unsigned long long)res.clock_rejected,
+        (unsigned long long)res.clock_steps, res.clock_started, res.clock_available,
+        blob);
 }
 
 /*
  * centered_arrival(local_kernel, a0, b0, at, bt, center_a, center_b,
  *                  slow, fast, cap_r, max_steps, turn_reject,
- *                  primary_order)
+ *                  primary_order, clock, clock_started,
+ *                  clock_start_value, clock_stop_value)
  *
  * The centered raw arrival (spong/spong_arrival.h) entirely in C with the
  * GIL released.  Points come back as bytes of packed (a, b) doubles in
@@ -2366,12 +3228,14 @@ static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
     (void)self;
     PyObject *kobj;
     spong_arrival_request req;
+    memset(&req, 0, sizeof(req));
+    req.clock_start_value = req.clock_stop_value = NAN;
     Py_ssize_t max_steps;
-    if (!PyArg_ParseTuple(args, "Odddddddddndi",
-                          &kobj, &req.a0, &req.b0, &req.at, &req.bt,
-                          &req.center_a, &req.center_b, &req.slow, &req.fast,
-                          &req.cap_r, &max_steps, &req.turn_reject,
-                          &req.primary_order)) {
+    if (!PyArg_ParseTuple(args, "Odddddddddndi|iidd", &kobj, &req.a0, &req.b0, &req.at,
+                          &req.bt, &req.center_a, &req.center_b, &req.slow, &req.fast,
+                          &req.cap_r, &max_steps, &req.turn_reject, &req.primary_order,
+                          &req.clock, &req.clock_started, &req.clock_start_value,
+                          &req.clock_stop_value)) {
         return NULL;
     }
     if (!PyObject_TypeCheck(kobj, &LocalKernelType)) {
@@ -2386,12 +3250,14 @@ static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
     int term = SPONG_ARR_NEED_CAPACITY;
     for (int attempt = 0; attempt < 3; attempt++) {
         double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
-        if (grown == NULL) { PyMem_Free(points); return PyErr_NoMemory(); }
+        if (grown == NULL) {
+            PyMem_Free(points);
+            return PyErr_NoMemory();
+        }
         points = grown;
-        Py_BEGIN_ALLOW_THREADS
-        term = spong_centered_arrival(jet, &req, points, cap, &res);
-        Py_END_ALLOW_THREADS
-        if (term != SPONG_ARR_NEED_CAPACITY) break;
+        Py_BEGIN_ALLOW_THREADS term =
+            spong_centered_arrival(jet, &req, points, cap, &res);
+        Py_END_ALLOW_THREADS if (term != SPONG_ARR_NEED_CAPACITY) break;
         cap = res.n_points + 64;
     }
     if (term < 0) {
@@ -2408,14 +3274,15 @@ static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
     PyObject *blob = PyBytes_FromStringAndSize(
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
-    if (blob == NULL) return NULL;
+    if (blob == NULL)
+        return NULL;
     return Py_BuildValue(
-        "(iddKKKKKdddN)", res.term, res.a_end, res.b_end,
+        "(iddKKKKKddddKiiN)", res.term, res.a_end, res.b_end,
         (unsigned long long)res.accepted, (unsigned long long)res.rejected,
-        (unsigned long long)res.turn_rejected,
-        (unsigned long long)res.gl8_attempted,
-        (unsigned long long)res.gl8_accepted,
-        res.max_richardson, res.finish_radius, res.spectral_ratio, blob);
+        (unsigned long long)res.turn_rejected, (unsigned long long)res.gl8_attempted,
+        (unsigned long long)res.gl8_accepted, res.max_richardson, res.finish_radius,
+        res.spectral_ratio, res.tau, (unsigned long long)res.clock_steps,
+        res.clock_started, res.clock_available, blob);
 }
 
 static PyObject *native_orient2d_exact(PyObject *self, PyObject *args) {
@@ -2429,17 +3296,16 @@ static PyObject *native_orient2d_exact(PyObject *self, PyObject *args) {
 static PyObject *native_segments_cross_exact(PyObject *self, PyObject *args) {
     (void)self;
     double ax, ay, bx, by, cx, cy, dx, dy;
-    if (!PyArg_ParseTuple(args, "dddddddd", &ax, &ay, &bx, &by,
-                          &cx, &cy, &dx, &dy))
+    if (!PyArg_ParseTuple(args, "dddddddd", &ax, &ay, &bx, &by, &cx, &cy, &dx, &dy))
         return NULL;
-    return PyLong_FromLong(spong_segments_cross_exact(ax, ay, bx, by,
-                                                      cx, cy, dx, dy));
+    return PyLong_FromLong(spong_segments_cross_exact(ax, ay, bx, by, cx, cy, dx, dy));
 }
 
 static PyObject *native_chord_rejections(PyObject *self, PyObject *args) {
     int reset = 0;
     (void)self;
-    if (!PyArg_ParseTuple(args, "|p", &reset)) return NULL;
+    if (!PyArg_ParseTuple(args, "|p", &reset))
+        return NULL;
     return PyLong_FromUnsignedLong(spong_chord_rejections(reset));
 }
 
@@ -2463,6 +3329,15 @@ static PyMethodDef module_methods[] = {
      "Exact GMP distinct-root count on a rational interval."},
     {"poincare_pullback", native_poincare_pullback, METH_VARARGS,
      "Compose a Poincare chart in high precision and round once."},
+    {"b_parameter_handoff", (PyCFunction)(void (*)(void))native_b_parameter_handoff,
+     METH_VARARGS | METH_KEYWORDS,
+     "Validate an exact GMP y(b) tube and target-fibre projection."},
+    {"sheet_flow_tube", (PyCFunction)(void (*)(void))native_sheet_flow_tube,
+     METH_VARARGS | METH_KEYWORDS,
+     "Validate an exact GMP b(level) tube after fibre projection."},
+    {"local_launch", (PyCFunction)(void (*)(void))native_local_launch,
+     METH_VARARGS | METH_KEYWORDS,
+     "Validate an exact GMP Poincare/Frobenius local launch."},
     {"continue_curve", native_continue_curve, METH_VARARGS,
      "One engine segment of the continuation dispatcher, GIL released."},
     {"potential_rate_segment", native_potential_rate_segment, METH_VARARGS,
@@ -2470,12 +3345,10 @@ static PyMethodDef module_methods[] = {
      "GIL released."},
     {"centered_arrival", native_centered_arrival, METH_VARARGS,
      "The centered raw arrival to a target minimum, GIL released."},
-    {NULL, NULL, 0, NULL}
-};
+    {NULL, NULL, 0, NULL}};
 
 static PyTypeObject KernelType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "spong._native.Kernel",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "spong._native.Kernel",
     .tp_basicsize = sizeof(Kernel),
     .tp_dealloc = (destructor)Kernel_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -2498,9 +3371,12 @@ PyMODINIT_FUNC PyInit__native(void) {
     if (PyType_Ready(&KernelType) < 0) {
         return NULL;
     }
-    if (PyType_Ready(&LocalKernelType) < 0) return NULL;
-    if (PyType_Ready(&NativeSturmPlanType) < 0) return NULL;
-    if (PyType_Ready(&NativeContactScanType) < 0) return NULL;
+    if (PyType_Ready(&LocalKernelType) < 0)
+        return NULL;
+    if (PyType_Ready(&NativeSturmPlanType) < 0)
+        return NULL;
+    if (PyType_Ready(&NativeContactScanType) < 0)
+        return NULL;
     m = PyModule_Create(&module);
     if (m == NULL) {
         return NULL;
@@ -2512,32 +3388,29 @@ PyMODINIT_FUNC PyInit__native(void) {
         return NULL;
     }
     Py_INCREF(&LocalKernelType);
-    if (PyModule_AddObject(m, "LocalKernel",
-                           (PyObject *)&LocalKernelType) < 0) {
+    if (PyModule_AddObject(m, "LocalKernel", (PyObject *)&LocalKernelType) < 0) {
         Py_DECREF(&LocalKernelType);
         Py_DECREF(m);
         return NULL;
     }
     Py_INCREF(&NativeSturmPlanType);
-    if (PyModule_AddObject(m, "SturmPlan",
-                           (PyObject *)&NativeSturmPlanType) < 0) {
+    if (PyModule_AddObject(m, "SturmPlan", (PyObject *)&NativeSturmPlanType) < 0) {
         Py_DECREF(&NativeSturmPlanType);
         Py_DECREF(m);
         return NULL;
     }
     Py_INCREF(&NativeContactScanType);
-    if (PyModule_AddObject(m, "ContactScan",
-                           (PyObject *)&NativeContactScanType) < 0) {
+    if (PyModule_AddObject(m, "ContactScan", (PyObject *)&NativeContactScanType) < 0) {
         Py_DECREF(&NativeContactScanType);
         Py_DECREF(m);
         return NULL;
     }
-#define ADD_NATIVE_CONSTANT(name)                                           \
-    do {                                                                    \
-        if (PyModule_AddIntConstant(m, #name, (long)(name)) < 0) {          \
-            Py_DECREF(m);                                                   \
-            return NULL;                                                    \
-        }                                                                   \
+#define ADD_NATIVE_CONSTANT(name)                                                      \
+    do {                                                                               \
+        if (PyModule_AddIntConstant(m, #name, (long)(name)) < 0) {                     \
+            Py_DECREF(m);                                                              \
+            return NULL;                                                               \
+        }                                                                              \
     } while (0)
     ADD_NATIVE_CONSTANT(SPONG_RESOLUTION_PROCEED);
     ADD_NATIVE_CONSTANT(SPONG_CERTIFIED_NON_MORSE);
@@ -2564,6 +3437,17 @@ PyMODINIT_FUNC PyInit__native(void) {
     ADD_NATIVE_CONSTANT(SPONG_EXACT_PARSE_FAILURE);
     ADD_NATIVE_CONSTANT(SPONG_EXACT_WORK_LIMIT);
     ADD_NATIVE_CONSTANT(SPONG_EXACT_INTERNAL_FAILURE);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_OK);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_INVALID_ARGUMENT);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_PARSE_FAILURE);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_ALLOCATION_FAILURE);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_WORK_LIMIT);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_MODEL_IDENTITY_FAILURE);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_PROPOSAL_NONMONOTONE);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_TUBE_UNRESOLVED);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_TARGET_UNBRACKETED);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_PROJECTION_UNRESOLVED);
+    ADD_NATIVE_CONSTANT(SPONG_SMALE_INTERNAL_FAILURE);
 #undef ADD_NATIVE_CONSTANT
     return m;
 }

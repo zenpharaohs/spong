@@ -266,6 +266,59 @@ def test_centered_raw_arrival_captures_regular_minimum(d2):
     assert np.all(np.diff(centered_loss) < 0.0)
 
 
+def test_centered_raw_arrival_carries_proper_time_clock(d2):
+    """Raw arrival localizes both loss sections and times between them."""
+    _demo_model, e = d2
+    p = e.minima[0]
+    start = (p.a+2e-2, p.b-1e-2)
+    value0 = float(p.local.potential(start[0]-p.local.a,
+                                     start[1]-p.local.b))
+    start_value, stop_value = 0.8*value0, 0.4*value0
+    diag = {}
+    from spong import engine
+    with engine.using("native"):
+        curve, term = charts._centered_raw_arrival(
+            start, (p.a, p.b), p.local, 1e-5, diag,
+            clock={"started": False, "start_value": start_value,
+                   "stop_value": stop_value})
+    assert term == "capture"
+    clock = diag["centered_arrival"]["proper_time"]
+    assert clock["started"] and clock["available"]
+    assert clock["tau"] > 0.0 and clock["steps"] > 0
+    values = np.array([
+        p.local.potential(a-p.local.a, b-p.local.b)
+        for a, b in curve[:-1]])
+    scale = 1.0+abs(value0)
+    assert np.min(np.abs(values-start_value)) <= 1e-12*scale
+    assert np.min(np.abs(values-stop_value)) <= 1e-12*scale
+
+
+def test_potential_prefix_stage_clock_localizes_loss_window(d2):
+    """Potential-rate clock lands on both global-loss sections."""
+    demo_model, e = d2
+    p = e.minima[0]
+    start = (p.a+2e-2, p.b-1e-2)
+    target_level = float(demo_model.L(p.a, p.b))
+    gap = float(demo_model.L(*start))-target_level
+    start_level = target_level+0.8*gap
+    stop_level = target_level+0.4*gap
+    diag = {}
+    from spong import engine
+    with engine.using("native"):
+        curve, _b, _w, _term = charts._potential_rate_prefix(
+            demo_model, *start, (p.a, p.b), (-10.0, 10.0, -10.0, 10.0),
+            1e-5, diag, n_levels=1024,
+            critical=[(q.a, q.b) for q in e.points],
+            clock={"start_level": start_level, "stop_level": stop_level,
+                   "rtol": 1e-6, "atol": 1e-12})
+    clock = diag["potential_rate"]["proper_time"]
+    assert clock["started"] and clock["available"]
+    assert clock["tau"] > 0.0 and clock["steps"] > 0
+    levels = np.array([demo_model.L(a, b) for a, b in curve])
+    assert np.min(np.abs(levels-start_level)) <= 1e-12
+    assert np.min(np.abs(levels-stop_level)) <= 1e-12
+
+
 def test_geometry_consumes_native_critical_chart(d2):
     demo_model, e = d2
     p = e.saddles[0]

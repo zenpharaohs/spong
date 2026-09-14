@@ -100,6 +100,7 @@ def build() -> ctypes.CDLL:
         ctypes.c_double, ctypes.c_double,
         ctypes.POINTER(ctypes.c_double), ctypes.c_size_t,
         ctypes.c_int,
+        ctypes.c_int,
         ctypes.POINTER(ctypes.c_double), ctypes.c_size_t,
         ctypes.POINTER(Result),
     ]
@@ -150,6 +151,9 @@ def run(lib, entry):
     max_steps = int(min(charts.STEP_CEILING,
                         max(200000.0, 8.0 * diagonal / max(i["ds"], 1e-300))))
     centered_available = int(i.get("centered_local_at") is not None)
+    # The corpus records the DEFAULT chart order; replaying at any other
+    # would compare a different tracer against it.
+    chart_order = int(charts.CHART_IRK_ORDER)
     for _attempt in range(4):
         pts = (ctypes.c_double * max(2 * cap, 2))()
         lib.spong_continue_curve(
@@ -157,7 +161,7 @@ def run(lib, entry):
             tgt_buf, len(i["targets"]),
             0.0 if i["cap_r"] is None else i["cap_r"],
             box_buf, i["ds"], -1.0 if i["ds0"] is None else i["ds0"],
-            gate_buf, max_steps, centered_available,
+            gate_buf, max_steps, centered_available, chart_order,
             pts, cap, ctypes.byref(res))
         if res.term != 101:
             break

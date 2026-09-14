@@ -413,6 +413,15 @@ def _gap_index(m, R, point, budget: int = 64) -> int:
     return sturm.count_roots(R, None, iv.lo)
 
 
+def critical_gap_index(m, c: Fraction, point, budget: int = 64) -> int:
+    """Exact level-root gap containing an isolated critical ``b`` value.
+
+    The critical point need not lie in ``{u<c}``; callers can use this to
+    identify the two adjacent sublevel components below a saddle value.
+    """
+    return _gap_index(m, level_polynomial(m, c), point, budget=budget)
+
+
 # --------------------------------------------------------------------- #
 # locating a traced point                                                #
 # --------------------------------------------------------------------- #

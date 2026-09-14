@@ -96,18 +96,36 @@ crossing on the same oriented component.  The Smale decision function is
 The branches connect exactly when `Delta_ij=0`.  Inside a critical-value-free
 slab their order cannot change without such a zero.  The existing
 `spong.order_sweep` computes a sampled tangent-coordinate shadow of this
-statement.  `certify_flow_tube` now proves level holonomy by checking exact
-inward inequalities on every lateral face of a piecewise-linear tube in
-`(ell,b,y)`.  `certify_abel_gap` then excludes zero whenever two terminal
-boxes lie on one sheet and the joining chart contains no branch point.
+statement.  The validated transport uses several complementary scalar charts.
+On a strict sheet, `certify_sheet_flow_tube` eliminates `y` and proves a
+trapping tube for `b(ell)`.  Near `y=0`, straight `(ell,b)` chords can leave
+the real fibre even when both endpoints lie on it.  There the local Poincare
+graph is cut at a fixed rational `b`, loss is eliminated by
+
+    ell = C + (y^2-B(b)^2)/A(b),
+
+and `certify_b_parameter_flow_tube` proves a scalar tube for `y(b)`.  Its
+regularity obligation is `L_b != 0` throughout every slab.  Once this tube
+strictly brackets the requested loss, exact subbox pruning projects it back
+onto that common fibre.  The older two-coordinate `(b,y)` tube remains a
+conservative fallback.  In all charts the vector field is proved regular on
+the entire trapping slab as well as inward-pointing on its lateral faces.
+
+`certify_fibre_separation` first excludes equality whenever two terminal boxes
+are disjoint in either `b` or `y`.  This direct test also handles opposite
+sheets and needs no period coordinate: a noncritical gradient trajectory
+crosses a regular loss fibre only once.  `certify_abel_gap` then
+records the oriented gap whenever two terminal boxes lie on one sheet and the
+joining chart contains no branch point.
 On one sheet `db/y` has constant sign, so this is exactly `b`-order
 disjointness of the two crossing boxes; the Abel integral is enclosed for
 continuity with the positive-genus version, not because it decides
 anything the `b` order does not.  The load-bearing fact is simpler: a
 saddle connection is a single trajectory, so it crosses a regular fibre
 once, and two validated tubes whose terminal boxes on one exact fibre are
-disjoint cannot enclose the same trajectory.  A comparison spanning a
-branch point still needs the unwrapped period coordinate described above.
+disjoint cannot enclose the same trajectory.  A comparison spanning a branch
+point needs the unwrapped period coordinate only when a global order coordinate
+is requested.
 
 ## Certificate contract
 
@@ -118,14 +136,22 @@ A hyperelliptic Smale certificate should contain:
 2. Complete certified root disks for each `S_ell`, paired into its real
    components, with a fixed homology/sheet labelling across the slab.
 3. Validated Frobenius/Poincare launch boxes for every stable and unstable
-   local germ (implemented by `spong.local_certificate`; opt-in
-   materialization while it remains the Python exact oracle).
-4. Rational trapping-tube enclosures of the lifted holonomy (implemented),
-   plus ball/interval enclosures of periods for comparisons which cannot stay
-   in one sheet chart (not yet implemented).
-5. For every candidate stable/unstable pair, an interval enclosure of
-   `Delta_ij` (on one sheet, presently just the exact `b` gap).  Exclusion
-   of zero certifies preserved order and hence absence of a connection.
+   local germ (implemented by `spong_local_launch_decimal`, with
+   `spong.local_certificate` retained as the Python exact oracle).  The hard
+   optional path replays the selected quadratic Poincare coordinate map
+   exactly, traps the
+   invariant graph between rational piecewise-linear faces, checks the chart
+   Jacobian throughout every slab, and may cut either a fixed-loss or fixed-b
+   departure section without moving rectangles artificially closer to the
+   saddle.
+4. Rational trapping-tube enclosures of the lifted holonomy (implemented).
+   Direct rectangle separation on a common fibre is implemented and is enough
+   for pairwise connection exclusion.  Ball/interval enclosures of periods
+   remain useful for a globally unwrapped order coordinate, but are not a
+   prerequisite for this yes/no decision.
+5. For every candidate stable/unstable pair, disjoint validated crossing
+   rectangles on one exact regular fibre.  An interval enclosure of
+   `Delta_ij` additionally records order where an Abel chart is available.
    An exact wall requires interval Newton in the model parameter together
    with `Delta_ij=0`; a small floating gap is not an equality certificate.
 6. Once an unstable branch enters a one-minimum or one-ended component, the
@@ -133,9 +159,53 @@ A hyperelliptic Smale certificate should contain:
 
 Consequently, static complex roots and static periods are infrastructure, not
 the verdict.  The verdict is validated hyperelliptic **holonomy** plus the
-exact terminal component.  The holonomy and same-chart gap engines now exist;
-the local launch and same-sheet holonomy composition now exist.  The remaining
-global promotion step is unwrapped positive-genus comparison across sheet
-transitions, plus portrait-wide orchestration of the implemented certificates.
+exact terminal component.  The local launch, chart-switching holonomy,
+common-fibre gap, and portrait-wide finite-plane orchestration are implemented.
+Unwrapped positive-genus comparison across sheet transitions remains separate
+global-order machinery.
 See `local_graph_certificate.md` for the exact cone theorem and the C-backend
 contract.
+
+## Pointwise orchestration and the margin boundary
+
+`spong.smale.certify_finite_plane` is the fail-closed **development**
+orchestrator.  It first uses exact loss order and the fact that only an
+N-saddle can be the lower endpoint.  A validated unstable cone also certifies
+which of the two sublevel components adjacent to its source saddle it enters;
+if the target saddle is absent from that component, the pair is excluded
+without global continuation.  Only the remaining half-branch pairs request
+validated tubes on a common fibre.  The cheap path uses a fixed-sheet scalar
+tube.  A branch whose launch is too close to the backbone requests the exact
+Poincare graph tube and the fixed-b `y(b)` handoff.  The latter trapping tube
+and its target-fibre projection now execute as one GMP C operation; exact
+real-case parity with the Fraction oracle is pinned.  Floating Poincare and
+portrait branches supply tube centres but carry no part of the verdict:
+changing or refining those centres can turn a refusal into a proof, never
+manufacture a positive certificate.  Local launch certificates are also
+materialized incidence-by-incidence: stable germs of a source and unstable
+germs of a target that cannot occur in any admissible saddle connection are
+not paid for.
+
+The returned status is deliberately
+`certified_finite_plane_morse_smale`, not the less specific
+`certified_portrait`: identifying equilibria of a chosen compactification is a
+separate certificate.  Every missing launch or branch, unresolved exact loss
+order, tube refusal, or overlapping terminal rectangle produces `unresolved`.
+The ordinary fixed-sheet tube and its initial fibre projection now execute in
+the GMP backend.  The native Frobenius cone also supplies the fixed-`b`
+section used by the complementary `y(b)` handoff.  The old piecewise numerical
+graph tube and two-coordinate Python/Fraction fallback are development-only
+and disabled by default; they can be replayed explicitly with
+`allow_development_fallbacks=True`.  The serialized result still says
+`production_ready: false` while portrait-wide orchestration and incidence
+reduction remain Python; no frontend may promote that status.
+
+This pointwise result is not yet a backward-error radius.  Given a declared
+weighted norm on the finite coefficient data `(f,g,mu[0:M])`, a certified
+lower radius additionally requires the same Morse and pair-exclusion
+inequalities to hold uniformly on the admissible input box.  The efficient
+far-from-wall query is therefore `margin >= R?`: validate one requested box
+and stop.  Adaptive doubling and bisection can estimate the largest certified
+lower radius.  A separately validated saddle-connection wall supplies an
+upper radius; a floating two-ended shot remains a proposal until interval
+Newton encloses its zero.

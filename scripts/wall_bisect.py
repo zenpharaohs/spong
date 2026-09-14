@@ -100,11 +100,11 @@ def main(argv=None) -> int:
     base = zoo.get(w.base_case)
     print(f"{args.family}: stored wall {w.wall_parameter!r}")
     print(f"   stored bracket {w.wall_bracket!r}")
-    original = charts.GEOMETRIC_IRK_PRIMARY
+    original = charts.CHART_IRK_ORDER
     results = {}
     try:
         for order in [int(x) for x in args.orders.split(",")]:
-            charts.GEOMETRIC_IRK_PRIMARY = order
+            charts.CHART_IRK_ORDER = order
             bracket, flo, fhi, n = bisect(base, args.lo, args.hi,
                                           args.branch, args.tol)
             results[order] = bracket
@@ -116,7 +116,7 @@ def main(argv=None) -> int:
             print(f"   GL{order}: flip in [{lo!r}, {hi!r}]  width "
                   f"{hi-lo:.3e}  ({n} portraits)  {flo} | {fhi}")
     finally:
-        charts.GEOMETRIC_IRK_PRIMARY = original
+        charts.CHART_IRK_ORDER = original
 
     good = [b for b in results.values() if b]
     if len(good) > 1:

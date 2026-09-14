@@ -210,6 +210,7 @@
     <button class="chip" id="chipSimple">a plain example <span class="n">deg 2</span></button>
     <button class="chip" id="chipZoo">a tricky certified case <span class="n">from the zoo</span></button>
     <button class="chip" id="chipRandom">draw a random case <span class="n">seeded, reproducible</span></button>
+    <button class="chip" id="chipSeparated">maximal critical family <span class="n">linear target, exact</span></button>
     <button class="chip" id="chipWall">explore a wall family <span class="n">a saddle connection sliding through</span></button>
   </div>
   <p class="toolhint" style="margin-top:8px">select · pan · zoom box · trace, MATLAB style · arrows pan, +/− zoom, 0 resets · click the backbone panel to snap to a*(b)</p>
@@ -365,6 +366,31 @@
     </div>
 
     <p class="section-label">Research tools</p>
+
+    <details class="adv" id="advSeparated">
+      <summary>Separated maximal-critical family <span class="tag" id="sepInfo">ceiling 14 critical points</span></summary>
+      <div class="panel">
+      <div class="controls">
+        <div>
+          <label for="sepDegree">deg g</label>
+          <input id="sepDegree" type="number" value="4" min="1" max="8" step="1">
+        </div>
+        <div>
+          <label for="sepScale">scale separation Λ</label>
+          <input id="sepScale" type="number" value="30" min="1.01" max="1000" step="any">
+        </div>
+        <div class="wide row">
+          <button id="loadSeparated">load family member</button>
+        </div>
+        <p class="wide" style="margin:2px 0 0;font-size:11px;color:var(--ink-2)">
+          f(x) = 1+x, uniform moments, and exact B-roots
+          b = 1, −Λ, Λ², −Λ³, … . At Λ=30, degrees 1–8 are
+          Sturm-verified to attain the algebraic ceiling 4d−2. Smaller
+          separations let critical points leave the real axis.
+        </p>
+      </div>
+      </div>
+    </details>
 
     <details class="adv" id="advRandom">
       <summary>Random case generator <span class="tag">seeded, reproducible</span></summary>
@@ -720,7 +746,7 @@ let seq = 0, inflight = null;
 // when the text has actually changed since the last one.
 const lastSent = { f: null, g: null, n: null };
 
-async function recompute(_unused, zooName){
+async function recompute(_unused, zooName, separated){
   const id = ++seq;
   if (inflight) inflight.abort();      // abandon a superseded request
   inflight = new AbortController();
@@ -745,7 +771,8 @@ async function recompute(_unused, zooName){
   // looking at is the honest bound.
   const base = WALL ? { wall: WALL.name, lam: lamFromSlider(),
                          wall_limit: !!WALL.atWall }
-    : zooName ? { zoo: zooName } : {
+    : zooName ? { zoo: zooName }
+    : separated ? { separated_linear: separated } : {
     f: parseCoeffs(els("fIn").value),
     g: parseCoeffs(els("gIn").value),
     moments,
@@ -882,13 +909,16 @@ function apply(data, zooName){
   // cannot otherwise be reported or reproduced.
   els("caseId").textContent =
     `f = [${data.f.join(", ")}]   g = [${data.g.join(", ")}]   `
-    + `moments = ${(zooName && ZOO_MOMENTS[zooName]) || els("dist").value}`;
-  if (zooName || WALL){             // reflect what the entry supplied
+    + `moments = ${(zooName && ZOO_MOMENTS[zooName])
+                    || (data.separated_linear && "uniform01")
+                    || els("dist").value}`;
+  if (zooName || WALL || data.separated_linear){ // reflect supplied model
     els("fIn").value = data.f.map(c => +c.toPrecision(15)).join(", ");
     els("gIn").value = data.g.map(c => +c.toPrecision(15)).join(", ");
     // ... including the MOMENTS, which the server took from the entry and the
     // control would otherwise contradict.
     if (zooName && ZOO_MOMENTS[zooName]) els("dist").value = ZOO_MOMENTS[zooName];
+    if (data.separated_linear) els("dist").value = "uniform01";
     lastSent.f = els("fIn").value;
     lastSent.g = els("gIn").value;
     let vv = data.frame_view || data.view;
@@ -2221,6 +2251,26 @@ els("sameFG").onchange = () => {
   els("degF").disabled = els("sameFG").checked;
 };
 
+// ---- separated linear-target family ------------------------------------
+// The browser selects parameters only.  The backend constructs B and recovers
+// g over Q, so this remains the exact inverse family that Sturm certifies.
+function updateSeparatedReadout(){
+  const d = Math.max(1, Math.min(8, +els("sepDegree").value | 0));
+  els("sepInfo").textContent = `ceiling ${4*d-2} critical points`;
+}
+function loadSeparated(){
+  const degree = Math.max(1, Math.min(8, +els("sepDegree").value | 0));
+  const separation = els("sepScale").value;
+  els("sepDegree").value = degree;
+  els("preset").value = "";
+  clearWall();
+  S.traces = []; S.sel = { a:1, b:1 };
+  recompute(false, null, { degree, separation });
+}
+els("sepDegree").addEventListener("input", updateSeparatedReadout);
+els("loadSeparated").onclick = loadSeparated;
+updateSeparatedReadout();
+
 // ---- wall families -------------------------------------------------------
 // A rheostat family is the one object in the zoo that is a PATH rather than a
 // point, so a slider is the natural instrument and the CLI cannot really
@@ -2428,6 +2478,12 @@ els("chipRandom").onclick = () => {
   els("advRandom").scrollIntoView({ behavior: "smooth", block: "nearest" });
 };
 
+els("chipSeparated").onclick = () => {
+  openDetails("advSeparated");
+  loadSeparated();
+  els("advSeparated").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+
 els("chipWall").onclick = () => {
   openDetails("advWall");
   const sel = els("wallSel");
@@ -2633,6 +2689,9 @@ function exportFilename(){
   else if (S.lastBody && S.lastBody.wall)
     stem = slug(S.lastBody.wall) + "-lam" + slug((+S.lastBody.lam).toPrecision(10))
          + (WALL && WALL.atWall ? "-wall-limit" : "");
+  else if (S.lastBody && S.lastBody.separated_linear)
+    stem = `maximal-linear-d${S.lastBody.separated_linear.degree}`
+         + `-lam${slug(S.lastBody.separated_linear.separation)}`;
   else {
     // FNV-1a over the coefficients and moment spec: the same custom case
     // gets the same short name across sessions.

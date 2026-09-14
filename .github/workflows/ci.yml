@@ -18,9 +18,25 @@ jobs:
             -lm -o /tmp/test_spong_resolution
           /tmp/test_spong_resolution
           cc -std=c99 -Wall -Wextra -Werror -Iinclude \
+            src/c/spong_gauss2.c tests/c/test_spong_gauss2.c \
+            -lm -o /tmp/test_spong_gauss2
+          /tmp/test_spong_gauss2
+          cc -std=c99 -Wall -Wextra -Werror -Iinclude \
             src/c/spong_exact_gmp.c tests/c/test_spong_exact.c \
             -lgmp -o /tmp/test_spong_exact
           /tmp/test_spong_exact
+          cc -std=c99 -Wall -Wextra -Werror -Iinclude \
+            src/c/spong_local.c src/c/spong_local_gmp.c \
+            src/c/spong_jet.c src/c/spong_gauss2.c \
+            tests/c/test_spong_local.c \
+            -lgmp -lm -o /tmp/test_spong_local
+          /tmp/test_spong_local
+          cc -std=c99 -Wall -Wextra -Werror -Iinclude \
+            src/c/spong_smale_gmp.c \
+            src/c/spong_local_certificate_gmp.c \
+            src/c/spong_resolution.c tests/c/test_spong_smale.c \
+            -lgmp -lm -o /tmp/test_spong_smale
+          /tmp/test_spong_smale
       - name: Installed native differential validation
         run: |
           spong-validate-native \

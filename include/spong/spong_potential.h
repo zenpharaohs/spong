@@ -80,6 +80,11 @@ typedef struct {
     double stop_level;               /* ascent: stop once loss >= this
                                         (+INFINITY: never -- the recorded
                                         corpus behaviour) */
+    int    clock;                    /* prefix: opt-in proper-time clock */
+    double clock_rtol;               /* local full/two-half clock tolerance */
+    double clock_atol;
+    double clock_start_level;        /* start at first descent crossing */
+    double clock_stop_level;         /* stop at first descent crossing */
 } spong_potential_request;
 
 typedef struct {
@@ -95,6 +100,13 @@ typedef struct {
     uint64_t gl8_attempted, gl8_accepted;
     double   max_richardson;
     double   max_interpolation_error; /* ascent */
+    double   tau;                    /* proper time inside clock window */
+    double   max_clock_error;
+    double   max_clock_error_ratio;
+    uint64_t clock_rejected;
+    uint64_t clock_steps;
+    int      clock_started;          /* upper section was crossed */
+    int      clock_available;        /* both level sections were crossed */
 } spong_potential_result;
 
 SPONG_API int spong_potential_rate_segment(
