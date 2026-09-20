@@ -1,0 +1,619 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1.15in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{microtype}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\grad}{\nabla}
+
+\title{The loss landscape of a single polynomial neuron}
+\author{Andrew Mullhaupt}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+For the least-squares loss of a one-neuron polynomial network the phase
+portrait of the gradient flow can be determined exactly: the critical set is
+algebraic, the Morse property is decidable by polynomial gcd over $\Q$, and
+the merge tree of the sublevel sets follows from a reduction of the loss to a
+one-dimensional potential along a \emph{backbone} curve. What does not follow
+is the connectivity of the invariant manifolds, because a saddle connection is
+codimension one. We exhibit a one-parameter family --- a similarity of the
+plane --- along which every algebraic invariant of the landscape is constant
+while the connectivity nevertheless bifurcates, which shows that no elimination
+argument can decide the question and places it instead in the Melnikov setting.
+We then describe what can be certified numerically, and what the certified
+picture says about the descent methods actually used to train such a model.
+\end{abstract}
+
+\section{The model}
+
+Let $x$ be a real random variable whose raw moments
+\(
+\mu_k = \E[x^k]
+\)
+exist for $k = 0,\dots,2D$, and let $f$ and $g$ be real polynomials of degrees
+$d_f$ and $d_g$ with $D = \max(d_f, d_g)$. The network is the single neuron
+\[
+  F(x; a, b) \;=\; a\, g(bx),
+\]
+with an outer weight $a$ and an inner weight $b$, and the objective is the
+population least-squares loss
+\begin{equation}\label{eq:loss}
+  L(a,b) \;=\; \E\bigl[(f(x) - a\,g(bx))^2\bigr]
+         \;=\; C - 2a\,B(b) + a^2 A(b),
+\end{equation}
+where
+\begin{equation}\label{eq:ABC}
+  A(b) = \E\bigl[g(bx)^2\bigr], \qquad
+  B(b) = \E\bigl[f(x)\,g(bx)\bigr], \qquad
+  C    = \E\bigl[f(x)^2\bigr].
+\end{equation}
+Writing $f = \sum_i f_i x^i$ and $g = \sum_j g_j x^j$ and taking expectations
+term by term,
+\begin{equation}\label{eq:ABCcoeffs}
+  A(b) = \sum_{i,j} g_i g_j \mu_{i+j}\, b^{\,i+j}, \qquad
+  B(b) = \sum_{j} g_j \Bigl( \sum_i f_i \mu_{i+j} \Bigr) b^{\,j}, \qquad
+  C    = \sum_{i,k} f_i f_k \mu_{i+k},
+\end{equation}
+so $A$ has degree $2d_g$, $B$ has degree $d_g$, and the problem depends on the
+input law \emph{only} through the finite moment vector
+$(\mu_0,\dots,\mu_{2D})$. Two consequences are worth stating at once. First,
+the landscape is a property of the moments, not of the distribution: any two
+laws agreeing to order $2D$ give the same $L$. Second, if the moments are
+rational --- as they are for $x \sim U(0,1)$, where $\mu_k = 1/(k+1)$, and for
+any empirical law on rational samples --- then $A$, $B$ and $C$ lie in
+$\Q[b]$ and every statement below about the critical set is decidable by exact
+arithmetic.
+
+Throughout we assume
+
+\begin{quote}
+\textbf{(A)} \quad $A(b) \neq 0$ for every real $b$.
+\end{quote}
+
+Since $A$ is a polynomial, (A) says exactly that $A$ has constant sign; after
+replacing $\mu$ by $-\mu$ if necessary we may and do assume $A > 0$. When $\mu$
+is the moment sequence of a positive measure and $g \not\equiv 0$, (A) holds
+automatically, because $A(b) = \E[g(bx)^2]$. The hypothesis has content only
+when the moment functional is indefinite; see Remark~\ref{rem:krein}.
+
+\begin{remark}\label{rem:krein}
+A finite real sequence $(\mu_k)$ need not be the moment sequence of a positive
+measure. It is always the moment sequence of a \emph{signed} measure, and
+signed quadrature is ordinary numerical practice --- closed Newton--Cotes has
+negative weights from order nine. In that case $\langle p, q\rangle =
+\E[p(x)q(x)]$ is an indefinite bilinear form, a Krein rather than a Hilbert
+structure, and $L$ can take negative values. Everything below survives, because
+nothing below uses $L \geq 0$: it uses only (A), which asks the form to be
+positive on the one-dimensional span of $g(b\,\cdot)$ for each real $b$. That
+can hold while the ambient Hankel matrix of $\mu$ is indefinite, the negative
+cone simply missing the curve $b \mapsto (g_0, g_1 b, \dots, g_{d_g}b^{d_g})$.
+What is lost in that case is not the geometry but the interpretation of $L$ as
+an approximation error.
+\end{remark}
+
+\section{The backbone reduction}
+
+For fixed $b$, \eqref{eq:loss} is a quadratic in $a$ with leading coefficient
+$A(b) > 0$, so it has a unique minimiser. Completing the square gives the
+identity on which everything else rests.
+
+\begin{proposition}[Backbone form]\label{prop:backbone}
+Set
+\[
+  a^*(b) = \frac{B(b)}{A(b)}, \qquad
+  u(b)   = C - \frac{B(b)^2}{A(b)}, \qquad
+  w      = a - a^*(b).
+\]
+Then $L(a,b) = u(b) + A(b)\,w^2$.
+\end{proposition}
+
+We call the curve $\{w = 0\}$, i.e.\ $a = a^*(b)$, the \emph{backbone}, and
+$u$ the \emph{backbone potential}. The level sets of $L$ are symmetric about
+the backbone in the $a$ direction, a fact we use in \S\ref{sec:skeleton}.
+
+\begin{proposition}[Critical structure]\label{prop:critical}
+Assume \textup{(A)}. Then:
+\begin{enumerate}
+\item[(i)] $L_{aa} = 2A > 0$ everywhere, so the Hessian of $L$ is nowhere
+  negative semidefinite: $L$ has no local maximum in $\R^2$.
+\item[(ii)] Every critical point lies on the backbone.
+\item[(iii)] On the backbone, $\det \operatorname{Hess} L = 2A\,u''$; hence a
+  critical point is a minimum when $u'' > 0$, a saddle when $u'' < 0$, and
+  degenerate exactly when $u'' = 0$.
+\item[(iv)] With $N := A'B - 2B'A$,
+  \begin{equation}\label{eq:uprime}
+    u' \;=\; \frac{B\,N}{A^2},
+  \end{equation}
+  so the critical values of $b$ are precisely the real roots of $B\cdot N$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+$L_a = 2(aA - B) = 2Aw$, which vanishes iff $w = 0$; this is (i) and (ii),
+the first because $L_{aa} = 2A > 0$ independently of the other entries.
+For (iii), differentiate $L = u + Aw^2$ with $w = a - a^*(b)$. At $w = 0$ one
+finds $L_{aa} = 2A$, $L_{ab} = -2A\,a^{*\prime}$ and $L_{bb} = u'' + 2A\,
+a^{*\prime 2}$, whence
+\[
+  \det\operatorname{Hess}L = 2A\bigl(u'' + 2A a^{*\prime 2}\bigr) - 4A^2
+  a^{*\prime 2} = 2A\,u''.
+\]
+For (iv), differentiate $u = C - B^2/A$:
+\[
+  u' = -\frac{2BB'A - B^2A'}{A^2} = \frac{B\,(A'B - 2B'A)}{A^2}
+     = \frac{B\,N}{A^2}. \qedhere
+\]
+\end{proof}
+
+Two features of \eqref{eq:uprime} deserve emphasis, since both are used later.
+
+\paragraph{The roof.} At a real root $b_0$ of $B$ we have $a^*(b_0) = 0$ and
+$u(b_0) = C$. \emph{All} roots of $B$ therefore carry the same critical value
+$C = \E[f^2]$. Moreover, if $b_0$ is a simple root then
+$N(b_0) = -2B'(b_0)A(b_0)$ and $u''(b_0) = -2B'(b_0)^2/A(b_0) < 0$, so
+\begin{equation}\label{eq:Bsaddle}
+  \det \operatorname{Hess} L\big|_{b_0} \;=\; -4B'(b_0)^2 ,
+\end{equation}
+and every simple root of $B$ is a saddle, at the common height $C$. A strictly
+descending trajectory therefore cannot run from one root of $B$ to another.
+
+\paragraph{Alternation.} By (iii) the type of a critical point is the sign of
+$u''$ at a critical point of the one-dimensional function $u$. If $u$ is Morse
+its critical points alternate between local minima and local maxima along the
+$b$-axis, so the critical points of $L$ alternate between minima and saddles.
+The two-dimensional landscape inherits the combinatorics of a
+one-dimensional one.
+
+\section{Deciding the Morse property exactly}
+
+Let $H := B \cdot N$, so that by \eqref{eq:uprime} the critical $b$-values are
+the real roots of $H$ and, $A$ having no real root, $u'$ vanishes to exactly
+the order to which $H$ does.
+
+\begin{proposition}\label{prop:morse}
+Assume \textup{(A)} and $H \not\equiv 0$. Then $L$ is Morse if and only if $H$
+has no repeated real root, equivalently if and only if $\gcd(H, H')$ has no
+real root.
+\end{proposition}
+
+\begin{proof}
+A critical point is degenerate iff $u'' = 0$ there, by
+Proposition~\ref{prop:critical}(iii). If $b_0$ is a root of $H$ of multiplicity
+$m$ then $u' = H/A^2$ vanishes to order $m$ at $b_0$, so $u''(b_0) = 0$ iff
+$m \geq 2$.
+\end{proof}
+
+Both tests are effective over $\Q$: the gcd is computed by the Euclidean
+algorithm on rational coefficients, and whether a rational polynomial has a
+real root is decided by a Sturm sequence. No floating-point arithmetic and no
+tolerance enters, so the verdict is a theorem about the model as given rather
+than an estimate.
+
+Unwinding $H = BN$ gives the mechanisms by which the Morse property can fail.
+A root of $H$ is repeated exactly when
+
+\begin{enumerate}
+\item[(M1)] $B$ has a repeated real root; or
+\item[(M2)] $N$ has a repeated real root; or
+\item[(M3)] $B$ and $N$ have a common real root.
+\end{enumerate}
+
+Since a root of $B$ is a point of the axis $a = 0$, (M1) and (M3) are
+degeneracies located on that axis. Two further, non-generic, failures are not
+of this form at all:
+
+\begin{enumerate}
+\item[(M4)] $B \equiv 0$, i.e.\ $f \perp g(b\,\cdot)$ for every $b$; then
+  $u \equiv C$ and the whole backbone is critical.
+\item[(M5)] $N \equiv 0$, i.e.\ $A'B = 2B'A$ identically, which integrates to
+  $B^2 = cA$ for a constant $c$; then $u \equiv C - c$ and again the whole
+  backbone is critical.
+\end{enumerate}
+
+The familiar example $f = g = x^m$ falls under (M5): the critical set is a
+curve, not a finite set, and the Morse theory below does not apply to it.
+
+\section{The Morse skeleton, and its one gap}\label{sec:skeleton}
+
+Suppose $L$ is Morse. The exact enumeration of \S3 yields the finite critical
+set together with the type of each point, and the critical values are
+$u$ evaluated there. Because $L = u + Aw^2$ with $A > 0$, each sublevel set
+$\{L \leq c\}$ is symmetric about the backbone and fibred over
+$\{b : u(b) \leq c\}$ with interval fibres; its connected components are
+therefore in bijection with the components of the one-dimensional sublevel set
+$\{u \leq c\}$. The merge tree of $L$ --- which components are born at which
+minima and merge at which saddles --- is thus determined combinatorially by
+the ordering of the critical values of $u$, and is again exactly computable.
+
+What the merge tree does not determine is the \emph{connectivity of the
+invariant manifolds} of the gradient flow $\dot z = -\grad L(z)$. Each saddle
+has a one-dimensional unstable manifold whose two branches descend, and a
+one-dimensional stable manifold whose two branches ascend; the stable
+manifolds partition the plane into the basins of the minima. Generically each
+descending branch terminates at a minimum, and the resulting decomposition ---
+the Morse--Smale skeleton --- is the object of interest. The exception is a
+\emph{saddle connection}: a trajectory descending from one saddle directly into
+another. When one is present the system is Morse but not Morse--Smale, the
+stable and unstable manifolds coincide along an orbit, and the assignment of
+branches to minima is not what the picture would suggest.
+
+Saddle connections are codimension one in parameter space, so a given model
+generically has none. But ``generically none'' is not a certificate, and
+deciding the question for a \emph{particular} model is the remaining gap. The
+next section shows that the gap cannot be closed by the algebraic methods of
+\S\S2--3.
+
+\section{The rheostat: an algebraically invisible bifurcation}\label{sec:rheostat}
+
+Fix $f$, $g$ and $\mu$ and consider the one-parameter family obtained by
+rescaling the two polynomials against each other,
+\begin{equation}\label{eq:rheostat}
+  f_\Lambda = \frac{f}{\sqrt\Lambda}, \qquad
+  g_\Lambda = \sqrt\Lambda\, g, \qquad \Lambda > 0,
+\end{equation}
+with $\mu$ unchanged. We call $\Lambda$ the \emph{rheostat}. Write
+$L_\Lambda$, $A_\Lambda$, $u_\Lambda$ for the objects built from
+$(f_\Lambda, g_\Lambda, \mu)$, so that $L_1 = L$.
+
+\begin{lemma}[Similarity]\label{lem:similarity}
+For every $\Lambda > 0$ and every $(a,b) \in \R^2$,
+\begin{equation}\label{eq:similarity}
+  L_\Lambda(a, b) \;=\; \frac{1}{\Lambda}\, L\bigl(\Lambda a,\; b\bigr).
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+From \eqref{eq:ABC}, $A_\Lambda = \Lambda A$, $B_\Lambda = B$ (the factors
+$\sqrt\Lambda$ and $1/\sqrt\Lambda$ cancel) and $C_\Lambda = C/\Lambda$. Hence
+\[
+  L_\Lambda(a,b) = \frac{C}{\Lambda} - 2aB + a^2 \Lambda A
+  = \frac{1}{\Lambda}\Bigl( C - 2(\Lambda a)B + (\Lambda a)^2 A \Bigr)
+  = \frac{1}{\Lambda} L(\Lambda a, b). \qedhere
+\]
+\end{proof}
+
+\begin{corollary}\label{cor:invariants}
+Along the rheostat:
+\begin{enumerate}
+\item[(i)] the critical $b$-values are independent of $\Lambda$;
+\item[(ii)] each critical point moves to $(a^*/\Lambda,\, b)$, i.e.\ slides
+  along its vertical line towards the axis;
+\item[(iii)] every critical value scales by the same positive factor,
+  $u_\Lambda = u/\Lambda$, so the \emph{ordering} of the critical values, and
+  hence the merge tree, is constant;
+\item[(iv)] the type of each critical point is constant.
+\end{enumerate}
+\end{corollary}
+
+\begin{proof}
+$B_\Lambda = B$ and $N_\Lambda = A_\Lambda'B_\Lambda - 2B_\Lambda'A_\Lambda =
+\Lambda N$, so $B_\Lambda N_\Lambda = \Lambda BN$ has the same roots as $BN$,
+giving (i); $a^*_\Lambda = B/(\Lambda A) = a^*/\Lambda$ gives (ii); and
+$u_\Lambda = C/\Lambda - B^2/(\Lambda A) = u/\Lambda$ gives (iii), the
+ordering being preserved because $1/\Lambda > 0$. Finally $u_\Lambda'' =
+u''/\Lambda$ has the sign of $u''$, which with
+Proposition~\ref{prop:critical}(iii) gives (iv).
+\end{proof}
+
+Thus \eqref{eq:similarity} exhibits the family as an anisotropic dilation of
+the plane, $(a,b) \mapsto (\Lambda a, b)$, composed with a rescaling of the
+value. That map is a diffeomorphism, so it carries sublevel sets to sublevel
+sets and preserves all of their topology: the merge tree, the number and type
+of the critical points, the component structure, and the order of the critical
+values are all constant along the rheostat.
+
+The gradient flow, however, is not conjugated by it, and the reason is worth
+stating precisely, because it identifies what the family actually is.
+
+\begin{proposition}[The rheostat flow is a gradient-descent-like flow for a
+fixed $L$]\label{prop:rsgd}
+Let $T = \operatorname{diag}(\Lambda, 1)$ and let $z(t)$ solve $\dot z =
+-\grad L_\Lambda(z)$. Then $\zeta = Tz$ satisfies
+\begin{equation}\label{eq:preconditioned}
+  \dot\zeta \;=\; -M\,\grad L(\zeta), \qquad
+  M \;=\; \operatorname{diag}\bigl(\Lambda,\; \Lambda^{-1}\bigr),
+\end{equation}
+with $M$ symmetric positive definite and $\det M = 1$.
+\end{proposition}
+
+\begin{proof}
+Differentiating \eqref{eq:similarity}, $\grad L_\Lambda(z) = \Lambda^{-1}
+T\,\grad L(Tz) = \operatorname{diag}(1, \Lambda^{-1})\,\grad L(Tz)$, so
+$\dot\zeta = T\dot z = -T\operatorname{diag}(1,\Lambda^{-1})\,\grad L(\zeta)
+= -\operatorname{diag}(\Lambda, \Lambda^{-1})\,\grad L(\zeta)$.
+\end{proof}
+
+So the rheostat is not a family of unrelated landscapes: after the coordinate
+change it is \emph{one} function $L$, flowed in a one-parameter family of
+metrics. Since $M$ is positive definite, $\grad L^{\mathsf T}M\grad L > 0$ off
+the critical set, so \eqref{eq:preconditioned} is a gradient-descent-like flow
+for $L$; by the representation theorem for such flows it is in particular a
+rotated--scaled gradient-descent flow $-\kappa^{-1}Q\,\grad L$, with $Q$ the
+rotation carrying $\grad L$ to $-M\grad L$ and
+$\kappa = \|\grad L\|/\|M\grad L\|$. Rotated--scaled descent is strictly more
+general than preconditioning --- $Q$ is orthogonal with positive definite
+symmetric part, so it carries a skew component moving \emph{along} the level
+set, which no symmetric preconditioner produces --- and the rheostat lands in
+the symmetric sub-case.
+
+This makes Corollary~\ref{cor:invariants} an instance of a general fact rather
+than an accident of the particular scaling. A gradient-descent-like flow has
+the same critical points as the gradient flow, and at a critical point the
+linearisation of \eqref{eq:preconditioned} is $-M\operatorname{Hess}L$, similar
+to $-M^{1/2}(\operatorname{Hess}L)M^{1/2}$ and therefore, by Sylvester's law of
+inertia, of the same signature as $-\operatorname{Hess}L$. Minima stay minima,
+saddles stay saddles, and the merge tree is untouched --- because a change of
+metric cannot move any of it.
+
+What a change of metric does \emph{not} preserve is the trajectories. Two
+gradient-descent-like flows for the same $L$ share the critical points and the
+Morse data and have different orbits; and a saddle connection is a property of
+an orbit, not of the critical data. That is the whole of the matter: the Morse
+skeleton is metric-independent, the Morse--Smale skeleton is not.
+
+\begin{remark}[The rheostat as a normalisation]
+Since $L_1$ is the model as given, any model may be regarded as the point
+$\Lambda = 1$ of its own rheostat, and the distance to the nearest saddle
+connection along the family is $|\Lambda^* - 1|$. Because $f_\Lambda \approx
+f\,(1 - (\Lambda-1)/2)$ near $\Lambda = 1$, that is a relative coefficient
+perturbation of $|\Lambda^*-1|/2$, which makes the quantity directly comparable
+with the precision to which the coefficients are known. It is of course a
+distance along one direction only, hence an upper bound for the distance to the
+non-Morse--Smale set; \S\ref{sec:certify} obtains a lower bound valid in all
+directions.
+\end{remark}
+
+\subsection*{Why elimination cannot decide connectivity}
+
+Corollary~\ref{cor:invariants} is the obstruction. Along the rheostat the
+critical set $\{BN = 0\}$ is constant, so in $(b,\Lambda)$-space it is a union
+of vertical lines: there is no discriminant to compute, no branching, nothing
+for elimination theory to see. Yet the connectivity bifurcates. It follows that
+no function of the coefficients of $A$, $B$ and $N$ --- no resultant, no
+discriminant, no subresultant --- can decide whether a saddle connection is
+present, since any such function is constant on a family along which the answer
+changes.
+
+This is not a statement that algebraic geometry is silent about the problem.
+For a general one-parameter family, where the coefficients genuinely vary, the
+set of parameters at which the fibre acquires a repeated critical point is the
+discriminant locus of the curve $\{(b,\lambda) : (BN)(b;\lambda) = 0\}$, and it
+is computed by elimination in one step rather than one parameter at a time.
+That is exactly the \emph{non-Morse} set of \S3. The point is that the
+\emph{non-Smale} set is a different object, invisible to the same machinery.
+
+The correct setting is instead the one in which the splitting of invariant
+manifolds is measured by an integral along the unperturbed connection. For a
+regular level $c$ between the two critical values, let $\sigma(\Lambda)$ denote
+the signed separation, measured along the level curve $\{L_\Lambda = c\}$,
+between the point where the descending branch of the source saddle crosses it
+and the point where the relevant ascending branch of the target saddle does.
+Then $\sigma$ is analytic in $\Lambda$ wherever both crossings exist and are
+transversal, and $\sigma(\Lambda) = 0$ is precisely a saddle connection. This
+is a Melnikov function in all but name, and the expectation --- standard, and
+the reason Hilbert's sixteenth problem is hard --- is that its zeros are
+transcendental in the parameters. We are not aware of a proof of that
+expectation for the present family and state it as an expectation only. What
+is proved here is the weaker and sufficient statement of the preceding
+paragraph: for the rheostat, no algebraic invariant can decide.
+
+\section{Certifying the connection: existence}\label{sec:certify}
+
+The rheostat is one path through a family of metrics on the plane, and
+nothing in the existence argument below uses more than that. We state it for
+a general such path, because the hypotheses separate cleanly: confinement is
+a property of $L$ alone and is the same for every member of the family, while
+only the endpoint landings depend on the particular path.
+
+Let $\{M_s\}_{s \in [0,1]}$ be symmetric positive definite matrices depending
+smoothly on $s$, and consider the flows
+\begin{equation}\label{eq:family}
+  \dot z \;=\; -M_s\,\grad L(z).
+\end{equation}
+By Proposition~\ref{prop:rsgd} the rheostat restricted to
+$[\Lambda_0, \Lambda_1]$ is such a family, with $M_\Lambda =
+\operatorname{diag}(\Lambda, \Lambda^{-1})$. Each member is
+gradient-descent-like for $L$ (Appendix~\ref{app:rsgd}), which is all that is
+used below.
+
+\subsection*{Confinement does not depend on the metric}
+
+The ingredient that makes the argument finite is that the orbit cannot escape,
+and it holds for every descent flow at once.
+
+\begin{lemma}[Vertical barrier]\label{lem:barrier}
+For every $b_0$ and every $a$, $L(a, b_0) \geq u(b_0)$. Consequently an orbit
+of any flow along which $L$ is non-increasing, and which is at level below
+$u(b_0)$ at some time, can never cross the line $b = b_0$ thereafter.
+\end{lemma}
+
+\begin{proof}
+$L(a,b_0) = u(b_0) + A(b_0)(a - a^*(b_0))^2 \geq u(b_0)$ since $A > 0$.
+\end{proof}
+
+In particular let $b_0$ be a simple real root of $B$. By the roof computation
+of \S2, $u(b_0) = C$ and $b_0$ carries a saddle at that level. A branch
+leaving a saddle of level $C$ has $L < C$ strictly for positive time, so by
+Lemma~\ref{lem:barrier} it is trapped between the two nearest $B$-roots on
+either side; and on that compact $b$-interval $A$ is bounded below, so
+$L = u + A w^2$ bounded above bounds $w$, hence $a$, as well. The forward
+orbit is contained in a compact set.
+
+Nothing in this used the metric: only that $L$ decreases along the flow, which
+holds for every member of \eqref{eq:family} since $M_s \succ 0$. The
+confinement is a statement about the sublevel geometry of $L$, and the whole
+family inherits it.
+
+\subsection*{The limit is a single critical point}
+
+A bounded orbit of \eqref{eq:family} converges to a single critical point of
+$L$: this is Lemma~\ref{lem:kl}, the {\L}ojasiewicz inequality being a
+property of $L$ that the flow inherits with its exponent and a constant
+degraded only by $\lambda_{\min}(M_s)$.
+
+So for each $s$ the branch in question has a single critical point as its
+$\omega$-limit, and by strict decrease of $L$ that point lies strictly below
+the source level and inside the confining interval. The candidates are a
+finite, exactly enumerated list: the minima in the interval, and the saddles
+in it of strictly lower level.
+
+\subsection*{Intermediate values on the family}
+
+\begin{theorem}[Existence of a connection]\label{thm:existence}
+Let $\{M_s\}$ be as above, let the branch be confined as in
+Lemma~\ref{lem:barrier} for every $s$, and suppose that at $s = 0$ and $s = 1$
+the branch converges to two \emph{different} minima $m_0 \neq m_1$. Then there
+is $s^* \in (0,1)$ at which the branch converges to a saddle: the flow
+\eqref{eq:family} at $s^*$ has a saddle--saddle connection.
+\end{theorem}
+
+\begin{proof}
+For a hyperbolic sink $m$, the set of $s$ for which the branch converges to
+$m$ is open, by hyperbolicity together with smooth dependence of the unstable
+branch on $s$. The sets $\{s : \text{limit} = m\}$, over the finitely many
+minima in the confining interval, are therefore disjoint open sets. They
+cannot cover $[0,1]$: $[0,1]$ is connected and $s=0$, $s=1$ lie in different
+members of the family. Hence some $s^*$ has a limit that is not a minimum; by
+the previous subsection the limit is a critical point, so it is a saddle.
+\end{proof}
+
+This is a topological argument. It uses no transversality, no continuity of a
+shooting residual, no tracking of a section crossing across the interval, and
+no control of the flow at infinity --- the barrier removes the far field
+before compactification is needed. (SPONG's Poincar\'e compactification is
+available and its equatorial equilibria are known, but the degenerate
+backbone ends carry only asymptotic-grade certificates, so an argument that
+avoids them is worth preferring.)
+
+What the theorem does \emph{not} give is simplicity or uniqueness of the wall.
+It produces at least one $s^*$; the family may cross several, and the
+connection at a given $s^*$ need not be the only one. Any claim that a
+particular measured crossing is a single simple handle slide is a further
+hypothesis, requiring transversality and an exclusion argument for
+flip-and-return pairs between sample points.
+
+The two hypotheses consumed are the endpoint landings. Each is a capture deep
+inside a sink basin --- robust, but a numerical observation. The next section
+is what upgrades them.
+
+\section{Certifying the absence of a connection}
+
+[To be written: separation of the two manifolds at a common regular level by
+Gr\"onwall enclosure of the propagated launch data; the resulting ball in
+coefficient space within which no connection exists; measured margins; and
+the backward-stability licence under which a connection may be drawn.]
+
+\section{Rendering the invariant manifolds}
+
+[To be written: why na\"\i ve integration fails here, anadromic schemes, the
+Hadamard graph transform, backbone guidance, and the comparison against
+forward/backward Euler, RKF45 and Stork.]
+
+\section{Descent methods on a known landscape}
+
+[To be written: the mean-field ODE is the portrait itself; Adam follows a
+different vector field (Dereich--Jentzen--Kassing) which nevertheless shares
+the orbits in the noiseless limit; the non-interpolating regime; basins and
+the case for many initialisations.]
+
+\section{Allocating work across initialisations}
+
+[To be written: the bandit formulation and what it buys when the basins are
+unknown.]
+
+\appendix
+
+\section{Descent flows in a fixed metric}\label{app:rsgd}
+
+This appendix proves the two facts about descent flows used in
+\S\ref{sec:rheostat} and \S\ref{sec:certify}. Both are elementary for the
+flows the note actually needs, in which the multiplier is a constant
+symmetric positive definite matrix; Remark~\ref{rem:rsgd} says what changes
+in general.
+
+\begin{definition}[Gradient-descent-like]\label{def:gdl}
+Let $L \in C^2(\R^d)$ and $\Omega = \{y : \grad L(y) \neq 0\}$. A $C^1$ field
+$v$ is \emph{gradient-descent-like} for $L$ if $v^{\mathsf T}\grad L < 0$ on
+$\Omega$ and $v$ vanishes exactly on the critical set of $L$.
+\end{definition}
+
+The first condition says $L$ strictly decreases along the flow: $v$ need not
+be steepest descent, only descent. The second aligns the equilibria of $v$
+with the critical points of $L$. For $v = -M\grad L$ with $M$ constant and
+symmetric positive definite --- the case of Proposition~\ref{prop:rsgd},
+where $M = \operatorname{diag}(\Lambda, \Lambda^{-1})$ --- both hold at once,
+since $\grad L^{\mathsf T}M\grad L > 0$ off the critical set and $M$ is
+invertible.
+
+\begin{lemma}[Inertia]\label{lem:inertia}
+Let $M$ be symmetric positive definite and $H$ symmetric. Then $MH$ has the
+same numbers of positive, negative and zero eigenvalues as $H$.
+\end{lemma}
+
+\begin{proof}
+$MH$ is similar to $M^{-1/2}(MH)M^{1/2} = M^{1/2}HM^{1/2}$, which is symmetric
+and congruent to $H$; apply Sylvester's law of inertia.
+\end{proof}
+
+With $H = -\operatorname{Hess}L(y_*)$ this says the flow $\dot y = -M\grad L$
+has the same numbers of attracting and repelling directions at every critical
+point as the gradient flow. When $L$ is Morse the Morse indices agree: minima
+remain sinks, saddles remain saddles. This is the step used in
+\S\ref{sec:rheostat}.
+
+\begin{lemma}[{\L}ojasiewicz]\label{lem:kl}
+Let $L$ be real-analytic and let $y(t)$ solve $\dot y = -M\grad L(y)$ with $M$
+constant symmetric positive definite. Then along the flow
+\begin{equation}\label{eq:klrate}
+  -\frac{d}{dt}L(y(t)) \;=\; \grad L^{\mathsf T}M\,\grad L
+  \;\geq\; \lambda_{\min}(M)\,\|\grad L(y(t))\|^2,
+\end{equation}
+and every bounded orbit converges to a single critical point of $L$.
+\end{lemma}
+
+\begin{proof}
+\eqref{eq:klrate} is immediate. Near a critical point $y_*$, analyticity gives
+a {\L}ojasiewicz inequality $|L - L(y_*)|^{\beta} \leq C\|\grad L\|$ for some
+$\beta \in [\tfrac12, 1)$, so \eqref{eq:klrate} yields
+$-\tfrac{d}{dt}L \geq \lambda_{\min}(M)C^{-2}|L - L(y_*)|^{2\beta}$: the
+inequality is a property of $L$, inherited with its exponent and a constant
+degraded only by $\lambda_{\min}(M)$. The usual length argument then applies
+--- $\|\dot y\| \leq \lambda_{\max}(M)\|\grad L\|$ bounds the arclength by a
+convergent integral --- so the orbit has finite length and its $\omega$-limit
+is a single point, which is critical by Definition~\ref{def:gdl}.
+\end{proof}
+
+\begin{remark}\label{rem:rsgd}
+Both lemmas hold more generally for a variable multiplier $M(y)$, symmetric
+positive definite and $C^1$: the linearisation is then no longer of the form
+$MH$ with $M$ constant, so the inertia statement requires the
+Ostrowski--Schneider theorem rather than Sylvester's law, and the
+{\L}ojasiewicz constant degrades by $\lambda_{\min}(M(y_*))$ locally rather
+than globally. Neither generalisation is needed here, where $M$ is constant
+and diagonal.
+
+The parameterisation $v = -\kappa^{-1}Q\,\grad L$ with $\kappa > 0$ and $Q$
+orthogonal of positive definite symmetric part --- rotated--scaled gradient
+descent --- realises the same descent fields with a multiplier of condition
+number one, which matters in floating point and not on the blackboard; see
+the author's separate work on those flows.
+\end{remark}
+
+\end{document}
