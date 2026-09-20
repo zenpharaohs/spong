@@ -78,6 +78,13 @@ class Shot:
     points: dict[float, np.ndarray]
     times: dict[float, float]
     stats: StepStats
+    # Every accepted step endpoint and its loss, in order.  The separation
+    # certificate bounds INT ||J|| dL along the shot, and the step points are
+    # the decomposition it needs: sampling extra meeting levels instead costs
+    # a whole extra pair of shots per level and is far coarser -- 127 sampled
+    # levels still gave a bound of 17.6 against a true 3.6.
+    path: list[np.ndarray] | None = None
+    path_levels: list[float] | None = None
 
 
 def _loss(m, z: np.ndarray) -> float:
@@ -159,6 +166,8 @@ def _shoot(m, start, boundaries, clock_start: float, order: int,
     stats = StepStats()
     points: dict[float, np.ndarray] = {}
     times: dict[float, float] = {}
+    path: list[np.ndarray] = [z.copy()]
+    path_levels: list[float] = [_loss(m, z)]
     tau = 0.0
     timing = False
     current_step = base_step
@@ -208,6 +217,8 @@ def _shoot(m, start, boundaries, clock_start: float, order: int,
                     f"pure GL{order} step failed at L={level:.17g}")
             z = accepted["end"]
             stats.accepted += 1
+            path.append(z.copy())
+            path_levels.append(_loss(m, z))
             stats.max_space_ratio = max(
                 stats.max_space_ratio, accepted["space_ratio"])
             stats.max_clock_ratio = max(
@@ -225,7 +236,7 @@ def _shoot(m, start, boundaries, clock_start: float, order: int,
             tau = 0.0
         elif timing:
             times[boundary] = tau
-    return Shot(points, times, stats)
+    return Shot(points, times, stats, path, path_levels)
 
 
 def _stub_error(stub) -> float:
@@ -302,6 +313,7 @@ def measure(base, lam: float, branch_index: int, target_b: float,
         })
     return {
         "rows": rows, "down_stats": down.stats, "up_stats": up.stats,
+        "down_shot": down, "up_shot": up,
         "source_stub_error": _stub_error(source_stub),
         "target_stub_error": _stub_error(target_stub),
         "source_b": float(source.b), "target_b": float(target.b),
