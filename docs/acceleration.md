@@ -119,12 +119,39 @@ degree 136 in the far-field funnel), so the big-int operands outgrow what
 `Fraction`'s per-coefficient reduction keeps them at.  Many small gcds beat a
 few enormous multiplies.
 
-**Subresultant PRS would be worse, not better.**  Measured peak chain
+**Subresultant PRS would be worse, not better.**  Measured peak intermediate
 coefficient bits, primitive versus subresultant: A 8100 vs 10381, N 24385 vs
 27873, A^2 8257 vs 20116, A^4 8573 vs 39554 — ratios 0.78, 0.87, 0.41, 0.22.
 Primitive PRS is the coefficient-*optimal* variant; subresultant trades larger
 coefficients for avoiding content computation.  `sturm_chain_build` already
 uses the right one.
+
+What that choice does and does not risk, since the subresultant PRS is the
+textbook recommendation and departing from it should be on the record.
+
+*Correctness: nothing is at stake.*  Sturm's theorem reads only the SIGN
+SEQUENCE of the chain, and replacing a remainder by its primitive part is
+multiplication by a positive rational.  The two variants therefore produce
+identical sign sequences, identical root counts on every interval, and
+identical isolating intervals.  Both are exact integer arithmetic; neither
+can be more accurate than the other, because both are exact.
+
+*What the textbook choice actually buys is a WORST-CASE BOUND.*
+Subresultants have determinantal formulas and hence a priori Hadamard-type
+coefficient bounds, so their growth can be analyzed rather than measured.
+Primitive-part coefficients are minimal but carry no comparable closed form.
+We have swapped an analyzable bound for a measured optimum, which is the
+right trade only so long as the measurement is maintained.
+
+*The adversarial case, so a future reader knows when to re-measure.*
+Primitive PRS loses when the remainders are already content-free: every gcd
+returns 1, and the content computation is pure overhead against a
+subresultant chain that never attempted it.  The measured cases are the
+opposite extreme — the 39554-vs-8573 gap on A^4 is the content the primitive
+form removes — so the gcds repay themselves many times over.  A model family
+whose chains are coprime step by step would invert the result; none has been
+seen, and the ratios above are stable across the four polynomials that
+dominate the audit.
 
 **`peak_coefficient_bits` is not the chain's coefficient size.**  It is the
 conservative *intermediate* PRS peak, as `sturm.py`'s docstring says.  Reading

@@ -200,11 +200,56 @@ $m$ then $u' = H/A^2$ vanishes to order $m$ at $b_0$, so $u''(b_0) = 0$ iff
 $m \geq 2$.
 \end{proof}
 
-Both tests are effective over $\Q$: the gcd is computed by the Euclidean
-algorithm on rational coefficients, and whether a rational polynomial has a
-real root is decided by a Sturm sequence. No floating-point arithmetic and no
-tolerance enters, so the verdict is a theorem about the model as given rather
-than an estimate.
+Both tests are effective over $\Q$, and it is worth saying how, since the
+usual expectation would be a numerical root-finder followed by a tolerance.
+There is none here: no root of $H$ is ever computed as a floating-point
+number for the purpose of deciding anything.
+
+Clear denominators so that $H \in \mathbb{Z}[b]$. The Sturm chain is the
+Euclidean remainder sequence $H_0 = H$, $H_1 = H'$,
+$H_{k+1} = -\operatorname{rem}(H_{k-1}, H_k)$, each remainder replaced by its
+primitive part --- the integer polynomial obtained by dividing out the content
+--- which is a positive rational rescaling and therefore changes no sign the
+theory reads. Removing the content at every step is what keeps the chain in
+manageable integers. The textbook alternative, the subresultant PRS, avoids
+computing the content at the price of carrying larger coefficients; on these
+polynomials that price is measured and substantial, the peak intermediate
+coefficient reaching 20116 bits against 8257 for $A^2$ and 39554 against 8573
+for $A^4$. Primitive PRS is the coefficient-optimal variant here. The two
+chains have identical sign sequences --- dividing out the content multiplies
+by a positive rational --- so the choice is one of space and time and not of
+correctness.
+
+Sturm's theorem then gives the number of distinct real roots of $H$ in any
+interval $(p, q]$ with rational endpoints as the drop in sign variations of
+the chain evaluated at $p$ and $q$. A Cauchy bound on the coefficients
+supplies a starting interval containing every real root; repeated bisection,
+using the same count, isolates each root in an interval containing exactly one
+and refines it to any rational width. The output is therefore a list of
+rational intervals, each certified to hold exactly one real root of $H$ --- not
+a list of approximate roots.
+
+Every subsequent decision is an exact sign evaluation on those intervals. The
+type of a critical point is the sign of $u''$ there, obtained from the sign of
+a polynomial on the isolating interval rather than from the value of $u''$ at
+an approximate root. The ordering of critical values, which determines the
+merge tree, is decided the same way: a candidate rational level $c$ separates
+two critical values when the level polynomial $(C-c)A - B^2$ has the
+appropriate root count on each side, so critical values are never compared to
+one another numerically and coincident values --- which are generic here,
+since every root of $B$ has value exactly $C$ --- are detected rather than
+resolved by luck. Floating point is used freely to \emph{propose} levels and
+bisection points; it decides nothing.
+
+The cost is set by the degree. With $d = d_g$, $\deg A = 2d$ and
+$\deg B = d$, so $A'B$ and $2B'A$ both have degree $3d-1$ with leading
+coefficient $2d\,\alpha_{2d}\beta_d$: the leading terms cancel, $\deg N \leq
+3d-2$, and
+\[
+  \deg H \;=\; \deg B + \deg N \;\leq\; 4d - 2 .
+\]
+At $d = 11$ that is a chain on a degree-42 integer polynomial, which is why
+the implementation carries the chain in GMP rather than in machine words.
 
 Unwinding $H = BN$ gives the mechanisms by which the Morse property can fail.
 A root of $H$ is repeated exactly when
