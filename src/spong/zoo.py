@@ -321,6 +321,102 @@ NEAR_SLIDE_D2 = ZooCase(
 )
 
 
+@dataclass(frozen=True)
+class SignedMeasureCase:
+    """A model whose moment functional is INDEFINITE: a signed measure.
+
+    Deliberately outside ``CASES``, like ``WallFamily``, because ``ZooCase``
+    carries ``moment_dist`` as a two-valued string and every consumer
+    branches on it with an ``else`` meaning normal01; a third value there
+    would silently mis-build this case everywhere.
+
+    WHY THE REGIME EXISTS.  Any finite real sequence is the moment sequence
+    of some signed measure, so an indefinite Hankel does not make the SPONG
+    problem meaningless -- it makes it least squares in a KREIN space.  The
+    form has a signature, squared lengths can be negative, and C = <f,f> can
+    be negative.  Signed quadrature is ordinary numerical analysis: closed
+    Newton-Cotes has negative weights from order 9.
+
+    WHAT STILL HOLDS, and why this case is a regression rather than a
+    curiosity: none of the backbone theory used L >= 0.  It used H11 = 2A,
+    and A(b) > 0 is enforced exactly, so the Hessian is never negative
+    definite and there are STILL no local maxima in the plane.  Critical
+    points still lie on the backbone, det H = 2A u'' still classifies them,
+    u'' still alternates, and L is still bounded below because u -> u_inf.
+    Only the reading of L as an approximation error is lost.
+
+    The case is stored as exact rational atoms and weights -- the signed
+    quadrature rule itself -- rather than as a moment vector, so its
+    provenance is inspectable and mu is rebuilt exactly at any order.
+    Coefficients are decimal strings parsed by ``Fraction``.
+    """
+
+    name: str
+    f: tuple[str, ...]
+    g: tuple[str, ...]
+    atoms: tuple[str, ...]
+    weights: tuple[str, ...]
+    hankel_signature: tuple[int, int]     # (positive, negative) EXACT
+    description: str
+
+    def moments(self, count: int):
+        """mu_0..mu_{count-1} of the signed measure, exactly, mu_0 = 1."""
+        from fractions import Fraction
+        atoms = [Fraction(x) for x in self.atoms]
+        weights = [Fraction(w) for w in self.weights]
+        raw = [sum((w * x**k for x, w in zip(atoms, weights)), Fraction(0))
+               for k in range(count)]
+        if raw[0] == 0:
+            raise ValueError(f"{self.name}: total mass is zero")
+        return tuple(value / raw[0] for value in raw)
+
+    def build(self):
+        """The Model, with exact rational coefficients and moments."""
+        from fractions import Fraction
+        from . import model as _model
+        f = [Fraction(x) for x in self.f]
+        g = [Fraction(x) for x in self.g]
+        need = 2*max(len(f), len(g)) - 1
+        return _model.build(f, g, self.moments(need))
+
+
+KREIN_UNIT_TARGET = SignedMeasureCase(
+    name="krein-unit-target-d4",
+    f=("1", "0"),
+    g=("-3", "3", "-2", "3", "2"),
+    atoms=("2", "1", "-1/2", "-2", "3"),
+    weights=("4", "4", "-5/3", "2/3", "1"),
+    hankel_signature=(4, 1),
+    description=(
+        "Five-atom signed quadrature whose Hankel matrix has signature "
+        "(4+, 1-) -- one genuinely negative direction, certified exactly by "
+        "Jacobi's rule on the leading principal minors, no eigenvalues and "
+        "no tolerance.  A(b) > 0 nonetheless holds for all real b: the "
+        "negative cone misses the Veronese curve (g_0, g_1 b, ..., g_d b^d) "
+        "that the model actually evaluates the form on, which is the whole "
+        "content of psi_positive here.  Morse, 2 saddles and 2 minima, and "
+        "resolution.resolve returns a certified portrait.\n\n"
+        "f = (1, 0) gives C = <f,f> = 1 exactly, so this case does NOT "
+        "exhibit a negative target norm; it isolates the indefiniteness of "
+        "the ambient form from that separate effect.  Found by "
+        "scripts/signed_measure.py, which generates the regime at large."
+    ),
+)
+
+
+SIGNED_MEASURE_CASES = {
+    KREIN_UNIT_TARGET.name: KREIN_UNIT_TARGET,
+}
+
+
+def signed_measure_names() -> tuple[str, ...]:
+    return tuple(sorted(SIGNED_MEASURE_CASES))
+
+
+def get_signed_measure(name: str) -> SignedMeasureCase:
+    return SIGNED_MEASURE_CASES[name]
+
+
 CASES = {
     QUADRATIC_STIFF.name: QUADRATIC_STIFF,
     NEAR_SLIDE_D2.name: NEAR_SLIDE_D2,
