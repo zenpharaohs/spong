@@ -234,6 +234,37 @@ def _traps(m):
     return sorted(out)
 
 
+def _residue(A_desc, App_desc, z):
+    """A(z)/A''(z) at a root of A', without overflowing either evaluation.
+
+    Direct polyval overflows on the cases this viewer is most wanted for: at
+    degree 2d with large coefficients and |z| well above 1, both numerator
+    and denominator reach inf and the quotient is NaN --
+
+        RuntimeWarning: invalid value encountered in scalar divide
+
+    which is not cosmetic.  NaN residues make every J value NaN, the
+    diagonal licence test np.all(np.isfinite(J)) then fails, and the branch
+    silently gets no drawn tail at all.
+
+    Same remedy as model._rational_product: for |z| > 1 evaluate through the
+    REVERSED polynomials in 1/z, so only the net power z^(deg A - deg A'')
+    is ever formed.  That power is 2 for the ratio at hand, so nothing large
+    appears even when each polynomial separately would overflow.
+    """
+    if abs(z) <= 1.0:
+        denominator = np.polyval(App_desc, z)
+        return (np.polyval(A_desc, z)/denominator if denominator != 0
+                else complex("nan"))
+    inv = 1.0/z
+    numerator = np.polyval(A_desc[::-1], inv)
+    denominator = np.polyval(App_desc[::-1], inv)
+    if denominator == 0:
+        return complex("nan")
+    power = (len(A_desc) - 1) - (len(App_desc) - 1)
+    return (z**power)*numerator/denominator
+
+
 def _j_invariant(m, d_eff: float):
     """The exact invariant of the B-truncated flow, in closed form.
 
@@ -268,8 +299,7 @@ def _j_invariant(m, d_eff: float):
     q, _r = np.polydiv(A[::-1], Ap)                 # q = b/(2d) + c1
     c1 = float(q[-1]) if len(q) else 0.0
     rhos = np.roots(Ap)
-    res = np.array([np.polyval(A[::-1], z)/np.polyval(App, z) for z in rhos],
-                   dtype=complex)
+    res = np.array([_residue(A[::-1], App, z) for z in rhos], dtype=complex)
     return c1, rhos, res
 
 
@@ -1013,10 +1043,20 @@ def allocator(payload: dict) -> dict:
     method = str(payload.get("method", "adam"))
     schedule = str(payload.get("schedule", "inverse-sqrt"))
     design = str(payload.get("design", "low-discrepancy"))
-    learning_rate = float(payload.get(
-        "learning_rate", optimizer_gallery.DEFAULT_LR.get(method, 1e-3)))
-    if not math.isfinite(learning_rate) or learning_rate <= 0.0:
-        raise ValueError("learning_rate must be finite and positive")
+    # "auto" calibrates each arm from its own exact gradient at its own
+    # start, so the opening displacement is a fraction of the visible window
+    # rather than a fixed multiple of whatever gradient the arm landed on.
+    # SGD needs this: it moves lr*|grad L| per step with nothing normalizing
+    # it, so an arm starting high on a quartic wall takes an enormous first
+    # jump.  A numeric rate is still honoured verbatim.
+    raw_lr = payload.get(
+        "learning_rate", optimizer_gallery.DEFAULT_LR.get(method, 1e-3))
+    if isinstance(raw_lr, str) and raw_lr.strip().lower() == "auto":
+        learning_rate = "auto"
+    else:
+        learning_rate = float(raw_lr)
+        if not math.isfinite(learning_rate) or learning_rate <= 0.0:
+            raise ValueError("learning_rate must be finite and positive")
     time_limit_sec = float(payload.get("time_limit_sec", 20.0))
     if not math.isfinite(time_limit_sec) or not 1.0 <= time_limit_sec <= 300.0:
         raise ValueError("time_limit_sec must be finite and in [1, 300]")
@@ -1053,7 +1093,10 @@ def allocator(payload: dict) -> dict:
             "method": method,
             "schedule": schedule,
             "warmup_steps": comparison["warmup_steps"],
+            # A list when calibrated per arm; a scalar when fixed.
             "learning_rate": comparison["learning_rate"],
+            "learning_rate_mode": ("auto" if learning_rate == "auto"
+                                   else "fixed"),
             "time_limit_sec": time_limit_sec,
             "design": design,
             "seed": seed,
