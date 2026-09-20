@@ -419,6 +419,32 @@ def compute(m: Model, view=None, geometry_level: int = 0,
         p.ledger["topology"] = topology.audit(
             m, e, branches, box,
             pair_contact_policy=pair_contact_policy)
+    # NON-MORSE IS NOT CERTIFIABLE HERE.  The audit's "certified" is a
+    # statement about the branch inventory and the contact scan, and its
+    # inventory counts two stubs per SADDLE: a degenerate critical point
+    # contributes no stubs, no branches and no expectation, so the books
+    # balance while a critical point of the loss is missing from them
+    # entirely.  Measured 2026-09-19 on deg f = 1, deg g = 13 with exact
+    # small-integer coefficients (f = (0,-1)): a degenerate point at b = 0
+    # with u = 1/12, sitting between two minima in the merge tree, and the
+    # audit returned "certified" with 8 expected against 8 observed on each
+    # side.
+    #
+    # resolution.resolve() has always refused these upstream -- its terminal
+    # is CERTIFIED_NON_MORSE and it never calls this function -- but callers
+    # that use certified_compute directly (qualify_parallel among them) read
+    # this key, and would score the model as certified.  The word is scoped
+    # here so it cannot be read as a global verdict by whoever asks.
+    #
+    # DEPICTION IS DEFERRED, not merely unimplemented: there is no settled
+    # way to draw even the non-Morse cases we understand (f = g = x^m has
+    # continuous CURVES of critical points), and for floating-point f, g or
+    # inexact moments a backward-stable depiction of a non-Morse portrait is
+    # probably meaningless -- the neighbouring representable models are
+    # Morse, so the picture would be of nothing nearby.
+    if not e.morse:
+        p.ledger["topology"]["status"] = "non_morse"
+        p.ledger["topology"]["resolution_reason"] = "exact_non_morse"
     _t_done = time.perf_counter()
     # Branch tracing is a small minority of a portrait: measured on
     # tricky-d11, 8.2s of branches against 143s of wall.  The certificate
