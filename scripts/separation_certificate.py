@@ -176,7 +176,26 @@ def bound_shot(m, label, shot, stub_width, space_atol, space_rtol,
 
 def certify(base, lam, branch, target_b, stable_sign, *, order=6,
             launch_level=4, n_steps=400, fraction=0.5,
-            space_rtol=1e-8, space_atol=1e-13, verbose=False):
+            space_rtol=1e-12, space_atol=1e-15, verbose=False):
+    """Separation verdict and ball radius for one candidate pair.
+
+    THE TOLERANCES ARE THE BINDING KNOB, and the relative one is what binds:
+    with a max chord near 0.03, space_rtol = 1e-8 contributes 2.8e-10 per
+    step against space_atol's 1e-13, so the absolute term was never in
+    play.  Tightening the pair is nearly free and compounds through the
+    radius bootstrap -- smaller local error gives a thinner tube, hence a
+    smaller ||J|| bound, hence a smaller amplification, hence a smaller
+    enclosure.  Measured on near-slide-d2 at Lambda = 1, n_steps = 400:
+
+        rtol 1e-8,  atol 1e-13  ->  enclosure 6.98e-4, ball 1.68e-7
+        rtol 1e-10, atol 1e-13  ->  enclosure 1.50e-6, ball 1.76e-6
+        rtol 1e-12, atol 1e-15  ->  enclosure 1.97e-7, ball 5.34e-6
+
+    a factor of 3500 in the enclosure for no extra segments (199 -> 203)
+    and no extra time.  Returns diminish past 1e-12, where the stub widths
+    (1.4e-9, 1.7e-10) and the tube geometry take over again, so that is the
+    knee and the default.
+    """
     r = measure(base, lam, branch, target_b, stable_sign, [fraction], order,
                 launch_level, n_steps, 0.01, 0.01, space_rtol, space_atol,
                 1e-8, 1e-12)
@@ -240,6 +259,8 @@ def main(argv=None) -> int:
     ap.add_argument("--launch-level", type=int, default=4)
     ap.add_argument("--n-steps", type=int, default=400)
     ap.add_argument("--fraction", type=float, default=0.5)
+    ap.add_argument("--space-rtol", type=float, default=1e-12)
+    ap.add_argument("--space-atol", type=float, default=1e-15)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -247,7 +268,8 @@ def main(argv=None) -> int:
     cert = certify(base, args.lam, args.branch, args.target_b,
                    args.stable_sign, order=args.order,
                    launch_level=args.launch_level, n_steps=args.n_steps,
-                   fraction=args.fraction, verbose=args.verbose)
+                   fraction=args.fraction, space_rtol=args.space_rtol,
+                   space_atol=args.space_atol, verbose=args.verbose)
 
     print(f"\n{args.case} at Lambda={args.lam:g}: branch {args.branch} "
           f"vs saddle near b={args.target_b:g} (stable sign "
