@@ -210,7 +210,34 @@ def has_repeated_real_root(p: Poly) -> bool:
 
 
 def is_positive(p: Poly) -> bool:
-    """EXACT: p(b) > 0 for all real b (no real roots + positive sample)."""
+    """EXACT: p(b) > 0 for all real b (no real roots + positive sample).
+
+    Applied to A, this is the model hypothesis psi_positive.  Note what it
+    is and is not.  Since A is a polynomial, having no real root is the same
+    as having CONSTANT SIGN, so the genuine hypothesis is that A is
+    DEFINITE; this routine additionally fixes which representative is kept.
+    Three classes, not two:
+
+      A > 0        the ordinary case.
+      A < 0        negating mu negates A, B and C together, so L -> -L
+                   identically: same critical points, same backbone
+                   a* = B/A (both flip), minima and maxima exchanged and
+                   the flow reversed.  Not a new landscape, the same one
+                   upside down, and one sign flip returns it to the case
+                   above.
+      A changes    genuinely excluded.  At a real root b0 of A the fibre
+      sign         L(.,b0) is LINEAR in a, hence unbounded both ways unless
+                   B(b0) = 0 as well, and a* = B/A has a pole there: the
+                   (b, w) backbone chart -- the representation the whole
+                   tracer is built on -- does not exist at b0.  This is
+                   where the complex programme's poles of u reach the real
+                   axis.
+
+    An INDEFINITE moment functional is a separate matter and is not
+    excluded: see zoo.SignedMeasureCase.  A(b) is the form evaluated on the
+    span of g(b.), so it can be positive for every real b while the ambient
+    Hankel matrix has a negative direction that the Veronese curve misses.
+    """
     if not p:
         return False
     return count_roots(p) == 0 and P.eval_at(p, Fraction(0)) > 0
@@ -566,6 +593,19 @@ def enumerate_critical_points(m: Model) -> Enumeration:
         # N, or a common real root of B and N -- all already in hand.  The
         # direct gcd(H, H') costs 20 s at degree 66 to learn the same thing.
         assert P.degree(H) == P.degree(B) + P.degree(N)
+        repeated_B = P.gcd_poly(B, P.deriv(B))
+        repeated_N = P.gcd_poly(N, P.deriv(N))
+        # A polynomial vanishing exactly on the repeated real roots of H.
+        # A root of multiplicity m in B and n in N has multiplicity m + n
+        # in H, so it repeats iff m >= 2, n >= 2, or m = n = 1 -- the three
+        # factors below.  This is needed even here: the enumeration falls
+        # through to the H branch whenever B and N share a factor or either
+        # is not squarefree, and that branch reads repeated_H.  Leaving it
+        # unbound raised UnboundLocalError on exact small-integer
+        # coefficients, where shared and repeated roots actually occur
+        # (deg f = 1, deg g = 13, f = (0, -1), integer g, 2026-09-19);
+        # random float coefficients never reach it.
+        repeated_H = P.mul(P.mul(repeated_B, repeated_N), common)
         has_repeated_real = (
             has_repeated_real_root(B) or has_repeated_real_root(N)
             or (has_common and count_roots(common) > 0))
