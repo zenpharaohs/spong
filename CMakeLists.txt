@@ -23,6 +23,8 @@ add_library(spong_core ${SPONG_LIBRARY_TYPE}
     src/c/spong_potential.c
     src/c/spong_jet.c
     src/c/spong_arrival.c
+    src/c/spong_rheostat_gmp.c
+    src/c/spong_section.c
 )
 add_library(spong::core ALIAS spong_core)
 target_include_directories(spong_core
@@ -44,7 +46,7 @@ set_target_properties(spong_core PROPERTIES
     C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     PUBLIC_HEADER
-        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_smale.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h"
+        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_smale.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h;include/spong/spong_rheostat.h;include/spong/spong_rheostat_pair.h;include/spong/spong_section.h"
 )
 if(SPONG_BUILD_SHARED)
     target_compile_definitions(spong_core
@@ -59,6 +61,19 @@ endif()
 
 if(SPONG_BUILD_C_TESTS)
     enable_testing()
+    add_executable(test_spong_section tests/c/test_spong_section.c)
+    target_link_libraries(test_spong_section PRIVATE spong::core)
+    add_test(NAME spong_section_c_abi COMMAND test_spong_section)
+    add_executable(test_spong_rheostat_pair tests/c/test_spong_rheostat_pair.c)
+    target_link_libraries(test_spong_rheostat_pair PRIVATE spong::core)
+    add_test(NAME spong_rheostat_pair_c_abi COMMAND test_spong_rheostat_pair)
+    add_executable(test_spong_rheostat tests/c/test_spong_rheostat.c)
+    target_link_libraries(test_spong_rheostat PRIVATE spong::core)
+    add_test(NAME spong_rheostat_c_abi COMMAND test_spong_rheostat)
+    add_executable(test_spong_rheostat_arithmetic tests/c/test_spong_rheostat_arithmetic.c)
+    target_include_directories(test_spong_rheostat_arithmetic PRIVATE ${GMP_INCLUDE_DIR})
+    target_link_libraries(test_spong_rheostat_arithmetic PRIVATE spong::core)
+    add_test(NAME spong_rheostat_arithmetic COMMAND test_spong_rheostat_arithmetic)
     add_executable(test_spong_resolution tests/c/test_spong_resolution.c)
     target_link_libraries(test_spong_resolution PRIVATE spong::core)
     add_test(NAME spong_resolution_c_abi COMMAND test_spong_resolution)

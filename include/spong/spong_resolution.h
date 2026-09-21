@@ -41,8 +41,13 @@ extern "C" {
  * 6: spong_smale.h added the frontend-neutral GMP rational trapping-tube
  *    verifier and exact target-fibre projection (2026-09-13).
  * 7: spong_local.h exposed the Poincare graph proposal and spong_smale.h
- *    added the exact GMP local cone/Frobenius launch proof (2026-09-13). */
-#define SPONG_ABI_VERSION UINT32_C(8)
+ *    added the exact GMP local cone/Frobenius launch proof (2026-09-13).
+ * 8: spong_smale.h added native fixed-sheet flow tubes.
+ * 9: spong_rheostat.h adds GMP numerical section/sensitivity and wall
+ *    proposal contexts (2026-09-21); existing resolution values unchanged.
+ * 10: spong_rheostat_pair.h and spong_section.h add paired connection
+ *     proposals and native loss-section event tracing (2026-09-21). */
+#define SPONG_ABI_VERSION UINT32_C(10)
 
 typedef enum {
     SPONG_RESOLUTION_PROCEED = 0,

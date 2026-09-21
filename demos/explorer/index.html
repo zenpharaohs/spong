@@ -334,6 +334,16 @@
             <option value="quad">f = g = 1 + x + x²</option>
           </select>
         </div>
+        <div class="wide" id="candidateControls" hidden>
+          <label for="candidateSlider">double-connection rheostat Λ</label>
+          <input id="candidateSlider" type="range" min="1.2" max="1.4" step="any">
+          <div class="row">
+            <input id="candidateLambda" type="text" aria-label="Double-connection Lambda">
+            <button id="candidateApply" class="ghost">apply Λ</button>
+            <button id="candidateReset" class="ghost">connection value</button>
+          </div>
+          <p id="candidateReadout" style="font-size:12px"></p>
+        </div>
         <div class="wide">
           <label for="fIn">f coefficients (low → high)
             <span class="help" tabindex="0" title="The target function f(x), as coefficients from the constant term up: '1, 1, 1' means 1 + x + x².">?</span></label>
@@ -349,6 +359,7 @@
           <select id="dist">
             <option value="uniform01">U(0,1)</option>
             <option value="normal01">N(0,1)</option>
+            <option value="absolute_x">|x| dx on [-1,1]</option>
             <option value="empirical">empirical batch</option>
           </select>
         </div>
@@ -747,6 +758,13 @@ let seq = 0, inflight = null;
 const lastSent = { f: null, g: null, n: null };
 
 async function recompute(_unused, zooName, separated){
+  if (!zooName && CANDIDATE && !WALL && !separated
+      && els("preset").value === CANDIDATE.name
+      && els("fIn").value === lastSent.f && els("gIn").value === lastSent.g
+      && els("dist").value === "absolute_x") zooName = CANDIDATE.name;
+  if (!zooName || !CANDIDATE || zooName !== CANDIDATE.name) {
+    CANDIDATE = null; els("candidateControls").hidden = true;
+  }
   const id = ++seq;
   if (inflight) inflight.abort();      // abandon a superseded request
   inflight = new AbortController();
@@ -771,7 +789,8 @@ async function recompute(_unused, zooName, separated){
   // looking at is the honest bound.
   const base = WALL ? { wall: WALL.name, lam: lamFromSlider(),
                          wall_limit: !!WALL.atWall }
-    : zooName ? { zoo: zooName }
+    : zooName ? { zoo: zooName,
+        ...(CANDIDATE ? {candidate_lam: els("candidateLambda").value} : {}) }
     : separated ? { separated_linear: separated } : {
     f: parseCoeffs(els("fIn").value),
     g: parseCoeffs(els("gIn").value),
@@ -808,7 +827,7 @@ async function recompute(_unused, zooName, separated){
     // ladder, so a non-Morse model can be reported at once rather than after
     // a certification that was never going to apply to it.
     const [ps, pt] = certStateFor(preview);
-    if (ps === "nonmorse"){
+    if (ps === "nonmorse" || preview.candidate){
       setCert(ps, pt);
       st.className = "status";
       st.textContent = `${pt} · ${describe(preview)}`;
@@ -866,6 +885,8 @@ function certStateFor(data){
   if (e.morse === false)
     return ["nonmorse", "certified NON-MORSE: the critical skeleton is "
                       + "degenerate, exactly determined"];
+  if (data.status === "numerical_connection_candidate")
+    return ["unresolved", data.reason];
   if (data.status === "geometric_wall_limit")
     return ["walllimit", "showing the exact geometric limit at the wall, "
                       + "not a numerically continued portrait — the ordinary "
@@ -940,12 +961,26 @@ function apply(data, zooName){
   // skeleton is what one wants to look at first, and refitting by hand on
   // every case was costing more time than it saved.  The trace box stays
   // one keypress away as `home` (0 / reset).
-  if (S.P.critical && S.P.critical.length){
+  // Connection families keep their local frame as Lambda changes. Extra
+  // distant critical points remain available through "fit to skeleton".
+  if (!data.candidate && S.P.critical && S.P.critical.length){
     const bs = S.P.critical.map(c => c.b), as = S.P.critical.map(c => c.a);
     const bp = .35*(Math.max(...bs) - Math.min(...bs) + 1);
     const ap = .35*(Math.max(...as) - Math.min(...as) + 1);
     S.view = { b0: Math.min(...bs)-bp, b1: Math.max(...bs)+bp,
                a0: Math.min(...as)-ap, a1: Math.max(...as)+ap };
+  }
+  if (data.candidate){
+    els("candidateReadout").textContent =
+      `Λ = ${Number(data.candidate.parameter).toPrecision(17)}; `
+      + data.candidate.pairs.map(p =>
+        `${p.side}: distance ${p.gap.toExponential(3)}, Δb ${p.delta_b.toExponential(3)}`).join("; ")
+      + ". Numerical shots to intermediate loss levels; no topology certificate.";
+    els("caseId").textContent += `   Lambda ≈ ${data.candidate.parameter}`
+      + (data.candidate.at_connection
+        ? "   NUMERICAL WALL LIMIT; two blue connections in the full portrait. "
+        : "   FULL NUMERICAL PORTRAIT; separate invariant manifolds. ")
+      + data.candidate.pairs.map(p => `${p.side} meeting gap ${p.gap.toExponential(3)}`).join("; ");
   }
   updateWallGap(data);
   draw();
@@ -1769,7 +1804,8 @@ function drawResp(){
   if (!S.P) return;
   const f = S.P.f, g = S.P.g, pad = { l:44, r:12, t:12, b:26 };
   const kind = els("dist").value;
-  const x0 = kind === "normal01" ? -3 : 0, x1 = kind === "normal01" ? 3 : 1;
+  const x0 = kind === "normal01" ? -3 : kind === "absolute_x" ? -1 : 0;
+  const x1 = kind === "normal01" ? 3 : 1;
   const N = 220, xs=[], Fv=[], Rv=[];
   for (let i = 0; i <= N; i++){
     const x = x0 + i / N * (x1 - x0);
@@ -2382,6 +2418,7 @@ els("preset").onchange = e => {
   const val = e.target.value;
   if (!val) return;
   clearWall();
+  selectCandidate(val);
   S.traces = []; S.sel = { a:1, b:1 };
   if (PRESETS[val]){
     els("fIn").value = PRESETS[val].f;
@@ -2400,12 +2437,49 @@ els("preset").onchange = e => {
 // a stale choice and the NEXT recompute silently sends the boxes with the
 // wrong moments, as a custom case, while the label still names the zoo entry.
 const ZOO_MOMENTS = {};
+const CANDIDATE_PARAMETERS = {};
+let CANDIDATE = null;
+function selectCandidate(name){
+  const parameter = CANDIDATE_PARAMETERS[name];
+  CANDIDATE = parameter ? { name, parameter } : null;
+  els("candidateControls").hidden = !CANDIDATE;
+  if (!CANDIDATE) return;
+  els("candidateSlider").min = +parameter - .1;
+  els("candidateSlider").max = +parameter + .1;
+  els("candidateSlider").value = parameter;
+  els("candidateLambda").value = parameter; // retain full stored decimal
+}
+function applyCandidate(){
+  if (!CANDIDATE) return;
+  const lam = Number(els("candidateLambda").value);
+  if (!Number.isFinite(lam) || lam < .1 || lam > 10){
+    els("candidateReadout").textContent = "Lambda must lie in [0.1, 10].";
+    return;
+  }
+  els("candidateSlider").min = Math.min(lam, +CANDIDATE.parameter - .1);
+  els("candidateSlider").max = Math.max(lam, +CANDIDATE.parameter + .1);
+  els("candidateSlider").value = lam;
+  S.traces = [];
+  recompute(false, CANDIDATE.name);
+}
+els("candidateSlider").oninput = () => {
+  els("candidateLambda").value = els("candidateSlider").value;
+};
+els("candidateSlider").onchange = applyCandidate;
+els("candidateApply").onclick = applyCandidate;
+els("candidateLambda").onkeydown = e => { if (e.key === "Enter") applyCandidate(); };
+els("candidateReset").onclick = () => {
+  if (!CANDIDATE) return;
+  els("candidateLambda").value = CANDIDATE.parameter;
+  applyCandidate();
+};
 fetch("/zoo").then(r => r.json()).then(cases => {
   const sel = els("preset");
   for (const c of cases){
     const o = document.createElement("option");
     o.value = c.name;
     ZOO_MOMENTS[c.name] = c.moment_dist;
+    if (c.candidate_parameter) CANDIDATE_PARAMETERS[c.name] = c.candidate_parameter;
     o.textContent = `${c.name}  (deg ${c.deg_f}/${c.deg_g}, ${c.moment_dist})`;
     o.title = c.description || "";
     sel.appendChild(o);

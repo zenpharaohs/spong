@@ -325,3 +325,21 @@ The Python implementations remain parity oracles during migration.  A migrated
 operation is complete only when the Python, standalone C, and extension-binding
 tests agree.  Frontend presentation and serialization may remain in their host
 languages; mathematical decisions and numerical work may not.
+
+## Numerical rheostat proposals (ABI 10)
+
+`spong_rheostat.h` exposes an opaque C99/GMP context with exact rational model
+inputs and verified saddle intervals, numerical section evaluation with
+Lambda sensitivities, safeguarded wall location, and bounded legacy-bracket
+repair. Its results are explicitly numerical proposals, never certification
+verdicts. Arithmetic guards, root/stage stopping rules, and refusal statuses
+are native; Python only marshals the interface. See `wall_native.md` for
+precision, work policies, evidence semantics, and the convergence study.
+
+
+`spong_rheostat_pair.h` adds bounded simultaneous location of two numerical
+connection gaps in Lambda and an affine-G coefficient parameter. It owns
+finite-difference refinement, conditioning checks, line search and convergence.
+`spong_section.h` adds GL8 loss-section event tracing with step comparison,
+bracketed fractional integration and explicit refusals. Both have standalone
+C tests and Python binding tests. Neither API produces a topology certificate.

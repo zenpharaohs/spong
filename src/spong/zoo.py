@@ -478,3 +478,161 @@ def rheostat_member(family: str | WallFamily, member: str) -> ZooCase:
             f"{member.capitalize()} member of {wall.name} at Lambda={lam:.16g}. "
             + wall.description),
     )
+
+
+@dataclass(frozen=True)
+class NumericalConnectionCase:
+    """Exact rational model near a numerically located connection intersection.
+
+    Kept outside CASES: neither the wall parameter nor its topology is
+    certified. The custom positive measure must never default to normal01.
+    """
+    name: str = "two-independent-connections"
+    parameter: str = "1.307179719334000599261222676631751034570168532337215797867979"
+    connection_pairs: tuple = ((0.4729142401695701, 1.1142465931034908, 1),
+                               (-0.4729142401695701, -1.1142465931034908, -1))
+    moment_dist: str = "absolute_x"
+    default_view: tuple = (-2.5, 1.5, -1.4, 1.4)
+    description: str = (
+        "Two simultaneous numerical saddle-connection candidates, related by "
+        "b reflection, with independent splitting under Lambda and the odd "
+        "deformation G(z)+eta*z. Positive measure |x| dx on [-1,1]. "
+        "Exact Morse skeleton; connection existence is not certified. "
+        "Inspector shows the full portrait and two blue candidate connections at the stored Lambda.")
+    base_f: tuple = (
+        "-223518530295946063188153523711403413281097319/285478393996286056500989623222688818581858816",
+        "1", "1", "0", "1", "0", "1", "0", "1", "0", "1")
+    base_g: tuple = ("460239/1000000", "0", "-1774853/1000000", "0",
+                     "-426253/500000", "0", "-117097/1000000", "0", "-524251/500000")
+
+    def coefficients(self, parameter=None):
+        from decimal import Decimal, localcontext
+        from fractions import Fraction
+        lam = Decimal(self.parameter if parameter is None else str(parameter))
+        if not lam.is_finite() or not Decimal("0.1") <= lam <= Decimal("10"):
+            raise ValueError("candidate rheostat Lambda must lie in [0.1, 10]")
+        with localcontext() as ctx:
+            ctx.prec = 80
+            scale = Fraction(lam.sqrt())
+        return (tuple(Fraction(x) / scale for x in self.base_f),
+                tuple(Fraction(x) * scale for x in self.base_g))
+
+    @property
+    def f(self):
+        return self.coefficients()[0]
+
+    @property
+    def g(self):
+        return self.coefficients()[1]
+
+    @staticmethod
+    def moments(count):
+        from .model import moments_absolute_x
+        return moments_absolute_x(count)
+
+    def build(self, parameter=None):
+        from . import model
+        f, g = self.coefficients(parameter)
+        return model.build(f, g, self.moments(2 * max(len(f), len(g)) - 1))
+
+    def trace_pairs(self, m, ds=0.001, parameter=None):
+        """Fresh native GMP germs and GL8 shots for this rheostat member.
+
+        Launch points are recomputed for Lambda. Each pair has its own
+        intermediate loss. No mirroring, snapping, or topology verdict.
+        """
+        from decimal import Decimal, localcontext
+        from . import wall_shoot
+        lam = Decimal(self.parameter if parameter is None else str(parameter))
+        result = []
+        for side, sign, source_b, target_b, continuation in _connection_contexts(self):
+            germs = continuation.launch(lam)
+            with localcontext() as ctx:
+                ctx.prec = 80
+                level = float(continuation.level / lam)
+                starts = [(float(c.point[0] / lam), float(c.point[1]))
+                          for c in (germs.unstable, germs.stable)]
+            paths = [wall_shoot._level_crossing(
+                m, m._native_kernel, *start, bool(k), level, ds, 10000)
+                for k, start in enumerate(starts)]
+            if any(path is None for path in paths):
+                raise RuntimeError("candidate trace did not reach its loss section")
+            result.append(dict(side=side, sign=sign, level=level,
+                               source_b=source_b, target_b=target_b,
+                               unstable=paths[0], stable=paths[1]))
+        return result
+
+
+# Thread-local: native continuation owns a mutable GMP arena. The threaded
+# inspector must never run two launch operations on the same context.
+from threading import local as _thread_local
+_connection_local = _thread_local()
+
+
+def _connection_contexts(case):
+    from fractions import Fraction
+    from . import model, sturm
+    from .wall_native import NativeSectionContinuation
+    cache = getattr(_connection_local, "cache", None)
+    if cache is None:
+        cache = _connection_local.cache = {}
+    if case not in cache:
+        m = model.build(tuple(map(Fraction, case.base_f)),
+                        tuple(map(Fraction, case.base_g)),
+                        case.moments(2 * max(len(case.base_f), len(case.base_g)) - 1))
+        e = sturm.enumerate_critical_points(m)
+        # Track named saddle pairs, not inventory offsets: stronger
+        # deformations can introduce unrelated far-field critical points.
+        saddles = [(i, point) for i, point in enumerate(e.points)
+                   if point.kind == "saddle"]
+        contexts = []
+        for sb, tb, sign in case.connection_pairs:
+            si, source = min(saddles, key=lambda item: abs(item[1].b - sb))
+            ti, target = min(saddles, key=lambda item: abs(item[1].b - tb))
+            if si == ti:
+                raise ValueError("tracked connection saddles are no longer distinct")
+            continuation = NativeSectionContinuation(m, source_index=si,
+                target_index=ti, source_direction=sign, target_direction=-sign)
+            contexts.append(("right" if sign > 0 else "left", sign,
+                             source.b, target.b, continuation))
+        cache[case] = tuple(contexts)
+    return cache[case]
+
+
+NUMERICAL_CONNECTION_CASES = {
+    "two-independent-connections": NumericalConnectionCase(),
+    "two-asymmetric-connections": NumericalConnectionCase(
+        name="two-asymmetric-connections",
+        parameter="1.307164649460474225609172398694194647622801706460234661528546",
+        base_g=("460239/1000000", "-19544449395600534/1000000000000000000",
+                "-1774853/1000000", "1/20", "-426253/500000", "0",
+                "-117097/1000000", "0", "-524251/500000"),
+        description=("Two numerical saddle connections without b-reflection symmetry. "
+            "G has added eta*z + 0.05*z^3, eta=-0.019544449395600534. "
+            "Lambda and eta were tuned independently. Positive measure |x| dx. "
+            "Exact Morse skeleton; numerical connection evidence only. "
+            "Inspector shows the full portrait at the selected Lambda.")),
+    "two-strongly-asymmetric-connections": NumericalConnectionCase(
+        name="two-strongly-asymmetric-connections",
+        parameter="1.3136390836357023026894204981250735694446259302946882157339205",
+        default_view=(-3.1, 1.65, -1.55, 1.35),
+        connection_pairs=((0.4429110973152095, 1.0907299677754436, 1),
+                          (-0.4995110906681631, -1.127018123990298, -1)),
+        base_g=("460239/1000000", "-283652549200640338/1000000000000000000",
+                "-1774853/1000000", "3/4", "-426253/500000", "0",
+                "-117097/1000000", "0", "-524251/500000"),
+        description=("Strongly asymmetric numerical double connection: "
+            "G has added eta*z + 0.75*z^3, fifteen times the earlier cubic term. "
+            "Four minima and five saddles, including an additional negative-b pair. "
+            "The local view emphasizes both connections; fit to skeleton shows "
+            "the distant saddle. Exact Morse skeleton; connection existence "
+            "remains numerical evidence, not a certificate.")),
+}
+
+
+def numerical_connection_names():
+    return tuple(NUMERICAL_CONNECTION_CASES)
+
+
+def get_numerical_connection(name):
+    return NUMERICAL_CONNECTION_CASES[name]

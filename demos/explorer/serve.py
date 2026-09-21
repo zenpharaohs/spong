@@ -128,6 +128,8 @@ def moment_vector(spec: dict, n: int):
     model rather than an approximation of one.
     """
     kind = spec.get("kind", "uniform01")
+    if kind == "absolute_x":
+        return model.moments_absolute_x(n)
     if kind == "uniform01":
         return model.moments_uniform01(n)
     if kind == "normal01":
@@ -729,6 +731,11 @@ def _resolve(payload: dict):
         g = [float(x) * scale for x in base.g]
         view = tuple(float(x) for x in w.default_view)
         spec = {"kind": base.moment_dist}
+    elif name in zoo.numerical_connection_names():
+        z = zoo.get_numerical_connection(name)
+        f, g = z.coefficients(payload.get("candidate_lam"))
+        view = z.default_view
+        spec = {"kind": z.moment_dist}
     elif name:
         z = zoo.get(name)
         f = [float(x) for x in z.f]
@@ -1181,7 +1188,91 @@ def allocator_worker_main() -> int:
     return 0
 
 
+def _numerical_connection_portrait(payload):
+    """Full numerical portrait, with blue idealized connections at the stored wall."""
+    f, g, view, spec, key = _resolve(payload)
+    cache_key = (key, "numerical_connection")
+    if cache_key in _CACHE:
+        return dict(_CACHE[cache_key], cached=True, stage=payload.get("stage", "final"))
+    t0 = time.perf_counter()
+    case = zoo.get_numerical_connection(payload["zoo"])
+    m = _model_for(key, f, g, spec)
+    e = sturm.materialize_stubs(m, sturm.enumerate_critical_points(m))
+    mu = case.moments(2 * max(len(f), len(g)) - 1)
+    mean = sum((x * mu[i] for i, x in enumerate(f)), Fraction(0))
+    variance = m.C - mean * mean
+    from decimal import Decimal
+    parameter = str(payload.get("candidate_lam", case.parameter))
+    at_connection = Decimal(parameter) == Decimal(case.parameter)
+    # Use the house portrait and stable-tail extensions, as for ordinary cases.
+    # Its geometry-only ledger must not turn the wall proposal into a verdict.
+    p = portrait.compute(m, view=view, _enumeration=e, _skip_audit=True)
+    pairs, connections = [], []
+    remove = set()
+    for pair in case.trace_pairs(m, parameter=parameter):
+        gap = math.hypot(*(pair["unstable"][-1] - pair["stable"][-1]))
+        pairs.append({"side": pair["side"], "level": pair["level"], "gap": gap,
+                      "delta_b": float(pair["unstable"][-1, 1] - pair["stable"][-1, 1])})
+        if not at_connection:
+            continue
+        source = saddle_wall.critical_near(p, pair["source_b"])
+        target = saddle_wall.critical_near(p, pair["target_b"])
+        # House stable signs refer to displacement from the backbone, not b.
+        a0, b0 = pair["stable"][0]
+        stable_sign = 1 if a0 - float(m.a_star(b0)) > 0 else -1
+        for kind, saddle_b, direction in (("unstable", source.b, pair["sign"]),
+                                         ("stable", target.b, stable_sign)):
+            matches = [i for i, br in enumerate(p.branches)
+                       if br.kind == kind and abs(br.diag["saddle_b"] - saddle_b) < 1e-8
+                       and br.diag["unstable_direction" if kind == "unstable"
+                                   else "stable_sign"] == direction]
+            if len(matches) != 1:
+                raise ValueError("connection display could not identify its house branch")
+            remove.add(matches[0])
+        points = np.vstack(((source.a, source.b), pair["unstable"],
+                            pair["stable"][::-1], (target.a, target.b)))
+        connections.append({"kind": "stable_unstable",
+            "label": "saddle connection (numerical wall limit)",
+            "source_b": source.b, "target_b": target.b,
+            "n_traced": len(points), "points": points.tolist(),
+            "numerical_miss": gap})
+    if remove:
+        p = portrait.Portrait(p.model, p.enumeration,
+            [br for i, br in enumerate(p.branches) if i not in remove],
+            p.box, p.view, dict(p.ledger))
+    branches = _branches(p)
+    tails = _j_tails(m, p, float(atlas.effective_degree(m)), enumeration=e)
+    out = {"f": list(map(float, f)), "g": list(map(float, g)),
+        "stage": payload.get("stage", "final"), "cached": False,
+        "elapsed_sec": time.perf_counter() - t0, "timing": {},
+        "native": NATIVE, "varf": float(variance), "field": _field_coeffs(m),
+        "critical": _critical_points(e, m), "branches": branches,
+        "n_branches": len(branches),
+        "n_branch_points": sum(b["n_traced"] for b in branches),
+        "chord_max": max(b["chord_max"] for b in branches),
+        "box": list(p.box), "view": list(p.view), "frame_view": list(view),
+        "legal_box": list(p.box), "d_eff": atlas.effective_degree(m),
+        "enumeration": {"n_critical": len(e.points), "n_min": len(e.minima),
+            "n_saddle": len(e.saddles), "psi_positive": bool(e.psi_positive),
+            "morse": bool(e.morse), "alternates": bool(e.alternates)},
+        "status": "numerical_connection_candidate",
+        "reason": ("Full portrait with two blue numerical wall-limit connections; topology not certified"
+                   if at_connection else "Full numerical portrait away from the connection value; topology not audited"),
+        "candidate": {"parameter": parameter, "wall_parameter": case.parameter, "at_connection": at_connection, "pairs": pairs,
+                      "description": case.description, "grade": "NUMERICAL_ORACLE"},
+        "tails": tails, "wall_connections": connections, "wall_limit": None,
+        "wall_pair": None, "wall_shot": None, "wall_root": None,
+        "ledger_summary": {}, "ledger_timing": {}, "attempts": []}
+    _CACHE[cache_key] = out
+    if len(_CACHE) > _CACHE_MAX:
+        _CACHE.pop(next(iter(_CACHE)))
+    return out
+
+
 def compute(payload: dict) -> dict:
+    if payload.get("zoo") in zoo.numerical_connection_names():
+        return _numerical_connection_portrait(payload)
+
     # A zoo case supplies its own f, g, moment distribution and default_view.
     # Using them is not a convenience: default_view is tuned per case, and
     # _trace_box widens whatever view it is handed, so an invented box costs
@@ -1406,6 +1497,12 @@ class Handler(BaseHTTPRequestHandler):
                               "description": getattr(z, "description", ""),
                               "moment_dist": getattr(z, "moment_dist", ""),
                               "deg_f": len(z.f) - 1, "deg_g": len(z.g) - 1})
+            for nm in zoo.numerical_connection_names():
+                z = zoo.get_numerical_connection(nm)
+                cases.append({"name": nm, "description": z.description,
+                              "moment_dist": z.moment_dist,
+                              "deg_f": len(z.f) - 1, "deg_g": len(z.g) - 1,
+                              "candidate_parameter": z.parameter})
             self._send(200, json.dumps(cases), "application/json")
             return
         if self.path in ("/", "/index.html"):

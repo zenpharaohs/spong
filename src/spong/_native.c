@@ -703,6 +703,28 @@ static spong_field kernel_field(const Kernel *k) {
     return f;
 }
 
+#include "spong/spong_section.h"
+static PyObject *Kernel_section_trace(Kernel *self,PyObject *args) {
+    double a,b,level,C,step;int direction;unsigned cap;
+    if(!PyArg_ParseTuple(args,"ddidddI",&a,&b,&direction,&level,&C,&step,&cap))return NULL;
+    if(!cap||cap>4000000){PyErr_SetString(PyExc_ValueError,"invalid section capacity");return NULL;}
+    double *points=PyMem_Calloc(2*((size_t)cap+1),sizeof(double));if(!points)return PyErr_NoMemory();
+    spong_field f=kernel_field(self);f.C=C;double start[2]={a,b};
+    spong_section_policy p=spong_section_default_policy(step,cap);spong_section_result r;
+    spong_section_trace(&f,start,direction,level,&p,points,(size_t)cap+1,&r);
+    PyObject *rows=PyList_New(r.count);
+    if(!rows){PyMem_Free(points);return NULL;}
+    for(size_t i=0;i<r.count;i++) {
+        PyObject *row=Py_BuildValue("dd",points[2*i],points[2*i+1]);
+        if(!row){Py_DECREF(rows);PyMem_Free(points);return NULL;}PyList_SET_ITEM(rows,i,row);
+    }
+    PyMem_Free(points);
+    return Py_BuildValue("{s:i,s:s,s:N,s:d,s:d,s:d,s:I,s:I}","status",r.status,
+        "reason",r.reason,"points",rows,"loss_residual",r.loss_residual,
+        "loss_roundoff_scale",r.loss_roundoff_scale,"max_step_error",r.max_step_error,
+        "rejected_steps",r.rejected_steps,"refinements",r.refinements);
+}
+
 static PyObject *Kernel_normalized_step(Kernel *self, PyObject *args) {
     double a, b, h;
     int order = 6;
@@ -1330,6 +1352,7 @@ static PyMethodDef Kernel_methods[] = {
      "Descent velocities in the deviation chart."},
     {"slow_fixed_point", (PyCFunction)Kernel_slow_fixed_point, METH_VARARGS,
      "Hadamard graph transform on a uniform grid."},
+    {"section_trace", (PyCFunction)Kernel_section_trace, METH_VARARGS, "Native conditioned loss-section trace."},
     {"normalized_step", (PyCFunction)Kernel_normalized_step, METH_VARARGS,
      "One 2D normalized-gradient ascent step by GL4, GL6, or GL8."},
     {"potential_step", (PyCFunction)Kernel_potential_step, METH_VARARGS,
@@ -3309,10 +3332,18 @@ static PyObject *native_chord_rejections(PyObject *self, PyObject *args) {
     return PyLong_FromUnsignedLong(spong_chord_rejections(reset));
 }
 
+#include "_native_rheostat.inc"
+
 static PyMethodDef module_methods[] = {
     {"chord_rejections", native_chord_rejections, METH_VARARGS,
      "Steps refused by the chord-realisation gate; chord_rejections(True) "
      "reads and zeroes. Process-wide and atomic across worker threads."},
+    {"rheostat_create", native_rheostat_create, METH_VARARGS, "Create a native numerical rheostat context."},
+    {"rheostat_pair_locate", native_rheostat_pair_locate, METH_VARARGS, "Native bounded two-connection solver."},
+    {"rheostat_launch", native_rheostat_launch, METH_VARARGS, "Native launch germs for numerical display shots."},
+    {"rheostat_evaluate", native_rheostat_evaluate, METH_VARARGS, "Evaluate a numerical section gap and sensitivity."},
+    {"rheostat_locate_seeded", native_rheostat_locate_seeded, METH_VARARGS, "Rebracket a legacy numerical wall seed."},
+    {"rheostat_locate", native_rheostat_locate, METH_VARARGS, "Locate a numerical wall in a bracket."},
     {"orient2d_exact", native_orient2d_exact, METH_VARARGS,
      "Exact sign of the orientation determinant of three binary64 points."},
     {"segments_cross_exact", native_segments_cross_exact, METH_VARARGS,

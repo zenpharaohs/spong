@@ -464,6 +464,12 @@ def moments_uniform01(n: int) -> tuple[Fraction, ...]:
     return tuple(Fraction(1, k + 1) for k in range(n))
 
 
+def moments_absolute_x(n: int) -> tuple[Fraction, ...]:
+    """Probability density |x| on [-1,1]: mu_2m=1/(m+1), mu_odd=0."""
+    return tuple(Fraction(0) if k % 2 else Fraction(2, k + 2)
+                 for k in range(n))
+
+
 def moments_normal01(n: int) -> tuple[Fraction, ...]:
     """mu_k = (k-1)!! for even k, else 0 (standard normal)."""
     out = []

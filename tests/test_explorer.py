@@ -300,3 +300,100 @@ def test_isolated_allocator_kills_worker_stuck_past_deadline(monkeypatch):
     with pytest.raises(TimeoutError, match="hard interactive time limit"):
         serve.isolated_allocator({"time_limit_sec": 1})
     assert worker.killed
+
+
+def test_two_connection_candidate_exact_model_and_independent_shots():
+    from fractions import Fraction
+    case = zoo.get_numerical_connection("two-independent-connections")
+    assert case.name not in zoo.names()  # not an ordinary certified portrait
+    f, g, _, spec, _ = serve._resolve({"zoo": case.name})
+    assert all(isinstance(x, Fraction) for x in f + g)
+    assert tuple(serve.moment_vector(spec, 5)) == (1, 0, Fraction(1, 2), 0, Fraction(1, 3))
+    result = serve.compute({"zoo": case.name})
+    assert result["status"] == "numerical_connection_candidate"
+    assert result["enumeration"]["morse"]
+    assert result["enumeration"]["psi_positive"]
+    assert result["enumeration"]["n_saddle"] == 4
+    assert result["enumeration"]["n_min"] == 3
+    assert len(result["branches"]) == 12
+    assert len(result["wall_connections"]) == 2
+    assert all(0 < p["gap"] < 1e-11 for p in result["candidate"]["pairs"])
+    for connection in result["wall_connections"]:
+        assert connection["kind"] == "stable_unstable"
+        assert connection["points"][0][1] == pytest.approx(connection["source_b"])
+        assert connection["points"][-1][1] == pytest.approx(connection["target_b"])
+        assert not any(b["kind"] == "unstable" and
+                       b["saddle_b"] == connection["source_b"] and
+                       b["direction"] == (1 if connection["source_b"] > 0 else -1)
+                       for b in result["branches"])
+    assert result["tails"]
+    assert result["varf"] > 0
+
+
+@pytest.mark.parametrize('name', ['two-independent-connections', 'two-asymmetric-connections',
+                                'two-strongly-asymmetric-connections'])
+def test_candidate_rheostat_separates_both_pairs_and_restores_center(name):
+    case = zoo.get_numerical_connection(name)
+    below = serve.compute({'zoo': name, 'candidate_lam': '1.28'})
+    above = serve.compute({'zoo': name, 'candidate_lam': '1.34'})
+    center = serve.compute({'zoo': name})
+    assert below['f'] != above['f']
+    ordinary_count = 20 if name == 'two-strongly-asymmetric-connections' else 16
+    assert len(below['branches']) == len(above['branches']) == ordinary_count
+    assert not below['wall_connections'] and not above['wall_connections']
+    assert below['tails'] and above['tails']
+    assert len(center['wall_connections']) == 2
+    assert len(center['branches']) == ordinary_count - 4
+    for lo, hi, mid in zip(below['candidate']['pairs'], above['candidate']['pairs'],
+                            center['candidate']['pairs']):
+        assert lo['delta_b'] * hi['delta_b'] < 0
+        assert lo['gap'] > 1e-3 and hi['gap'] > 1e-3
+        assert mid['gap'] < 1e-11
+    assert center['candidate']['parameter'] == case.parameter
+    assert center['enumeration']['morse'] and center['enumeration']['psi_positive']
+    if name != 'two-independent-connections':
+        m = case.build()
+        assert any(m.beta[k] for k in range(1, len(m.beta), 2))
+        assert center['candidate']['pairs'][0]['level'] != center['candidate']['pairs'][1]['level']
+    if name == 'two-strongly-asymmetric-connections':
+        assert center['enumeration']['n_critical'] == 9
+        assert center['enumeration']['n_min'] == 4
+        assert center['enumeration']['n_saddle'] == 5
+        minima = [p for p in center['critical'] if p['kind'] == 'min']
+        left = min(minima, key=lambda p: abs(p['b'] + .91))
+        right = min(minima, key=lambda p: abs(p['b'] - .75))
+        assert abs(right['a']) > 2 * abs(left['a'])
+    for invalid in ('0', '-1', 'nan', 'Infinity', '11'):
+        with pytest.raises(ValueError):
+            serve._resolve({'zoo': name, 'candidate_lam': invalid})
+
+
+def test_absolute_x_moments_sampling_and_allocator(monkeypatch):
+    from fractions import Fraction
+    from demos.optimizers import BatchGradient
+    from spong.model import moments_absolute_x
+    assert moments_absolute_x(9) == (1, 0, Fraction(1, 2), 0, Fraction(1, 3),
+                                     0, Fraction(1, 4), 0, Fraction(1, 5))
+    # Midpoint quadrature in probability space checks the actual sampling law.
+    class UniformMidpoints:
+        def random(self, n):
+            return (np.arange(n) + .5) / n
+    batch = BatchGradient([1, 1], [1, 1], 10000, UniformMidpoints(),
+                          distribution="absolute_x")
+    xs = batch._draw()
+    assert np.all(np.abs(xs) <= 1)
+    assert np.mean(xs) == pytest.approx(0, abs=1e-14)
+    assert np.mean(xs**2) == pytest.approx(.5, abs=1e-14)
+    assert np.mean(xs**4) == pytest.approx(1/3, abs=1e-8)
+    monkeypatch.setattr(thompson_moustaches.cb_sampler, "ContinuousBernoulliBank",
+                        _FakeContinuousBernoulliBank)
+    monkeypatch.setattr(thompson_moustaches.cb_sampler, "resolve_library",
+                        lambda **kwargs: "/fake/libcb_core")
+    for selected in ({"f": [1, 1], "g": [1, 1], "moments": {"kind": "absolute_x"}},
+                     {"zoo": "two-asymmetric-connections", "candidate_lam": "1.28"}):
+        result = serve.allocator(dict(selected, allocation_view=[-.5,.5,-1,1],
+            starts=2, rounds=2, chunk_steps=1, batch_size=8, method="adam",
+            schedule="constant", learning_rate=.001, time_limit_sec=7, seed=43))
+        assert result["configuration"]["distribution"] == "absolute_x"
+        assert result["equal"]["executed_optimizer_steps"] == 2
+        assert result["thompson"]["executed_optimizer_steps"] == 2

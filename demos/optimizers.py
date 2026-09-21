@@ -32,6 +32,7 @@ class BatchGradient:
 
     ``uniform01`` remains the default for compatibility with the original
     moustache galleries.  ``normal01`` draws fresh standard-normal samples;
+    ``absolute_x`` draws from density |x| on [-1,1];
     ``empirical`` resamples the exact finite support used to build an
     interactive empirical portrait.
     """
@@ -48,7 +49,7 @@ class BatchGradient:
         self.distribution = str(distribution)
         self.samples = (None if samples is None
                         else np.asarray(samples, dtype=float))
-        if self.distribution not in {"uniform01", "normal01", "empirical"}:
+        if self.distribution not in {"uniform01", "normal01", "absolute_x", "empirical"}:
             raise ValueError(
                 f"unsupported minibatch distribution {self.distribution!r}")
         if self.distribution == "empirical" and (
@@ -60,6 +61,10 @@ class BatchGradient:
             return self.rng.random(self.n)
         if self.distribution == "normal01":
             return self.rng.normal(size=self.n)
+        if self.distribution == "absolute_x":
+            # Inverse CDF of the normalized density |x| on [-1,1].
+            y = 2.0 * self.rng.random(self.n) - 1.0
+            return np.copysign(np.sqrt(np.abs(y)), y)
         return self.rng.choice(self.samples, size=self.n, replace=True)
 
     def __call__(self, a, b):
