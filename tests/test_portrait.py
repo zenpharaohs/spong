@@ -373,7 +373,8 @@ def test_long_connection_capture_balls_do_not_swallow_nearby_minimum():
     assert captured.count(-2048.0) == 1
 
 
-def test_stiff_stub_extends_before_global_handoff():
+@pytest.mark.parametrize("stub_mode", ["jet", "grid"])
+def test_stiff_stub_extends_before_global_handoff(stub_mode, monkeypatch):
     """Seed 3389434578 has eigenvalue ratio about 9.9e11 at b≈8.
 
     The quadratic Poincare graph loses contraction on the larger interval,
@@ -388,6 +389,7 @@ def test_stiff_stub_extends_before_global_handoff():
     endpoint certificates -- so the reason is asserted only to be consistent
     with the status rather than pinned to one outcome.
     """
+    monkeypatch.setenv("SPONG_STUB_MODE", stub_mode)
     m = _targeted_qualification_model(3389434578, 11)
     p = portrait.certified_compute(m, max_geometry_level=0)
     topology = p.ledger["topology"]
@@ -412,7 +414,27 @@ def test_stiff_stub_extends_before_global_handoff():
     saddle = max(p.enumeration.saddles, key=lambda q: q.b)
     unstable = [stub for stub in saddle.stubs
                 if stub.manifold == "unstable"]
-    assert any(dict(stub.certificates)["centered_extension"] for stub in unstable)
+    # WHAT is guarded -- a stiff stub carrying the branch far enough for the
+    # global dispatcher -- is asserted by every branch reaching a terminal
+    # below.  HOW depends on the construction.  The grid's quadratic Poincare
+    # graph loses contraction here and needs the exact centered extension;
+    # the manifold jet reaches a ready handoff by its own series, raising
+    # its order if it must, and never needs it.  Both are kept under test:
+    # the grid is still the jet's per-branch fallback at far saddles, and the
+    # centered extension is what the fallback relies on.
+    certs = [dict(stub.certificates) for stub in unstable]
+    if stub_mode == "grid":
+        assert any(c["centered_extension"] for c in certs)
+    else:
+        # The jet's stubs here are graph-certified but NOT
+        # continuation-ready, and neither are the grid's -- so build_stubs
+        # keeps the jet, and the branch is carried by the global dispatcher
+        # from an exact endpoint rather than by an extended stub.  What the
+        # case guards is that it IS carried, asserted by every branch
+        # reaching a terminal below; readiness is not available at this
+        # saddle by either construction.
+        assert all(c["graph_certified"] == 1.0 for c in certs)
+        assert any(c.get("stub_jet") == 1.0 for c in certs)
     assert all(br.term in ("capture", "box_exit", "level_bar")
                for br in p.branches)
 

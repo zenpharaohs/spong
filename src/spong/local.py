@@ -739,15 +739,28 @@ JET_ORDER_LADDER = (20, 30, 40, 60)
 
 
 def stub_mode() -> str:
-    """Stub representation: 'grid' (production default) or 'jet'.
+    """Stub representation: 'jet' (production default) or 'grid'.
 
     Read from SPONG_STUB_MODE on every call, so the zoo and the ensembles can
-    be qualified A/B from the shell without editing code.  'grid' is the
-    Hadamard graph transform's fixed point on a 257/513-point grid in a
-    QUADRATIC Poincare normal form -- second order twice over.  'jet' is the
-    invariant manifold's Taylor series.  See _manifold_series.
+    be qualified A/B from the shell without editing code.  'jet' is the
+    invariant manifold's Taylor series (see _manifold_series), falling back
+    to the grid per branch where only the grid reaches a ready handoff (see
+    build_stubs).  'grid' is the Hadamard graph transform's fixed point on a
+    257/513-point grid in a QUADRATIC Poincare normal form -- second order
+    twice over -- kept as the comparison path.
+
+    The default became 'jet' after qualification (2026-09-22).  Directed
+    ensemble, N = 200, both arms concurrently: grid 174, jet 180 certified.
+    Eight grid refusals certify under the jet (contacts the grid stubs had
+    manufactured by starting off the manifold); escalation to geometry
+    level 2 fell from 9 cases to 3.  Three jet costs, none a wrong answer:
+    directed seed 1495454581 refuses on same-destination crossings that
+    precede certification (a correct refusal -- it needs the separation
+    certificate), and seeds 953953598 and 1886674721 exhaust the segment
+    budget with fates identical to the grid's.  Random ensemble at N = 200:
+    verdict-identical.
     """
-    return os.environ.get("SPONG_STUB_MODE", "grid").strip().lower()
+    return os.environ.get("SPONG_STUB_MODE", "jet").strip().lower()
 
 
 def _series_mul(p, q, n):
@@ -829,8 +842,8 @@ def build_stubs(m: Model, point, minima,
     """The four local stubs: the jet where it hands off, the grid where only
     the grid can.
 
-    With SPONG_STUB_MODE unset this is the grid construction, unchanged.  In
-    jet mode each branch uses the jet stub unless the jet cannot reach a
+    With SPONG_STUB_MODE=grid this is the grid construction, unchanged.  By
+    default each branch uses the jet stub unless the jet cannot reach a
     continuation-ready handoff AND the grid can -- the rule being to prefer a
     ready handoff, and among equally ready ones the jet, whose endpoint is
     exact where the grid's carries a curvature error.

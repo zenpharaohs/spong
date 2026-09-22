@@ -439,14 +439,20 @@ def test_exact_spectral_frame_recovers_large_radius_saddle():
     enriched = sturm.materialize_stubs(design.model, enumeration)
     saddle = max(enriched.saddles, key=lambda p: abs(p.b))
     assert len(saddle.stubs) == 4
-    assert all(dict(s.certificates)["poincare_conditioned"] == 1.0
-               for s in saddle.stubs)
     assert all(c.normal_native is not None for c in saddle.local.poincare)
     # The exact saddle signature survives, but its unstable eigenvalue is too
     # small for any finite FP64 graph prefix to satisfy the invariance-angle
     # certificate.  This is now an explicit conditioning refusal, not a false
     # launch followed by a generic continuation failure.
     unstable = [s for s in saddle.stubs if s.manifold == "unstable"]
+    # The manifold jet DECLINES this saddle -- with lambda- ~ -1e-26 against
+    # lambda+ ~ 1e33 its parameterization solve is singular to binary64 --
+    # so these come from the Poincare-conditioned grid, which then refuses
+    # the launch explicitly, below.  The stable stubs, whose departure rate
+    # is the resolvable one, do use the jet, which is why this is asserted
+    # of the unstable stubs rather than of all four.
+    assert all(dict(s.certificates)["poincare_conditioned"] == 1.0
+               for s in unstable)
     assert all(dict(s.certificates)["graph_certified"] == 0.0
                for s in unstable)
     assert all(dict(s.certificates)["global_field_ready"] == 0.0
