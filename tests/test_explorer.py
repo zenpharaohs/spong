@@ -331,7 +331,12 @@ def test_two_connection_candidate_exact_model_and_independent_shots():
 
 
 @pytest.mark.parametrize('name', ['two-independent-connections', 'two-asymmetric-connections',
-                                'two-strongly-asymmetric-connections'])
+                                # 84 s alone, and the only case carrying its
+                                # own structural assertions (9 critical
+                                # points, asymmetric minima), which therefore
+                                # run under -m heavy.
+                                pytest.param('two-strongly-asymmetric-connections',
+                                             marks=pytest.mark.heavy)])
 def test_candidate_rheostat_separates_both_pairs_and_restores_center(name):
     case = zoo.get_numerical_connection(name)
     below = serve.compute({'zoo': name, 'candidate_lam': '1.28'})

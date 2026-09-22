@@ -17,7 +17,11 @@ def locate(name='two-asymmetric-connections', **kwargs):
     return locate_connection_pair(case.base_f,g,['0','1'],case.moments(21),pairs,**options)
 
 
-@pytest.mark.parametrize('name',['two-asymmetric-connections','two-strongly-asymmetric-connections'])
+@pytest.mark.parametrize('name',['two-asymmetric-connections',
+    # 138 s alone: the strongly asymmetric case runs the 32/64/128-step
+    # convergence study where the solver works hardest.  The asymmetric case
+    # above exercises the same path in the default run.
+    pytest.param('two-strongly-asymmetric-connections', marks=pytest.mark.heavy)])
 def test_pair_step_convergence_and_independent_shots(name):
     a=locate(name,steps=32);b=locate(name,steps=64);c=locate(name,steps=128)
     assert abs(c.lam-b.lam)<abs(b.lam-a.lam)/50

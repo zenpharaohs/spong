@@ -20,9 +20,17 @@ include = ["spong*"]
 
 [project.optional-dependencies]
 render = ["matplotlib"]
+dev = ["pytest", "pytest-xdist"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-markers = ["slow: full-width founding gates (run with -m slow)"]
-addopts = "-m 'not slow'"
+markers = [
+    "slow: full-width founding gates (run with -m slow)",
+    "heavy: expensive convergence studies on the hardest cases; a cheaper parameter of each stays in the default run as a smoke test (run with -m heavy)",
+]
+# Parallel by default: the suite is concurrency-safe (867 pass under -n auto,
+# no shared-file or port failures) and runs about 2.8x faster.  Use -n 0 to
+# run serially -- needed for pdb, and cheaper for a single quick test, since
+# worker startup costs a second or two.
+addopts = "-m 'not slow and not heavy' -n auto --dist worksteal"
