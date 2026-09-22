@@ -9,6 +9,7 @@ Only the resulting centered coefficients are rounded to binary64.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from decimal import Decimal, localcontext
 from fractions import Fraction
@@ -728,8 +729,156 @@ def build_local_jet(m: Model, interval, source: str,
     return base
 
 
+JET_ORDER = 20
+JET_CHECK_ORDER = 10
+# Orders tried, in turn, when a stub must EXTEND to reach water the global
+# continuation can own and the current order's truncation fails at the
+# doubled reach.  For a series the finer representation is more terms, not
+# more samples.
+JET_ORDER_LADDER = (20, 30, 40, 60)
+
+
+def stub_mode() -> str:
+    """Stub representation: 'grid' (production default) or 'jet'.
+
+    Read from SPONG_STUB_MODE on every call, so the zoo and the ensembles can
+    be qualified A/B from the shell without editing code.  'grid' is the
+    Hadamard graph transform's fixed point on a 257/513-point grid in a
+    QUADRATIC Poincare normal form -- second order twice over.  'jet' is the
+    invariant manifold's Taylor series.  See _manifold_series.
+    """
+    return os.environ.get("SPONG_STUB_MODE", "grid").strip().lower()
+
+
+def _series_mul(p, q, n):
+    r = np.convolve(p, q)[:n + 1]
+    out = np.zeros(n + 1)
+    out[:len(r)] = r
+    return out
+
+
+def _manifold_series(local, manifold: str, orientation: int, order: int):
+    """Taylor coefficients, in centered coordinates, of one manifold branch.
+
+    WHY NOT THE GRID.  The grid stub converges at its design order -- its
+    grid_error falls by exactly 4.0 per refinement -- to a graph with the
+    WRONG CURVATURE.  Measured on nonnearest-saddle-connection, the stable
+    stub at the target saddle sits 1.5e-8 to 2.7e-8 from the true manifold
+    at r = 8e-3, growing as r^2, and that stub's bias is what put the native
+    shooter's wall 2.6e-9 below the converged 2.177709563954816.  grid_error
+    is a self-consistency measure and cannot see a curvature error.
+
+    THE SERIES.  Solve the parameterization equation F(K(t)) = rate t K'(t)
+    order by order:
+
+        (DF(z*) - k rate I) K_k = -R_k,
+
+    R_k the order-k coefficient of F(K) built from K_1..K_{k-1}.  At a saddle
+    this system is NEVER singular: rate > 0 and DF's other eigenvalue has the
+    opposite sign, so k*rate is not an eigenvalue of DF for any k >= 2.  No
+    resonance, no small divisor, every order solvable.  The only input is the
+    centered field polynomial the LocalJet already holds, exact to one
+    rounding because L is a polynomial.
+
+    MEASURED: an order-12 jet built this way lands on the independent native
+    GMP germ to binary64 roundoff (0 to 2.2e-16) at radii out to 8e-3 on both
+    saddles of that wall, where the grid stub misses by up to 2.7e-8; and
+    order 6 against order 12 differs by 1.1e-12 there, i.e. the series
+    visibly converges with order -- which grid refinement never showed.
+
+    manifold 'unstable' is the unstable manifold of DESCENT (F = -grad L);
+    'stable' is the unstable manifold of ascent (F = +grad L), i.e. the
+    stable manifold of descent.  Solves use the guarded _solve2, per the
+    module's rule against np.linalg on model data.
+    """
+    lam = np.asarray(local.spectral.eigenvalues, dtype=float)
+    if not (lam[0] < 0.0 < lam[1]):
+        raise FloatingPointError("manifold jet requires a resolved saddle")
+    V = np.asarray(local.spectral.frame, dtype=float)
+    depart = 0 if manifold == "unstable" else 1
+    sign = -1.0 if manifold == "unstable" else 1.0
+    DF = sign*np.asarray(local.hessian, dtype=float)
+    rate = abs(float(lam[depart]))
+    v = float(orientation)*V[:, depart]
+    v = v/np.hypot(v[0], v[1])
+    Ka = np.zeros(order + 1)
+    Kb = np.zeros(order + 1)
+    Ka[1], Kb[1] = float(v[0]), float(v[1])
+    for k in range(2, order + 1):
+        Ka[k] = Kb[k] = 0.0
+        residual = []
+        for component in local.grad:
+            acc = np.zeros(order + 1)
+            apow = np.zeros(order + 1)
+            apow[0] = 1.0
+            for row in component:
+                pb = np.zeros(order + 1)
+                for coefficient in reversed(row):
+                    pb = _series_mul(pb, Kb, order)
+                    pb[0] += coefficient
+                acc += _series_mul(apow, pb, order)
+                apow = _series_mul(apow, Ka, order)
+            residual.append(sign*acc[k])
+        J = DF - k*rate*np.eye(2)
+        Ka[k], Kb[k] = _solve2(J, (-residual[0], -residual[1]))
+    return Ka, Kb
+
+
 def build_stubs(m: Model, point, minima,
                 resolution_level: int = 0) -> tuple[InvariantStub, ...]:
+    """The four local stubs: the jet where it hands off, the grid where only
+    the grid can.
+
+    With SPONG_STUB_MODE unset this is the grid construction, unchanged.  In
+    jet mode each branch uses the jet stub unless the jet cannot reach a
+    continuation-ready handoff AND the grid can -- the rule being to prefer a
+    ready handoff, and among equally ready ones the jet, whose endpoint is
+    exact where the grid's carries a curvature error.
+
+    Both halves of that rule were measured, not assumed:
+
+      linear-target-d17-thrash, saddle b = -2.17534, unstable o-1: jet and
+        grid stubs BOTH unready.  Kept the jet (order 60, reach 0.1); the
+        branch traced at a 2.4e-5 degree maximum turn against the grid's
+        7.6e-5.  A blunter 'fall back whenever the jet is unready' would
+        have discarded that.
+      dead-neuron-far-saddle-d3, far saddle b = 50.73, unstable stubs: the
+        jet converged to roundoff only at reach 3.9e-4 and 3.1e-3 and could
+        not extend, while the grid extended to reach 1.6.  At a far saddle
+        the series' radius of convergence is genuinely small and the graph
+        transform reaches further than any truncation of it -- the case the
+        grid was built for -- so there the grid is used.
+
+    The grid pass runs only when some jet stub is unready, so ordinary
+    saddles pay nothing for the fallback.  Which construction a stub came
+    from is recorded in its own stub_jet certificate.
+    """
+    if stub_mode() != "jet":
+        return _build_stubs(m, point, minima, resolution_level,
+                            jet_mode=False)
+    jet = _build_stubs(m, point, minima, resolution_level, jet_mode=True)
+
+    def ready(stub):
+        return float(dict(stub.certificates).get(
+            "continuation_ready", 0.0)) == 1.0
+
+    if all(ready(s) for s in jet):
+        return jet
+    grid = {(s.manifold, s.orientation): s
+            for s in _build_stubs(m, point, minima, resolution_level,
+                                  jet_mode=False)}
+    merged = []
+    for s in jet:
+        if ready(s):
+            merged.append(s)
+            continue
+        g = grid.get((s.manifold, s.orientation))
+        merged.append(g if g is not None and ready(g) else s)
+    return tuple(merged)
+
+
+def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
+                 jet_mode: bool = False) -> tuple[InvariantStub, ...]:
     """Materialize and certify the four local invariant-manifold stubs.
 
     ``resolution_level`` is a development/convergence axis: level k
@@ -755,7 +904,23 @@ def build_stubs(m: Model, point, minima,
         for orientation in (-1, 1):
             reach = chart.desired_reach
             reason = "no attempt"
-            use_poincare = True
+            # The jet lives in centered eigenframe coordinates, so the
+            # Poincare-conditioned chart -- whose invariance check reads graph
+            # coordinates in THAT chart -- must not be selected with it.  A
+            # saddle binary64 cannot resolve falls back to the grid.
+            series = None
+            if jet_mode:
+                try:
+                    series = _manifold_series(
+                        local, chart.manifold, orientation, JET_ORDER)
+                except (FloatingPointError, ValueError, ArithmeticError):
+                    series = None
+            use_jet = series is not None
+            use_poincare = not use_jet
+            # Mutable so the extension loop can raise the order.  The
+            # truncation check always compares order N with N//2.
+            jet_state = {"order": JET_ORDER if use_jet else 0,
+                         "series": series}
 
             def centered_graph(n, current_reach):
                 lam = np.asarray(local.spectral.eigenvalues)
@@ -786,10 +951,55 @@ def build_stubs(m: Model, point, minima,
             # Reusing them changes no number: the solve is deterministic.
             solved: dict = {}
 
+            def jet_graph(n, current_reach):
+                """The manifold jet sampled on the same nested t-grid.
+
+                Its error is series TRUNCATION, reported as the tail between
+                JET_CHECK_ORDER and JET_ORDER -- an overestimate, dominated by
+                the first omitted term, and so conservative.
+                """
+                Ka, Kb = jet_state["series"]
+                check = jet_state["order"]//2
+                t = np.linspace(0.0, abs(float(current_reach)), int(n))
+                hi = np.column_stack((
+                    np.polyval(Ka[::-1], t), np.polyval(Kb[::-1], t)))
+                lo = np.column_stack((
+                    np.polyval(Ka[:check + 1][::-1], t),
+                    np.polyval(Kb[:check + 1][::-1], t)))
+                truncation = float(np.max(np.hypot(
+                    hi[:, 0] - lo[:, 0], hi[:, 1] - lo[:, 1])))
+                if not (np.all(np.isfinite(hi)) and np.isfinite(truncation)):
+                    raise FloatingPointError("nonfinite manifold jet")
+                # The exact tangent K'(t).  The invariance check must use it:
+                # finite-differencing an analytic curve measures the
+                # difference quotient, not the curve.  With np.gradient the
+                # check read 5e-6 to 9.6e-6 against its 1e-5 threshold at
+                # saddle 4 of nonnearest-saddle-connection -- pure FD error,
+                # since the jet's own truncation there was 0 -- and cut the
+                # reach to 1.6e-3 where the series was converged to
+                # roundoff.
+                tangent = np.column_stack((
+                    np.polyval(np.polyder(Ka[::-1]), t),
+                    np.polyval(np.polyder(Kb[::-1]), t)))
+                physical = np.vstack((
+                    [local.a, local.b], hi + (local.a, local.b)))
+                R = np.asarray(chart.frame)
+                return physical, {
+                    "iterations": 0, "relative_change": 0.0,
+                    "centered": hi, "normal_x": hi @ R[:, 0],
+                    "normal_h": hi @ R[:, 1],
+                    "tangent": tangent,
+                    "truncation_error": truncation,
+                    "reach": float(current_reach), "grid_points": int(n)}
+
             def graph_at(conditioned, n, current_reach):
-                key = (bool(conditioned), int(n), float(current_reach))
+                key = (bool(conditioned) and not use_jet, int(n),
+                       float(current_reach),
+                       jet_state["order"] if use_jet else 0)
                 if key not in solved:
-                    if conditioned:
+                    if use_jet:
+                        solved[key] = jet_graph(n, current_reach)
+                    elif conditioned:
                         solved[key] = chart.graph(
                             local, orientation, n=n, reach=current_reach)
                     else:
@@ -836,6 +1046,37 @@ def build_stubs(m: Model, point, minima,
                 bending_grid_error = normal_grid_absolute/max(
                     float(np.max(np.abs(hf))),
                     current_reach*np.finfo(float).eps, 1e-300)
+                if use_jet:
+                    # The jet has no discretization to refine: coarse and
+                    # fine samples lie on the same analytic curve, so
+                    # hc - hf[::2] is identically zero and would CLAIM an
+                    # accuracy it never measured.  Its honest error is series
+                    # truncation.  Using it here also makes the reach loop
+                    # adaptive for free: a jet outside its radius of
+                    # convergence fails grid_error < 1e-6 and halves.
+                    truncation = float(df["truncation_error"])
+                    normal_grid_absolute = truncation
+                    grid_error = truncation/max(current_reach, 1e-300)
+                    bending_grid_error = truncation/max(
+                        float(np.max(np.abs(hf))),
+                        current_reach*np.finfo(float).eps, 1e-300)
+                    # ACCEPTANCE AT WORKING PRECISION, not the grid's
+                    # grid_error < 1e-6.  That relative test was the best a
+                    # second-order grid could offer; for a series it let a
+                    # reach through whose truncation was 1.7e-9 (saddle 4 of
+                    # nonnearest-saddle-connection at reach 0.05), and the
+                    # whole point of the jet is an EXACT handoff.  Require
+                    # the order-10-to-20 tail to sit at the roundoff of the
+                    # physical endpoint, so the loop halves until the series
+                    # has converged to binary64.  The tail overestimates the
+                    # order-20 error, which only makes this stricter.
+                    jet_tolerance = 64.0*np.finfo(float).eps*(
+                        1.0 + float(np.hypot(local.a, local.b))
+                        + abs(float(current_reach)))
+                    jet_converged = truncation <= jet_tolerance
+                else:
+                    jet_tolerance = float("nan")
+                    jet_converged = True
                 aligned = np.vstack((fine[0], fine[1::2]))
                 physical_scale = max(
                     current_reach,
@@ -889,12 +1130,25 @@ def build_stubs(m: Model, point, minima,
                             1e-300)
                 field_error = float(np.hypot(*(glocal-gglobal))/scale)
                 field_absolute_error = float(np.hypot(*(glocal-gglobal)))
-                norm_product = max(
-                    np.hypot(*glocal)*np.hypot(*gglobal), 1e-300)
-                cosine = float(np.dot(glocal, gglobal) / norm_product)
-                field_direction_error = float(abs(
-                    glocal[0]*gglobal[1]-glocal[1]*gglobal[0])
-                    / norm_product)
+                # Normalize BEFORE combining.  Forming |glocal|*|gglobal| and
+                # dividing overflowed on linear-target-d17-thrash, where the
+                # gradients are enormous: norm_product became inf, cosine
+                # NaN, and `cosine > 0.0` silently false -- so global_ready
+                # failed for a reason that had nothing to do with the field.
+                # Latent in the grid path; the jet exposed it by reaching
+                # farther into large-gradient territory.  Unit vectors give
+                # the same cosine and cross product without the product.
+                gl_norm = float(np.hypot(*glocal))
+                gg_norm = float(np.hypot(*gglobal))
+                if gl_norm > 0.0 and gg_norm > 0.0:
+                    ul = np.asarray(glocal, float)/gl_norm
+                    ug = np.asarray(gglobal, float)/gg_norm
+                    cosine = float(np.dot(ul, ug))
+                    field_direction_error = float(abs(
+                        ul[0]*ug[1] - ul[1]*ug[0]))
+                else:
+                    cosine = float("nan")
+                    field_direction_error = float("inf")
                 a_endpoint, b_endpoint = map(float, endpoint)
                 eps = np.finfo(float).eps
                 scale_a = 2.0*(abs(a_endpoint)*m.A(b_endpoint)
@@ -932,8 +1186,13 @@ def build_stubs(m: Model, point, minima,
                         out=np.full_like(graph_slope, np.inf),
                         where=invariance_denominator > 1e-300)
                 else:
-                    graph_tangent = np.gradient(
-                        np.asarray(df["centered"]), axis=0)
+                    if use_jet:
+                        # Exact K'(t); see jet_graph.  Only the direction
+                        # enters the error below, so the t-scaling is moot.
+                        graph_tangent = np.asarray(df["tangent"])
+                    else:
+                        graph_tangent = np.gradient(
+                            np.asarray(df["centered"]), axis=0)
                     graph_velocity = np.asarray([
                         local.gradient(float(da), float(db))
                         for da, db in df["centered"]])
@@ -952,7 +1211,8 @@ def build_stubs(m: Model, point, minima,
                             and fine_change_error < 1e-12
                             and grid_error < 1e-6
                             and invariance_direction_error < 1e-5
-                            and monotone_failures == 0)
+                            and monotone_failures == 0
+                            and jet_converged)
                 global_ready = float(
                     np.all(np.isfinite(glocal))
                     and np.all(np.isfinite(gglobal))
@@ -984,6 +1244,11 @@ def build_stubs(m: Model, point, minima,
                     "monotone_failures": monotone_failures,
                     "accepted": accepted, "global_ready": global_ready,
                     "coarse_n": coarse_n,
+                    "jet_truncation_error": float(
+                        df.get("truncation_error", np.nan)),
+                    "jet_tolerance": float(jet_tolerance),
+                    "jet_order": float(
+                        jet_state["order"] if use_jet else 0),
                 }
 
             def continuation_ready(candidate):
@@ -1152,7 +1417,42 @@ def build_stubs(m: Model, point, minima,
                 candidate = None
                 selected_conditioning = use_poincare
                 modes = (use_poincare, False) if use_poincare else (False,)
-                for conditioned in modes:
+                if use_jet:
+                    # ADAPTIVE ORDER.  The grid ladder refines samples; for
+                    # the jet that buys nothing, since every sample lies on
+                    # the same analytic curve.  What a doubled reach may need
+                    # is MORE TERMS.  Measured on linear-target-d17-thrash:
+                    # the order-20 jet stub at the saddle b = -2.17534
+                    # failed continuation readiness at reach 0.025, the
+                    # doubled reach failed the roundoff tolerance at order 20,
+                    # and extension gave up -- leaving an unready handoff
+                    # from which the tracer crawled ~8000 steps and then
+                    # turned 90 degrees.  Raise the order before giving up;
+                    # if no order converges, the radius of convergence is
+                    # real and the stub stays where it was.
+                    for order in JET_ORDER_LADDER:
+                        if order < jet_state["order"]:
+                            continue
+                        if order > jet_state["order"]:
+                            try:
+                                jet_state["series"] = _manifold_series(
+                                    local, chart.manifold, orientation,
+                                    order)
+                                jet_state["order"] = order
+                            except (FloatingPointError, ValueError,
+                                    ArithmeticError):
+                                break
+                        try:
+                            trial = evaluate(
+                                candidate_reach, False, refined_n(257),
+                                quick=True)
+                        except (ValueError, FloatingPointError):
+                            break
+                        if trial["accepted"]:
+                            candidate = trial
+                            selected_conditioning = False
+                            break
+                for conditioned in (() if use_jet else modes):
                     # A larger interval may need a finer representation even
                     # though its invariant graph remains perfectly regular.
                     for coarse_n in map(refined_n, (257, 513, 1025, 2049)):
@@ -1259,6 +1559,12 @@ def build_stubs(m: Model, point, minima,
                 ("flow_extension_steps", float(flow_extension_steps)),
                 ("flow_extension_arclength",
                  float(flow_extension_arclength)),
+                ("stub_jet", float(use_jet)),
+                ("jet_order", float(data.get("jet_order", 0.0))),
+                ("jet_truncation_error",
+                 float(data.get("jet_truncation_error", np.nan))),
+                ("jet_tolerance",
+                 float(data.get("jet_tolerance", np.nan))),
             )
             stubs.append(InvariantStub(
                 chart.manifold, orientation, b_direction, destination_b,
