@@ -1787,8 +1787,19 @@ def audit(m, enumeration, branches, box,
     for i, br in enumerate(branches):
         endpoint = unstable_end_by_branch.get(i, stable_tail_by_branch.get(i))
         if (br.kind == "unstable" and endpoint is not None
-                and endpoint["kind"] == "finite_capture"
+                and endpoint["kind"] in ("finite_capture", "forced_completion")
                 and endpoint["certified"]):
+            # forced_completion belongs here with finite_capture: it carries
+            # an entry_index and a minimum, and the same class of evidence --
+            # "only this minimum is reachable from here" -- decided from the
+            # certified stub and the exact merge tree.  Omitting it left the
+            # forced branch's WHOLE traced polyline in the contact scan,
+            # including the degraded stretch just before its step failure:
+            # on directed seeds 888796244 and 1283395251 every forbidden
+            # crossing on the forced branch sat in its last 35..316 of 41,053
+            # and last 2..10 of 2,238 vertices, and those crossings refused
+            # portraits whose fates were all certified.  Crossings BEFORE
+            # entry_index remain evidence, exactly as for a capture.
             terminal_suffixes.append({
                 "kind": "minimum_sublevel",
                 "start": endpoint["entry_index"],
