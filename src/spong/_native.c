@@ -1417,10 +1417,11 @@ static PyObject *native_topology_decide(PyObject *self, PyObject *args) {
     spong_topology_analysis analysis;
     unsigned long long value[12];
     int branch_aborted;
-    if (!PyArg_ParseTuple(args, "KKKKKKKKKKKKp", &value[0], &value[1], &value[2],
+    PyObject *identities;
+    if (!PyArg_ParseTuple(args, "KKKKKKKKKKKKpO", &value[0], &value[1], &value[2],
                           &value[3], &value[4], &value[5], &value[6], &value[7],
                           &value[8], &value[9], &value[10], &value[11],
-                          &branch_aborted))
+                          &branch_aborted, &identities))
         return NULL;
     analysis.saddle_count = (uint64_t)value[0];
     analysis.branch_count = (uint64_t)value[1];
@@ -1435,8 +1436,33 @@ static PyObject *native_topology_decide(PyObject *self, PyObject *args) {
     analysis.uncertified_unstable_ends = (uint64_t)value[10];
     analysis.uncertified_stable_tails = (uint64_t)value[11];
     analysis.branch_aborted = branch_aborted;
+    PyObject *seq = PySequence_Fast(identities, "branch identities must be a sequence");
+    if (seq == NULL) return NULL;
+    Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
+    if ((unsigned long long)count != value[1]) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "one identity is required per branch");
+        return NULL;
+    }
+    spong_branch_identity *ids = PyMem_Calloc((size_t)count, sizeof(*ids));
+    if (count && ids == NULL) { Py_DECREF(seq); return PyErr_NoMemory(); }
+    for (Py_ssize_t i = 0; i < count; ++i) {
+        unsigned long long saddle;
+        int manifold, orientation;
+        if (!PyArg_ParseTuple(PySequence_Fast_GET_ITEM(seq, i), "Kii",
+                              &saddle, &manifold, &orientation)) {
+            PyMem_Free(ids); Py_DECREF(seq); return NULL;
+        }
+        ids[i].saddle_index = (uint64_t)saddle;
+        ids[i].manifold = manifold;
+        ids[i].orientation = orientation;
+    }
+    Py_DECREF(seq);
+    analysis.branch_identities = ids;
     spong_topology_result result;
-    if (spong_topology_decide(&analysis, &result) != 0) {
+    int rc = spong_topology_decide(&analysis, &result);
+    PyMem_Free(ids);
+    if (rc != 0) {
         PyErr_SetString(PyExc_ValueError, "invalid topology analysis");
         return NULL;
     }

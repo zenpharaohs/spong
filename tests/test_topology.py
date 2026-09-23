@@ -1,10 +1,11 @@
 from dataclasses import replace
+import copy
 from fractions import Fraction
 
 import numpy as np
 import pytest
 
-from spong import model, portrait, sturm, topology
+from spong import merge_tree, model, portrait, sturm, topology
 from spong.charts import Branch
 
 
@@ -50,6 +51,9 @@ def test_native_topology_decision_matches_python_oracle():
     for _ in range(1000):
         values = tuple(int(x) for x in rng.integers(0, 20, size=12)) + (
             bool(rng.integers(0, 2)),)
+        identities = [tuple(int(x) for x in rng.integers(0, 4, size=3))
+                      for _ in range(values[1])]
+        values += (identities,)
         oracle = topology._topology_decision_python(*values)
         certified, complete, inventory, reason, stable, unstable = (
             native.topology_decide(*values))
@@ -59,6 +63,95 @@ def test_native_topology_decision_matches_python_oracle():
         assert (None if reason == "none" else reason) == oracle["reason"]
         assert stable == oracle["expected_stable"]
         assert unstable == oracle["expected_unstable"]
+
+
+def test_native_inventory_requires_all_oriented_slots():
+    native = pytest.importorskip("spong._native")
+    valid = [(s, k, o) for s in range(2) for k in (0, 1) for o in (-1, 1)]
+    evidence = (2, 8, 4, 4, 100, 1000, 0, 5000, 0, 0, 0, 0, False)
+    variants = [valid, valid[::-1]]
+    for index, bad in ((1, valid[0]), (4, valid[0]), (0, (2, 0, -1)),
+                       (0, (0, 2, -1)), (0, (0, 0, 0))):
+        changed = valid.copy()
+        changed[index] = bad
+        variants.append(changed)
+    for i, identities in enumerate(variants):
+        oracle = topology._topology_decision_python(*evidence, identities)
+        result = native.topology_decide(*evidence, identities)
+        assert bool(result[0]) == bool(result[2]) == oracle["certified"] == (i < 2)
+        assert result[3] == ("none" if i < 2 else "branch_inventory_incomplete")
+    with pytest.raises(ValueError, match="one identity"):
+        native.topology_decide(*evidence, valid[:-1])
+    empty = (0, 0, 0, 0, 0, 1000, 0, 5000, 0, 0, 0, 0, False, [])
+    assert native.topology_decide(*empty)[0]
+    assert topology._topology_decision_python(*empty)["certified"]
+
+
+@pytest.fixture(scope="module")
+def quartet_portrait():
+    from spong import zoo
+    case = zoo.get("minimal-quartet")
+    m = model.build(list(case.f), list(case.g),
+                    model.moments_uniform01(2*max(len(case.f), len(case.g))-1))
+    return portrait.certified_compute(m)
+
+
+def test_inventory_accepts_opposing_launch_sections_in_any_order(quartet_portrait):
+    p = quartet_portrait
+    result = topology.audit(p.model, p.enumeration, p.branches[::-1], p.box)
+    assert result["status"] == "certified"
+    inventory = result["branch_inventory"]
+    assert inventory["certified"] and not inventory["identity_failures"]
+    assert len(inventory["launch_sections"]) == 2*len(p.enumeration.saddles)
+    for section in inventory["launch_sections"]:
+        assert section["certified"]
+        assert {x["side"] for x in section["crossings"]} == {-1, 1}
+        sign = merge_tree.value_sign(p.model,
+            p.enumeration.saddles[section["saddle_index"]],
+            Fraction(section["level_exact"]))
+        assert sign == (-1 if section["manifold"] == "stable" else 1)
+
+
+@pytest.mark.parametrize("kind", ["stable", "unstable"])
+@pytest.mark.parametrize("restore_label", [False, True])
+def test_inventory_rejects_duplicate_half_branch(quartet_portrait, kind, restore_label):
+    p = quartet_portrait
+    branches = copy.deepcopy(p.branches)
+    first, second = [i for i, b in enumerate(branches) if b.kind == kind][:2]
+    label = copy.deepcopy(branches[second].diag)
+    branches[second] = copy.deepcopy(branches[first])
+    if restore_label:
+        branches[second].diag = label
+    result = topology.audit(p.model, p.enumeration, branches, p.box)
+    assert result["status"] == "fp64_unresolved"
+    assert result["resolution_reason"] == "branch_inventory_incomplete"
+    assert not result["branch_inventory"]["certified"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "unknown_saddle", "missing_orientation",
+                                  "wrong_orientation", "wrong_source", "wrong_kind",
+                                  "overstated_local_prefix"])
+def test_inventory_refuses_incomplete_or_mislabelled_germs(quartet_portrait, fault):
+    p = quartet_portrait
+    branches = copy.deepcopy(p.branches)
+    if fault == "missing":
+        branches.pop()
+    elif fault == "unknown_saddle":
+        branches[0].diag["saddle_b"] = float("nan")
+    elif fault == "missing_orientation":
+        del branches[0].diag["stable_sign"]
+    elif fault == "wrong_orientation":
+        branches[0].diag["stable_sign"] *= -1
+    elif fault == "wrong_source":
+        branches[0].diag["saddle_b"] = p.enumeration.saddles[1].b
+    elif fault == "overstated_local_prefix":
+        branches[0].diag["critical_steps"] = len(branches[0].Y)
+    else:
+        branches[0].kind = "unstable"
+    result = topology.audit(p.model, p.enumeration, branches, p.box)
+    assert result["status"] == "fp64_unresolved"
+    assert result["resolution_reason"] == "branch_inventory_incomplete"
+    assert not result["branch_inventory"]["certified"]
 
 
 def test_bvh_audit_finds_a_forbidden_transverse_crossing(d2):

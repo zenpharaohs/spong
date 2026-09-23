@@ -39,6 +39,12 @@ typedef enum {
 } spong_topology_reason;
 
 typedef struct {
+    uint64_t saddle_index;     /* index in the exact saddle inventory */
+    int32_t manifold;         /* 0 stable, 1 unstable */
+    int32_t orientation;      /* -1 or +1 in the local launch chart */
+} spong_branch_identity;
+
+typedef struct {
     uint64_t saddle_count;
     uint64_t branch_count;
     uint64_t stable_count;
@@ -52,6 +58,9 @@ typedef struct {
     uint64_t uncertified_unstable_ends;
     uint64_t uncertified_stable_tails;
     int32_t branch_aborted;
+    /* Required, one geometrically checked identity per branch. NULL refuses
+       a nonempty inventory; aggregate counts alone never certify it. */
+    const spong_branch_identity *branch_identities;
 } spong_topology_analysis;
 
 typedef struct {

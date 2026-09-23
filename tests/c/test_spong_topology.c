@@ -4,8 +4,13 @@
 #include <math.h>
 
 int main(void) {
+    spong_branch_identity identities[12];
+    for (int i = 0; i < 12; ++i) {
+        identities[i] = (spong_branch_identity){
+            (uint64_t)(i/4), (i%4)/2, (i%2)*2-1};
+    }
     spong_topology_analysis analysis = {
-        3, 12, 6, 6, 100, 1000, 0, 5000, 0, 0, 0, 0, 0
+        3, 12, 6, 6, 100, 1000, 0, 5000, 0, 0, 0, 0, 0, identities
     };
     spong_topology_result result;
     assert(spong_topology_decide(&analysis, &result) == 0);
@@ -14,6 +19,21 @@ int main(void) {
     assert(result.branch_inventory_certified);
     assert(result.expected_stable == 6 && result.expected_unstable == 6);
     assert(result.primary_reason == SPONG_TOPOLOGY_REASON_NONE);
+
+    /* Aggregate counts still agree when an opposite germ is duplicated. */
+    identities[1] = identities[0];
+    assert(spong_topology_decide(&analysis, &result) == 0);
+    assert(!result.certified && !result.branch_inventory_certified);
+    assert(result.primary_reason == SPONG_TOPOLOGY_REASON_BRANCH_INVENTORY);
+    identities[1].orientation = 1;
+    identities[4].saddle_index = 0; /* correct signs, wrong source saddle */
+    assert(spong_topology_decide(&analysis, &result) == 0);
+    assert(!result.branch_inventory_certified);
+    identities[4].saddle_index = 1;
+    analysis.branch_identities = NULL;
+    assert(spong_topology_decide(&analysis, &result) == 0);
+    assert(!result.branch_inventory_certified);
+    analysis.branch_identities = identities;
 
     analysis.forbidden_count = 1;
     analysis.uncertified_unstable_ends = 1;

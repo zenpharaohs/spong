@@ -133,11 +133,24 @@ The caller retains the packed `(a,b)` arrays until
 `spong_contact_scan_destroy` and can stop immediately when its event budget is
 exhausted.  The standalone C test and randomized Python differential test
 exercise the same orientation, proximity, and intersection-point formulas.
-`spong_topology_decide` then reduces branch counts, work budgets, contacts,
-and endpoint-certificate counts to the common status and deterministic refusal
-reason.  This state machine is separately compared against the Python oracle
-over randomized evidence combinations.  These topology entry points comprise
-ABI version 2; version 1 resolution callers remain source- and binary-compatible.
+`spong_topology_decide` reduces branch identities and counts, work budgets,
+contacts, and endpoint-certificate counts to the common status and deterministic
+refusal reason. Each exact saddle index must have exactly one stable and one
+unstable half-branch in each orientation. Duplicate, missing, or invalid slots
+refuse with `branch_inventory_incomplete`, even when aggregate counts agree.
+This state machine is separately compared against the Python oracle.
+
+ABI 11 extends `spong_topology_analysis` with a required `branch_identities`
+pointer (one `spong_branch_identity` per branch). Topology callers must rebuild
+against this header and populate that field; a null pointer cannot certify a
+nonempty inventory. The caller must bind identities to the launch geometry.
+The portrait frontend matches the actual prefix to the enumerated local stub
+and checks the two launches against a common loss level, below the algebraic
+saddle value for unstable branches and above it for stable branches. Exact
+sign brackets and rational chord boxes establish opposing sides in `b` or
+`y=A*a-B`; these witnesses are reported in `branch_inventory.launch_sections`.
+This establishes separation of the supplied launch polylines, not a validated
+enclosure of their global continuations. Resolution enum values are unchanged.
 
 Batched geometric measurements are exposed by
 `include/spong/spong_geometry.h`.  `spong_curve_diagnostics` evaluates the

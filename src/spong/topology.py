@@ -328,16 +328,130 @@ def _forced_completion(m, enumeration, branch):
             "slack_shift": here.get("slack_shift")}
 
 
+def _launch_section(m, saddle, curve, level, manifold):
+    """Bracket a crossing of a common loss level on a launch polyline.
+
+    Bisection preserves an exact sign bracket; no monotonicity of the
+    sampled loss is assumed. The final rational chord box lies strictly on
+    one side of b=b_s (unstable) or y=A*a-B=0 (stable). This certifies a
+    property of the supplied launch geometry, not a transport enclosure.
+    """
+    from .hyperelliptic import RationalInterval, polynomial_interval
+
+    def point(k):
+        return tuple(Fraction(float(x)) for x in curve[k])
+
+    def signed_loss(p):
+        return merge_tree.exact_loss(m, *p)-level
+
+    lo, hi = 0, len(curve)-1
+    first = signed_loss(point(lo))
+    last = signed_loss(point(hi))
+    if first*last >= 0:
+        return None
+    while hi-lo > 1:
+        mid = (lo+hi)//2
+        value = signed_loss(point(mid))
+        if first*value > 0:
+            lo = mid
+        else:
+            hi = mid
+    left, right = point(lo), point(hi)
+    for _ in range(65):
+        b = RationalInterval(min(left[1], right[1]), max(left[1], right[1]))
+        if manifold == "unstable":
+            side = (-1 if b.hi < saddle.interval.lo else
+                    1 if b.lo > saddle.interval.hi else 0)
+        else:
+            a = RationalInterval(min(left[0], right[0]), max(left[0], right[0]))
+            y = polynomial_interval(m.alpha, b)*a-polynomial_interval(m.beta, b)
+            side = -1 if y.hi < 0 else 1 if y.lo > 0 else 0
+        if side:
+            return {"side": side, "segment": lo,
+                    "bracket": [[str(x) for x in p] for p in (left, right)]}
+        mid = tuple((x+y)/2 for x, y in zip(left, right))
+        if first*signed_loss(mid) > 0:
+            left = mid
+        else:
+            right = mid
+    return None
+
+
+def _branch_identities(m, enumeration, branches):
+    """Bind labels to distinct materialized germs and opposing loss sections.
+
+    No nearest-saddle matching: absent or ambiguous launches, unknown
+    labels, or unresolved sections refuse the inventory. A curve
+    relabelled as its opposite still matches only its original launch.
+    """
+    saddles = enumeration.saddles
+    invalid = (len(saddles), 0, 0)
+    identities, failures, groups = [], [], {}
+    for i, br in enumerate(branches):
+        matches = []
+        Y = np.asarray(br.Y)
+        for si, saddle in enumerate(saddles):
+            if br.diag.get("saddle_b") != saddle.b:
+                continue
+            for stub in saddle.stubs:
+                curve = np.asarray(stub.curve)
+                if (stub.manifold == br.kind and len(curve) >= 2
+                        and len(Y) >= len(curve)
+                        and br.diag.get("critical_steps") == len(curve)-1
+                        and np.array_equal(Y[:len(curve)], curve)):
+                    matches.append((si, saddle, stub, curve))
+        if len(matches) != 1:
+            identities.append(invalid)
+            failures.append({"branch": i, "reason": "launch_identity_unresolved"})
+            continue
+        si, saddle, stub, curve = matches[0]
+        identity = (si, 0 if br.kind == "stable" else 1, stub.orientation)
+        identities.append(identity)
+        groups.setdefault((si, br.kind), []).append((i, saddle, curve))
+
+    sections = []
+    for (si, kind), group in groups.items():
+        if len(group) != 2:
+            continue             # the native slot inventory refuses this
+        starts = [merge_tree.exact_loss(m, *curve[0]) for _, _, curve in group]
+        ends = [merge_tree.exact_loss(m, *curve[-1]) for _, _, curve in group]
+        lower, upper = ((max(starts), min(ends)) if kind == "stable"
+                        else (max(ends), min(starts)))
+        level = (lower+upper)/2
+        saddle = group[0][1]
+        expected_sign = -1 if kind == "stable" else 1
+        witnesses = []
+        if lower < upper and merge_tree.value_sign(m, saddle, level) == expected_sign:
+            witnesses = [_launch_section(m, saddle, curve, level, kind)
+                         for _, _, curve in group]
+        valid = (len(witnesses) == 2 and all(witnesses)
+                 and {w["side"] for w in witnesses} == {-1, 1})
+        for j, (i, _, _) in enumerate(group):
+            key = "stable_sign" if kind == "stable" else "unstable_direction"
+            if (not valid or isinstance(branches[i].diag.get(key), bool)
+                    or branches[i].diag.get(key) != witnesses[j]["side"]):
+                identities[i] = invalid
+                failures.append({"branch": i, "reason": "launch_section_unresolved"})
+        sections.append({"saddle_index": si, "manifold": kind,
+                         "level_exact": str(level), "certified": bool(valid),
+                         "branches": [x[0] for x in group], "crossings": witnesses})
+    return identities, failures, sections
+
+
 def _topology_decision_python(
         saddle_count, branch_count, stable_count, unstable_count,
         segment_count, segment_budget, raw_event_count, raw_event_budget,
         forbidden_count, ambiguous_count, uncertified_unstable_ends,
-        uncertified_stable_tails, branch_aborted):
+        uncertified_stable_tails, branch_aborted, branch_identities):
     """Independent oracle for the portable C topology state machine."""
     expected = 2*saddle_count
     inventory = (stable_count == expected
                  and unstable_count == expected
-                 and branch_count == 2*expected)
+                 and branch_count == 2*expected
+                 and len(branch_identities) == branch_count
+                 and set(branch_identities) == {
+                     (i, kind, sign) for i in range(saddle_count)
+                     for kind in (0, 1) for sign in (-1, 1)})
     segment_ok = segment_count <= segment_budget
     event_ok = raw_event_count <= raw_event_budget
     certified = (not branch_aborted and segment_ok and event_ok and inventory
@@ -1594,6 +1708,8 @@ def audit(m, enumeration, branches, box,
     raw_event_budget = 5000
     observed_stable = sum(br.kind == "stable" for br in branches)
     observed_unstable = sum(br.kind == "unstable" for br in branches)
+    identities, identity_failures, launch_sections = _branch_identities(
+        m, enumeration, branches)
     # A branch whose continuation broke is not a usable POLYLINE, but its
     # fate can still be certified: _forced_completion decides from the
     # certified stub and the exact merge tree, using no vertex at or after
@@ -1615,13 +1731,15 @@ def audit(m, enumeration, branches, box,
         len(enumeration.saddles), len(branches),
         observed_stable, observed_unstable,
         segment_count, segment_budget, 0, raw_event_budget,
-        0, 0, 0, 0, bool(aborted))
+        0, 0, 0, 0, bool(aborted), identities)
     branch_inventory = {
         "expected_stable": initial_decision["expected_stable"],
         "observed_stable": observed_stable,
         "expected_unstable": initial_decision["expected_unstable"],
         "observed_unstable": observed_unstable,
         "certified": initial_decision["branch_inventory_certified"],
+        "identity_failures": identity_failures,
+        "launch_sections": launch_sections,
     }
     if aborted:
         # A partial invariant manifold cannot support a topology
@@ -2128,7 +2246,7 @@ def audit(m, enumeration, branches, box,
         segment_count, segment_budget, raw_event_count, raw_event_budget,
         forbidden_count, ambiguous_count,
         sum(not x["certified"] for x in unstable_ends),
-        sum(not x["certified"] for x in stable_tails), False)
+        sum(not x["certified"] for x in stable_tails), False, identities)
     # The inventory in the returned ledger is the same native decision used
     # for the terminal status, not a separately reimplemented frontend rule.
     branch_inventory["certified"] = decision["branch_inventory_certified"]

@@ -37,11 +37,39 @@ struct spong_contact_scan {
 int spong_topology_decide(const spong_topology_analysis *analysis,
                           spong_topology_result *result) {
     if (analysis == NULL || result == NULL
-            || analysis->saddle_count > UINT64_MAX/2) return -1;
+            || analysis->saddle_count > UINT64_MAX/4) return -1;
     uint64_t expected = 2*analysis->saddle_count;
     int inventory = (analysis->stable_count == expected
                      && analysis->unstable_count == expected
                      && analysis->branch_count == 2*expected);
+    if (inventory && analysis->branch_count) {
+        if (analysis->branch_identities == NULL) {
+            inventory = 0;
+        } else {
+            if (analysis->saddle_count > SIZE_MAX) return -1;
+            unsigned char *seen = calloc((size_t)analysis->saddle_count, 1);
+            if (seen == NULL) return -1;
+            for (uint64_t i = 0; i < analysis->branch_count; ++i) {
+                const spong_branch_identity *id = &analysis->branch_identities[i];
+                if (id->saddle_index >= analysis->saddle_count
+                        || (id->manifold != 0 && id->manifold != 1)
+                        || (id->orientation != -1 && id->orientation != 1)) {
+                    inventory = 0;
+                    break;
+                }
+                unsigned char bit = (unsigned char)(1u <<
+                    (2*id->manifold + (id->orientation == 1)));
+                if (seen[id->saddle_index] & bit) {
+                    inventory = 0;
+                    break;
+                }
+                seen[id->saddle_index] |= bit;
+            }
+            /* Four distinct valid slots per saddle, with exactly 4*S
+               branches, implies complete coverage independent of order. */
+            free(seen);
+        }
+    }
     int segment_ok = analysis->segment_count <= analysis->segment_budget;
     int event_ok = analysis->raw_event_count <= analysis->raw_event_budget;
     int contacts_ok = (analysis->forbidden_count == 0
