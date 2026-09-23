@@ -434,6 +434,11 @@ roots use the reciprocal chart; w is a state variable, never a difference.
 
 ### 11. The certificate ledger
 
+The ordinary four-part credibility contract and current technology map are
+specified in [docs/portrait_credibility.md](docs/portrait_credibility.md).
+Validated trajectory transport is exceptional machinery, not a prerequisite
+for every ordinary Smale portrait's health check.
+
 Every portrait ships with, per object:
 
 | object | certificates (semantics label per §Certificate semantics) |
@@ -442,21 +447,18 @@ Every portrait ships with, per object:
 | complex divisors and exact fibres | reduced pole/critical polynomials [EXACT]; complete one-root complex disks by Lehmer--Schur/Schur--Cohn or linear Rouché witnesses [VALIDATED]; real branch-point count by Sturm [EXACT] |
 | local Frobenius/Poincare launch | centered polynomial gradient over the certified algebraic saddle interval [EXACT enclosure]; invariant-cone transverse and lateral-face inequalities [VALIDATED]; exact rational loss-section crossing and `(b,y)` launch rectangle [VALIDATED].  The current `Fraction` oracle is opt-in pending a differentially checked GMP C kernel. |
 | Smale holonomy candidate | inward lateral-face inequalities for a lifted `(ell,b,y)` trapping tube in increasing or decreasing loss [VALIDATED]; validated local-launch handoff [VALIDATED]; same-sheet Abel-gap zero exclusion [VALIDATED]; conic residue--log root-sum form [EXACT] and rational definite-integral enclosure [VALIDATED].  Cross-sheet positive-genus comparisons require unwrapped period transport. |
-| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (E = 0 ⟺ discrete integral curve) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; level-tube inventory or shrinking backbone-funnel signs [EXACT at the measured dyadic point/ray]; local strong-convexity capture ball [RESIDUAL]; observed saddle-connection and asymptote agreement [RESIDUAL] |
+| each manifold branch | jet invariance residual over its chart [RESIDUAL]; angle-energy E = Σ ½‖d_⊥‖² over the RESOLVED vertices, with the resolved/unresolved counts (sampling-dependent alignment diagnostic) [RESIDUAL]; backbone residual max\|w\|/\|a*\| over the UNRESOLVED vertices [RESIDUAL]; anadromic reversal gap [RESIDUAL]; Richardson extrapolant agreement vs tol_plot [RESIDUAL]; seam agreement at every chart handoff [RESIDUAL]; level-tube inventory or shrinking backbone-funnel signs [EXACT at the measured dyadic point/ray]; local strong-convexity capture ball [RESIDUAL]; observed saddle-connection and asymptote agreement [RESIDUAL] |
 | each level curve | closure gap [RESIDUAL]; L-drift (zero secular by construction; measured residual reported) [RESIDUAL] |
 | the portrait | Poincaré–Hopf index balance on the disk [EXACT under §8 genericity, else VALIDATED with the declared reduction]; Morse certificate [EXACT]; moment-space algebraic-discriminant distance (distance to loss of the certified critical-point inventory, **not** to a global topology change) [EXACT]; separatrix contact/intersection audit and observed attaching map [RESIDUAL] |
 | rendering | max vertex turn ≤ 0.2°; chord sag below pixel at 1000× zoom [RESIDUAL] |
 
-**Two certificates per branch, because one cannot span it.**  `angle_energy` is
-GEOMETRIC: it needs the *direction* of ∇L, whose significant digits fall as
-‖∇L‖ ~ C_inf/b² approaches its own evaluation floor — so it decays OUTWARD, and
-past a computable radius it measures its own noise rather than the curve.  The
-backbone residual is ALGEBRAIC: far out the branch *is* a* = B/A, an exact
-rational function, so it IMPROVES outward.  The two cross where both are strong,
-and a branch is certified in two pieces.  Each is scoped to where it is relied
-upon — measuring either one where the other governs makes it report failure on a
-claim it was never asked to support — and the resolved/unresolved counts are
-published so a certificate can never pass by measuring nothing.
+**Complementary branch evidence.** `angle_energy` needs a numerically resolved
+direction of ∇L; the backbone residual measures proximity to a* = B/A where
+that direction becomes unresolved. The backbone is generally not itself an
+integral curve. Proximity must be interpreted using the applicable invariant
+graph or far-field relation. Angle energy also depends on sampling and is not
+a universal angular tolerance. Each measurement needs a declared domain,
+representation allowance, and coverage; unresolved counts must remain visible.
 
 The claim "as correct as it can be" is precisely: every drawn object carries
 residuals a skeptic can recompute without trusting the code that drew it.

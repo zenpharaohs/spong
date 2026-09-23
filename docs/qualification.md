@@ -8,6 +8,10 @@ a certificate is an intended outcome.
 
 ## Total public outcome
 
+The intended ordinary portrait contract and its four credibility obligations
+are specified in [portrait_credibility.md](portrait_credibility.md), together
+with the technology inventory and remaining measurement-policy work.
+
 `spong.resolve` gives every valid model exactly one terminal response:
 
 1. `certified_non_morse`: exact analysis proves that the critical set is not

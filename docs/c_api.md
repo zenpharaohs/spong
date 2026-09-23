@@ -161,6 +161,18 @@ this matters on the high-cancellation tails for which the diagnostic measures
 its own evaluation floor.  The scalar Python implementations remain
 differential oracles rather than production loops.
 
+`spong_level_normal_reference` independently evaluates each chord's normalized
+level-normal misalignment and directed loss change using exact GMP rational
+arithmetic. It accepts exact A/B coefficients and binary64 endpoints; midpoint
+construction, polynomial derivatives, signs, and the squared-sine ratio are
+exact before the ratio is rounded for display. Every chord gets a status,
+including nonfinite points, repeated points, and stationary midpoints. The
+Python adapter is `spong.credibility.level_normal_reference`. This reference
+measurement is for calibration and exceptional arithmetic scrutiny, not a
+production acceptance threshold; chord curvature and stiff coordinate
+representation still require appropriate treatment. See
+[portrait_credibility.md](portrait_credibility.md).
+
 `spong_local_solve2`, in `include/spong/spong_local.h`, is the allocation-free
 binary64 solver for local 2x2 systems. It row-equilibrates, selects a partial
 pivot, eliminates with FMA, and back-substitutes before checking each original

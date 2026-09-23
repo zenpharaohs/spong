@@ -2,29 +2,43 @@
 
 ## State
 
-`level-bar`, six commits ahead of `origin/level-bar` (**unpushed**), plus
-uncommitted native 2x2 arithmetic cleanup. The default stub construction is
-**manifold jet**; `SPONG_STUB_MODE=grid` is the comparison arm.
+The cleanup on `level-bar` is recorded as three separate commits on top of
+`0c52214` (the previously pushed piece-census/handoff tip):
 
-Commits, oldest first:
+1. `39f64df` — native pivoted 2x2 arithmetic, corrected numerical claims, and
+   the three refreshed goldens.
+2. `b0493cd` — distinct oriented launch inventory and ABI 11.
+3. This commit, `credibility: specify portrait checks and add exact normal
+   measurements` — the four-part contract, native GMP reference evaluator,
+   probe, tests, and this refreshed handoff.
 
-    56e0a60  local: the invariant-manifold jet, behind a flag
-    7c0cd97  tests: parallel by default, two heaviest parameters held
-    5d73c74  ensemble: longest-first scheduling, both stub arms in one pool
-    8742bae  docs: the global normal form, measured and not adopted
-    0267d15  topology: a forced completion earns a certified terminal suffix
-    194ea13  local: the manifold jet becomes the default stub construction
+The default stub construction remains **manifold jet**;
+`SPONG_STUB_MODE=grid` is the comparison arm. The planned next branch is
+`trajectory-checker`, forked from the resulting `level-bar` tip after these
+three commits are pushed. It has not been created as part of this cleanup.
 
-Validation of the cleanup: 873 default-suite tests passed on the first run;
-the two demo tests missing the sibling continuous-Bernoulli dependency in the
-isolated checkout passed on rerun with `CB_CORE_SOURCE` set (875 total,
-including nine new regression tests). All 11 standalone C executables passed.
-CMake was unavailable, so those were linked directly against the compiled C
-core. Zoo topology and branch outcomes are unchanged; three reviewed goldens
-were updated for sampling/residual changes and checked against fresh captures. Heavy tests have not been rerun; they remain required before merging.
+Pre-commit validation of the combined tree:
 
-Qualification behind the switch: directed N=200, grid 174 certified vs jet
-180; random N=200 verdict-identical; zoo claims unchanged, goldens re-frozen.
+- `python -m pytest -q -m heavy`: **2 passed** (146 s). The only warning was
+  inability to write pytest's cache because the run began before filesystem
+  write access was granted; no test failed.
+- Default suite: **901 passed**.
+- `python scripts/golden_zoo.py check`: **all assertions hold**.
+- The credibility staged snapshot builds independently and passes its 13
+  reference tests and all 11 standalone C test executables.
+- The arithmetic-only staged snapshot builds independently and passes 27
+  local/solver tests plus its standalone C local test.
+- The inventory staged snapshot builds independently and passes 57
+  topology/portrait/resolution tests plus C topology/resolution tests.
+
+The `_solve2` native adapter and all conditioning/truncation docstring and
+comment corrections in `src/spong/local.py` were verified intact before
+staging. Shared `_native.c` and C API documentation edits were split in the
+index, without reverting or rewriting any working source files. The separate
+`slow` test selection was not run.
+
+Historical qualification behind the jet switch: directed N=200, grid 174
+certified vs jet 180; random N=200 verdict-identical; zoo claims unchanged.
 
 ## Arithmetic cleanup — 2026-09-22, subsequent investigation
 
@@ -44,7 +58,7 @@ higher precision for the solve alone reduced it by four orders. Ordinary
 back-substitution also repairs the component relation. Exact nonsingularity
 of the recurrence is not a numerical conditioning guarantee.
 
-The working change introduces `spong_local_solve2` in the native C core:
+The arithmetic commit introduces `spong_local_solve2` in the native C core:
 row equilibration, partial pivoting, FMA elimination and back-substitution,
 and an independent componentwise backward-error check. The scaled pivot
 product retains the old 1e-12 admission threshold. The Python function is
@@ -96,10 +110,11 @@ Missing/duplicate/invalid identities use `branch_inventory_incomplete`.
 
 Validation: the 886-test default suite and all 11 standalone C tests passed.
 After adding the prefix-length check and two additional tests, all 55 focused
-topology/portrait/resolution tests passed. Heavy/slow tests were not run.
+topology/portrait/resolution tests passed. The heavy tests have since passed;
+see State above. The separate slow selection was not run.
 The geometry-residual gating and global proof-contract issues identified in
 the certification audit remain separate work; this fix addresses launch
-identity and inventory. All changes remain uncommitted.
+identity and inventory. This fix is now in the cleanup commit sequence above.
 
 ### Ordinary credibility contract and reference measurements (2026-09-22)
 
@@ -133,8 +148,9 @@ gate. Backbone proximity claims were corrected in comments/documentation.
 Validation: 901 default tests passed; all 11 standalone C tests passed. Native
 reference tests cover independent rational-oracle agreement, resampling,
 reversed flow, coefficient cancellation, extreme scaling, nonfinite data,
-stationary midpoints, repeated points, and ratio underflow. Heavy/slow tests
-were not run. Changes remain uncommitted.
+stationary midpoints, repeated points, and ratio underflow. The heavy tests
+have since passed; see State above. This work completes the cleanup commit
+sequence; the separate slow selection was not run.
 
 ### Previously open work
 

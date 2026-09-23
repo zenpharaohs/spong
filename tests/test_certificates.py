@@ -1,10 +1,11 @@
-"""The two-certificate scheme for branch validity.
+"""Regression coverage for the historical complementary branch diagnostics.
 
 `angle_energy` is GEOMETRIC and decays outward: it needs the direction of
 grad L, which loses digits as |grad L| ~ C_inf/b^2 falls toward its own
-evaluation floor.  `backbone_residual` is ALGEBRAIC and improves outward: far
-out the branch IS the backbone a* = B/A, an exact rational function.  Together
-they span a branch that the geometric one alone cannot certify.
+evaluation floor. `backbone_residual` measures proximity to a* = B/A.
+These tests preserve measured behavior; they do not establish that proximity
+alone proves invariance, or that raw angle energy is a universal acceptance
+metric. See docs/portrait_credibility.md for the ordinary certificate contract.
 """
 
 import numpy as np
@@ -93,8 +94,7 @@ def test_most_of_the_portrait_is_geometrically_resolved(tricky):
 
 
 def test_unresolved_tail_is_certified_algebraically(tricky):
-    """Where angle_energy runs out of digits the branch has become the
-    backbone, and that IS checkable — against an exact rational function."""
+    """The unresolved tail stays close to the backbone in this example."""
     L, _ = _escaping(tricky[1])
     assert L["angle_unresolved"] > 0            # it does have a far tail
     assert L["backbone_residual[RESIDUAL]"] < 1e-8

@@ -2278,6 +2278,44 @@ static int rational_sequence_from_object(PyObject *object, RationalSequence *out
     return 0;
 }
 
+static PyObject *native_level_normal_reference(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *a, *b, *curve, *result = NULL;
+    int direction;
+    RationalSequence alpha = {0}, beta = {0};
+    Py_buffer view = {0};
+    spong_level_normal_measurement *rows = NULL;
+    if (!PyArg_ParseTuple(args, "OOOi", &a, &b, &curve, &direction)) return NULL;
+    if (rational_sequence_from_object(a, &alpha, "alpha must be nonempty")
+            || rational_sequence_from_object(b, &beta, "beta must be nonempty")
+            || contact_buffer(curve, &view)) goto done;
+    Py_ssize_t count = view.shape[0]-1;
+    rows = PyMem_Calloc((size_t)count, sizeof(*rows));
+    if (rows == NULL) { PyErr_NoMemory(); goto done; }
+    int rc;
+    Py_BEGIN_ALLOW_THREADS
+    rc = spong_level_normal_reference(alpha.input, (size_t)alpha.count,
+        beta.input, (size_t)beta.count, view.buf, (size_t)view.shape[0], direction, rows);
+    Py_END_ALLOW_THREADS
+    if (rc != 0) {
+        PyErr_SetString(PyExc_ValueError, "invalid level-normal reference input");
+        goto done;
+    }
+    result = PyList_New(count);
+    if (result == NULL) goto done;
+    for (Py_ssize_t i = 0; i < count; ++i) {
+        PyObject *row = Py_BuildValue("idiii", rows[i].status, rows[i].sin_squared,
+            rows[i].cross_nonzero, rows[i].flow_alignment, rows[i].loss_direction);
+        if (row == NULL) { Py_CLEAR(result); goto done; }
+        PyList_SET_ITEM(result, i, row);
+    }
+done:
+    PyMem_Free(rows);
+    if (view.obj != NULL) PyBuffer_Release(&view);
+    rational_sequence_clear(&alpha); rational_sequence_clear(&beta);
+    return result;
+}
+
 static PyObject *owned_rational_tuple(const spong_owned_rational *value) {
     if (value->numerator == NULL || value->denominator == NULL) {
         Py_RETURN_NONE;
@@ -3392,6 +3430,8 @@ static PyMethodDef module_methods[] = {
      "Apply the shared C resolution policy to exact-Morse measurements."},
     {"resolution_finalize", native_resolution_finalize, METH_VARARGS,
      "Map a geometry certificate to the shared terminal resolution state."},
+    {"level_normal_reference", native_level_normal_reference, METH_VARARGS,
+     "Exact midpoint level-normal alignment and loss-direction measurements."},
     {"topology_decide", native_topology_decide, METH_VARARGS,
      "Reduce topology evidence to the shared certificate outcome."},
     {"sturm_analyze", native_sturm_analyze, METH_VARARGS,

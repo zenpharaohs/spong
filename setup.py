@@ -25,7 +25,7 @@ setup(
             "spong._native",
             ["src/spong/_native.c", "src/c/spong_resolution.c",
              "src/c/spong_exact_gmp.c", "src/c/spong_topology.c",
-             "src/c/spong_geometry.c", "src/c/spong_local.c",
+             "src/c/spong_geometry.c", "src/c/spong_geometry_gmp.c", "src/c/spong_local.c",
              "src/c/spong_local_gmp.c",
              "src/c/spong_local_certificate_gmp.c",
              "src/c/spong_smale_gmp.c",

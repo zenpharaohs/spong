@@ -2400,8 +2400,9 @@ def _angle_energy_detail_python(m: Model, Y: np.ndarray,
                                 digits: float = None, start: int = 1):
     """(E, n_resolved, n_unresolved) — angle energy over resolved vertices.
 
-    E = Σ ½‖d_⊥‖² is the discrete integral-curve certificate (E = 0 ⟺ the
-    chords are everywhere parallel to ∇L).  Each gradient component is a
+    E = Σ ½‖d_⊥‖² measures alignment of the resolved central chords with
+    ∇L. It depends on sampling and is not an integral-curve theorem.
+    Each gradient component is a
     cancellation whose magnitude sets an evaluation floor ~eps·(term scale),
     so R = ‖∇L‖ / g_floor is how many significant digits the DIRECTION of ∇L
     carries.  A vertex is skipped when R < `digits`.
@@ -2422,11 +2423,10 @@ def _angle_energy_detail_python(m: Model, Y: np.ndarray,
 
     n_unresolved MUST be reported: a budget strict enough to silence all noise
     would skip every vertex and return E = 0, which is a vacuous pass, not a
-    clean one.  Beyond the resolved region the branch is certified
-    ALGEBRAICALLY instead — out there it IS the backbone a*(b), with
-    |w_s/a*| ~ 3.4e-25.  The two certificates run in opposite directions
-    (geometric decays outward, algebraic improves outward) and overlap around
-    b ≈ −4.5, where both are strong.
+    clean one. Backbone proximity is reported as complementary evidence in
+    the unresolved region. It needs an applicable asymptotic/invariant-graph
+    relation to support trajectory credibility; proximity alone does not
+    prove invariance. See docs/portrait_credibility.md.
     """
     K = ANGLE_DIGIT_BUDGET if digits is None else digits
     E = 0.0
@@ -2471,10 +2471,10 @@ def _backbone_residual_python(m: Model, Y: np.ndarray, digits: float = None,
                               start: int = 1) -> float:
     """max |w| / |a*| over the vertices `angle_energy` could NOT resolve.
 
-    The ALGEBRAIC certificate.  Where the geometric one runs out of digits the
-    branch has become the backbone a* = B/A, an exact rational function, so
-    "is this the invariant manifold" is answerable without any chord geometry —
-    and it IMPROVES outward, exactly where `angle_energy` decays.
+    This is a proximity diagnostic, evaluated in floating arithmetic against
+    the rational backbone a* = B/A. The backbone is generally not itself an
+    integral curve. A small residual needs a justified invariant-graph or
+    far-field relation to serve as complementary trajectory evidence.
 
     Scoped to the UNRESOLVED vertices on purpose.  Measured over the whole
     polyline instead it reports where the branch is legitimately far from the
@@ -2506,7 +2506,7 @@ def _backbone_residual_python(m: Model, Y: np.ndarray, digits: float = None,
 
 def backbone_residual(m: Model, Y: np.ndarray, digits: float = None,
                       start: int = 1) -> float:
-    """Native algebraic tail certificate; Python retained as oracle."""
+    """Native backbone proximity diagnostic; Python retained as oracle."""
     result = _native_curve_diagnostics(m, Y, digits, start)
     if result is not None:
         return result[3]
