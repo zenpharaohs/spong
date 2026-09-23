@@ -4,6 +4,21 @@
 #include <math.h>
 
 int main(void) {
+    /* A zero leading entry forces pivoting; extreme independent row scales
+     * must not change the solution. Failed solves leave the output intact. */
+    const double matrix[4] = {0, 2e200, 3e-200, 4e-200};
+    const double rhs[2] = {4e200, 11e-200};
+    double solution[2] = {99, 98};
+    assert(spong_local_solve2(matrix, rhs, solution) == 0);
+    assert(fabs(solution[0]-1) < 1e-14 && fabs(solution[1]-2) < 1e-14);
+    const double singular[4] = {1, 2, 2, 4};
+    solution[0] = 99; solution[1] = 98;
+    assert(spong_local_solve2(singular, rhs, solution) == -3);
+    assert(solution[0] == 99 && solution[1] == 98);
+    const double nonfinite[4] = {NAN, 0, 0, 1};
+    assert(spong_local_solve2(nonfinite, rhs, solution) == -1);
+    assert(spong_local_solve2(NULL, rhs, solution) == -1);
+
     /* F(u,s) = (2u, -3s), packed [component][u][s]. */
     const char *normal[] = {"0", "0", "2", "0", "0", "-3", "0", "0"};
     const double identity_map[6] = {0, 0, 0, 0, 0, 0};

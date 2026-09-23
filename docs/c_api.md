@@ -148,6 +148,16 @@ this matters on the high-cancellation tails for which the diagnostic measures
 its own evaluation floor.  The scalar Python implementations remain
 differential oracles rather than production loops.
 
+`spong_local_solve2`, in `include/spong/spong_local.h`, is the allocation-free
+binary64 solver for local 2x2 systems. It row-equilibrates, selects a partial
+pivot, eliminates with FMA, and back-substitutes before checking each original
+equilibrated equation's relative backward error. It retains the local scaled
+pivot-product admission threshold of 1e-12 and refuses nonfinite or unresolved
+systems without modifying the output. The Python `_solve2` is only an adapter.
+This replaces independent Cramer quotients, which lost the stiff equation in
+the manifold recurrence at `dead-neuron-far-saddle-d3`. A backward-error check
+does not establish forward accuracy or certify a manifold.
+
 High-precision near-critical chart composition is exposed by
 `include/spong/spong_local.h`.  `spong_poincare_pullback_decimal` forms
 `adj(DT) F(T(z))` for the selected quadratic Poincaré map in GMP floating

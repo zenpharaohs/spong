@@ -181,28 +181,29 @@
       "term": "box_exit"
     },
     {
-      "angle_energy[RESIDUAL]": 3.5438325200102376e-07,
-      "angle_resolved": 292,
+      "angle_energy[RESIDUAL]": 4.125506963875009e-20,
+      "angle_resolved": 3547,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.0014782377546405994,
-      "n_points": 807,
+      "max_turn_deg[RESIDUAL]": 6.984265033641265e-05,
+      "n_points": 4062,
       "saddle_b": -2.175339540467437,
+      "seam_residual[RESIDUAL]": 2.808838718242977e-20,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 4.334195086179072e-16,
-      "angle_resolved": 3977,
+      "angle_energy[RESIDUAL]": 6.671347037134128e-17,
+      "angle_resolved": 3967,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 2.426880686682541e-05,
-      "n_points": 4492,
+      "max_turn_deg[RESIDUAL]": 4.94894222552004e-05,
+      "n_points": 4482,
       "saddle_b": -2.175339540467437,
-      "seam_residual[RESIDUAL]": 1.7009133410783672e-18,
+      "seam_residual[RESIDUAL]": 4.837785987244472e-19,
       "term": "capture"
     },
     {
@@ -314,13 +315,13 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 2.52130803802816e-12,
+      "angle_energy[RESIDUAL]": 2.521308032458889e-12,
       "angle_resolved": 24058,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.3247848349196982,
+      "max_turn_deg[RESIDUAL]": 0.324784834887155,
       "n_points": 24573,
       "saddle_b": 1.3312862953371076,
       "term": "capture"
@@ -483,7 +484,7 @@
     "balanced": true,
     "representation_attested": true,
     "topology_status": "certified",
-    "worst_angle_energy": 3.5438325200102376e-07,
+    "worst_angle_energy": 6.04494272552981e-08,
     "worst_max_turn_deg": 3.410136211773083
   },
   "topology": {

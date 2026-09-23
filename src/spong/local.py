@@ -66,21 +66,11 @@ def _scaled_norm(x) -> float:
 
 
 def _solve2(J, rhs):
-    """Guarded closed-form solve for the near-identity Poincare Jacobian."""
-    a, b = float(J[0][0]), float(J[0][1])
-    c, d = float(J[1][0]), float(J[1][1])
-    r0, r1 = float(rhs[0]), float(rhs[1])
-    s0, s1 = max(abs(a), abs(b)), max(abs(c), abs(d))
-    if s0 == 0.0 or s1 == 0.0:
-        raise FloatingPointError("singular Poincare coordinate Jacobian")
-    aa, bb, rr0 = a/s0, b/s0, r0/s0
-    cc, dd, rr1 = c/s1, d/s1, r1/s1
-    determinant = aa*dd-bb*cc
-    if not np.isfinite(determinant) or abs(determinant) < 1e-12:
-        raise FloatingPointError(
-            "ill-conditioned Poincare coordinate Jacobian")
-    return ((dd*rr0-bb*rr1)/determinant,
-            (aa*rr1-cc*rr0)/determinant)
+    """Thin adapter to the native pivoted local solve (including jet recursion)."""
+    from . import _native
+    return _native.local_solve2(float(J[0][0]), float(J[0][1]),
+                                float(J[1][0]), float(J[1][1]),
+                                float(rhs[0]), float(rhs[1]))
 
 
 def _exact_symmetric_spectral(
@@ -789,7 +779,11 @@ def _manifold_series(local, manifold: str, orientation: int, order: int):
     R_k the order-k coefficient of F(K) built from K_1..K_{k-1}.  At a saddle
     this system is NEVER singular: rate > 0 and DF's other eigenvalue has the
     opposite sign, so k*rate is not an eigenvalue of DF for any k >= 2.  No
-    resonance, no small divisor, every order solvable.  The only input is the
+    resonance, every order solvable in exact arithmetic.  This does NOT imply
+    numerical conditioning: the far-saddle solve has a spectral condition
+    number near 8e16.  Native pivoted elimination preserves the stiff equation
+    by back-substitution; independent Cramer quotients lost that relation.
+    The only input is the
     centered field polynomial the LocalJet already holds, exact to one
     rounding because L is a polynomial.
 
@@ -968,8 +962,8 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                 """The manifold jet sampled on the same nested t-grid.
 
                 Its error is series TRUNCATION, reported as the tail between
-                JET_CHECK_ORDER and JET_ORDER -- an overestimate, dominated by
-                the first omitted term, and so conservative.
+                orders N//2 and N.  Agreement measures truncation consistency,
+                not coefficient accuracy or a proof of convergence.
                 """
                 Ka, Kb = jet_state["series"]
                 check = jet_state["order"]//2
@@ -1065,8 +1059,8 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                     # hc - hf[::2] is identically zero and would CLAIM an
                     # accuracy it never measured.  Its honest error is series
                     # truncation.  Using it here also makes the reach loop
-                    # adaptive for free: a jet outside its radius of
-                    # convergence fails grid_error < 1e-6 and halves.
+                    # adaptive when the tail is resolved.  It cannot detect
+                    # errors shared by both truncations in low coefficients.
                     truncation = float(df["truncation_error"])
                     normal_grid_absolute = truncation
                     grid_error = truncation/max(current_reach, 1e-300)
@@ -1081,8 +1075,8 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                     # whole point of the jet is an EXACT handoff.  Require
                     # the order-10-to-20 tail to sit at the roundoff of the
                     # physical endpoint, so the loop halves until the series
-                    # has converged to binary64.  The tail overestimates the
-                    # order-20 error, which only makes this stricter.
+                    # agrees at binary64 precision.  This is not an independent
+                    # bound on coefficient or manifold error.
                     jet_tolerance = 64.0*np.finfo(float).eps*(
                         1.0 + float(np.hypot(local.a, local.b))
                         + abs(float(current_reach)))

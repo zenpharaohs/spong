@@ -89,14 +89,14 @@
       "term": "level_bar"
     },
     {
-      "angle_energy[RESIDUAL]": 6.754225079810199e-13,
-      "angle_resolved": 31105,
+      "angle_energy[RESIDUAL]": 6.653572049997513e-13,
+      "angle_resolved": 29367,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.05920483540898977,
-      "n_points": 31620,
+      "max_turn_deg[RESIDUAL]": 0.05960505434888774,
+      "n_points": 29882,
       "saddle_b": -2.738230515199488,
       "term": "capture"
     },
@@ -110,7 +110,7 @@
       "max_turn_deg[RESIDUAL]": 0.0001361655213747995,
       "n_points": 11461,
       "saddle_b": -2.738230515199488,
-      "seam_residual[RESIDUAL]": 3.8209695784689743e-20,
+      "seam_residual[RESIDUAL]": 9.731557577599831e-20,
       "term": "box_exit"
     },
     {
@@ -162,29 +162,29 @@
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 2.0408710477357155e-14,
-      "angle_resolved": 2604,
+      "angle_energy[RESIDUAL]": 2.7919737986051686e-14,
+      "angle_resolved": 1420,
       "angle_unresolved": 2846,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 7.3444386094852035e-06,
-      "n_points": 5965,
+      "max_turn_deg[RESIDUAL]": 7.244509618354405e-06,
+      "n_points": 4781,
       "saddle_b": 3.4244530752666313,
-      "seam_residual[RESIDUAL]": 3.954547152886323e-21,
+      "seam_residual[RESIDUAL]": 3.107404918060123e-21,
       "term": "capture"
     },
     {
-      "angle_energy[RESIDUAL]": 7.064808859253194e-17,
-      "angle_resolved": 3633,
+      "angle_energy[RESIDUAL]": 6.773664040758739e-17,
+      "angle_resolved": 3050,
       "angle_unresolved": 0,
       "backbone_residual[RESIDUAL]": 0.0,
       "connection[RESIDUAL]": true,
       "kind": "unstable",
-      "max_turn_deg[RESIDUAL]": 0.00062193293480209,
-      "n_points": 4148,
+      "max_turn_deg[RESIDUAL]": 0.0006220073548040246,
+      "n_points": 3565,
       "saddle_b": 3.4244530752666313,
-      "seam_residual[RESIDUAL]": 4.309003637155926e-19,
+      "seam_residual[RESIDUAL]": 6.07194525126694e-20,
       "term": "capture"
     }
   ],

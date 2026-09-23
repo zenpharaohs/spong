@@ -3,8 +3,50 @@
 
 #include "spong/spong_local.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
+
+int spong_local_solve2(const double matrix[4], const double rhs[2], double out[2]) {
+    if (!matrix || !rhs || !out) return -1;
+    double A[2][2], r[2];
+    for (int i = 0; i < 2; ++i) {
+        if (!isfinite(matrix[2*i]) || !isfinite(matrix[2*i+1]) || !isfinite(rhs[i]))
+            return -1;
+        double scale = fmax(fabs(matrix[2*i]), fabs(matrix[2*i+1]));
+        if (!(scale > 0.0)) return -3;
+        A[i][0] = matrix[2*i]/scale;
+        A[i][1] = matrix[2*i+1]/scale;
+        r[i] = rhs[i]/scale;
+        if (!isfinite(r[i])) return -3;
+    }
+    /* Retain the equilibrated originals for an independent residual check. */
+    int p = fabs(A[1][0]) > fabs(A[0][0]) ? 1 : 0;
+    int q = 1-p;
+    double pivot = A[p][0];
+    if (!(fabs(pivot) > 0.0)) return -3;
+    double factor = A[q][0]/pivot;
+    double trailing = fma(-factor, A[p][1], A[q][1]);
+    /* Same admission threshold as the former scaled determinant, now
+     * obtained from the elimination pivots rather than cross products. */
+    if (!(fabs(pivot*trailing) >= 1e-12)) return -3;
+    double y = fma(-factor, r[p], r[q])/trailing;
+    double x = fma(-A[p][1], y, r[p])/pivot;
+    if (!isfinite(x) || !isfinite(y)) return -3;
+    for (int i = 0; i < 2; ++i) {
+        /* Scale the unknowns and RHS together to keep this check finite. */
+        double s = fmax(fmax(fabs(x), fabs(y)), fabs(r[i]));
+        if (s == 0.0) continue;
+        double u = x/s, v = y/s, b = r[i]/s;
+        double residual = fma(A[i][0], u, fma(A[i][1], v, -b));
+        double bound = fabs(A[i][0]*u) + fabs(A[i][1]*v) + fabs(b);
+        if (!isfinite(residual) || fabs(residual) > 128.0*DBL_EPSILON*bound)
+            return -3;
+    }
+    out[0] = x;
+    out[1] = y;
+    return 0;
+}
 
 int spong_poincare_graph_proposal(const spong_jet *jet, const double V[4],
                                   const double M[6], double ld, double lt,

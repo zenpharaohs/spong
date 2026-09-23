@@ -11,6 +11,16 @@
 extern "C" {
 #endif
 
+/* Solve row-major matrix * solution = rhs by row equilibration, partial
+ * pivoting and back-substitution. Allocation-free; inputs are not modified.
+ * Returns 0 on success, -1 for invalid/nonfinite input, -3 for a singular,
+ * insufficiently resolved or nonfinite solve. On failure solution is untouched.
+ * The scaled pivot product must be >= 1e-12 (the local chart admission bar).
+ * A componentwise backward-error check uses the original equilibrated rows;
+ * success is not a forward-error or manifold certificate. */
+SPONG_API int spong_local_solve2(const double matrix[4], const double rhs[2],
+                               double solution[2]);
+
 typedef struct {
     size_t u_count;
     size_t s_count;

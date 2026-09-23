@@ -3334,7 +3334,21 @@ static PyObject *native_chord_rejections(PyObject *self, PyObject *args) {
 
 #include "_native_rheostat.inc"
 
+static PyObject *native_local_solve2(PyObject *self, PyObject *args) {
+    (void)self;
+    double matrix[4], rhs[2], solution[2];
+    if (!PyArg_ParseTuple(args, "dddddd", &matrix[0], &matrix[1], &matrix[2],
+                          &matrix[3], &rhs[0], &rhs[1])) return NULL;
+    if (spong_local_solve2(matrix, rhs, solution) != 0) {
+        PyErr_SetString(PyExc_FloatingPointError, "unresolved local 2x2 system");
+        return NULL;
+    }
+    return Py_BuildValue("(dd)", solution[0], solution[1]);
+}
+
 static PyMethodDef module_methods[] = {
+    {"local_solve2", native_local_solve2, METH_VARARGS,
+     "Native equilibrated, pivoted 2x2 solve with a backward-error check."},
     {"chord_rejections", native_chord_rejections, METH_VARARGS,
      "Steps refused by the chord-realisation gate; chord_rejections(True) "
      "reads and zeroes. Process-wide and atomic across worker threads."},
