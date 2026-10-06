@@ -394,7 +394,7 @@ int spong_irk2_step(void *ctx, spong_vec_fj fj, const double z[2], double h,
 static int irk2_step_core(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
                           const double z[2], double h, int order,
                           double out[2], int unit_speed, int clock_kind,
-                          double *tau) {
+                          double *tau, spong_dense *dense) {
     static const double A4[4][4] = {
         {0.25, 0.25 - SQRT3/6.0, 0.0, 0.0},
         {0.25 + SQRT3/6.0, 0.25, 0.0, 0.0},
@@ -521,13 +521,23 @@ static int irk2_step_core(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
         out[0] += h * BT[i] * K[i][0];
         out[1] += h * BT[i] * K[i][1];
     }
+    if (dense) {
+        memset(dense, 0, sizeof(*dense));
+        dense->v[0] = 1; dense->v[2] = order; dense->v[3] = h;
+        dense->v[4] = z[0]; dense->v[5] = z[1];
+        for (int i=0; i<s; ++i) {
+            dense->v[6+2*i] = K[i][0]; dense->v[7+2*i] = K[i][1];
+            for (int j=0; j<s; ++j) dense->v[14+i] += AT[i][j];
+        }
+        dense->v[18] = out[0]; dense->v[19] = out[1];
+    }
     return isfinite(out[0]) && isfinite(out[1]);
 }
 
 int spong_irk2_step_gated(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
                           const double z[2], double h,
                           int order, double out[2], int unit_speed) {
-    return irk2_step_core(ctx, fj, fl, z, h, order, out, unit_speed, 0, NULL);
+    return irk2_step_core(ctx, fj, fl, z, h, order, out, unit_speed, 0, NULL, NULL);
 }
 
 int spong_irk2_step_floored(void *ctx, spong_vec_fj fj, spong_vec_floor fl,
@@ -556,7 +566,7 @@ int spong_normalized_step_clock(const spong_field *field, const double z[2],
     if (tau == NULL) return 0;
     return irk2_step_core((void *)field, spong_normalized_fj,
                           spong_normalized_floor, z, h, order, out, 1, 2,
-                          tau);
+                          tau, NULL);
 }
 
 int spong_potential_step_clock(const spong_field *field, const double z[2],
@@ -565,5 +575,20 @@ int spong_potential_step_clock(const spong_field *field, const double z[2],
     if (tau == NULL) return 0;
     return irk2_step_core((void *)field, spong_potential_rate_fj,
                           spong_potential_rate_floor, z, h, order, out, 0, 1,
-                          tau);
+                          tau, NULL);
+}
+
+int spong_field_step_recorded(const spong_field *f, int potential,
+        const double z[2], double h, int order, double out[2],
+        double *tau, spong_dense *dense) {
+    return irk2_step_core((void *)f,
+        potential ? spong_potential_rate_fj : spong_normalized_fj,
+        potential ? spong_potential_rate_floor : spong_normalized_floor,
+        z, h, order, out, !potential,
+        tau ? (potential ? 1 : 2) : 0, tau, dense);
+}
+
+int spong_irk2_step_recorded(void *ctx, spong_vec_fj fj,
+        const double z[2], double h, int order, double out[2], spong_dense *dense) {
+    return irk2_step_core(ctx,fj,NULL,z,h,order,out,0,0,NULL,dense);
 }

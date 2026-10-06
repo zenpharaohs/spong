@@ -1722,6 +1722,12 @@ def audit(m, enumeration, branches, box,
     for i, br in enumerate(branches):
         if _representable(br):
             continue
+        if br.term == 'abort_analytic_arrival':
+            # Explicit failure of the requested arrival representation.
+            # Exact endpoint fate cannot discharge that geometric obligation.
+            # Keep legacy forced completion for other continuation aborts.
+            aborted.append(i)
+            continue
         forced = _forced_completion(m, enumeration, br)
         if forced is None:
             aborted.append(i)
@@ -1888,12 +1894,12 @@ def audit(m, enumeration, branches, box,
             }
         return i, None, None
 
-    from . import engine
+    from . import _parallel
     unstable_end_by_branch = {}
     stable_tail_by_branch = {}
-    for i, which, entry in engine.map_ordered(
+    for i, which, entry in _parallel.map_ordered(
             _endpoint_certificate, list(enumerate(branches)),
-            workers=engine.workers()):
+            workers=_parallel.workers()):
         if which == "unstable":
             unstable_end_by_branch[i] = entry
         elif which == "stable":

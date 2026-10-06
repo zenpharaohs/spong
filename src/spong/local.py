@@ -230,6 +230,7 @@ class InvariantStub:
     preferred_chart: str
     certificates: tuple[tuple[str, float], ...]
     validated_launch: object | None = None
+    trajectory_evidence: dict | None = None
 
     @property
     def handoff(self):
@@ -996,6 +997,8 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                     "centered": hi, "normal_x": hi @ R[:, 0],
                     "normal_h": hi @ R[:, 1],
                     "tangent": tangent,
+                    "series": (tuple(map(float, Ka)), tuple(map(float, Kb))),
+                    "parameters": tuple(map(float, t)),
                     "truncation_error": truncation,
                     "reach": float(current_reach), "grid_points": int(n)}
 
@@ -1575,5 +1578,16 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
             )
             stubs.append(InvariantStub(
                 chart.manifold, orientation, b_direction, destination_b,
-                destination_kind, tuple(map(tuple, fine)), preferred, certs))
+                destination_kind, tuple(map(tuple, fine)), preferred, certs,
+                trajectory_evidence={
+                    "representation": ("centered_polynomial" if use_jet
+                                       else "centered_grid"),
+                    "center": (float(local.a), float(local.b)),
+                    "centered": tuple(map(tuple, centered_fine)),
+                    **({"coefficients": df["series"],
+                        "parameters": (0.0,) + df["parameters"],
+                        "tangents": (tuple(df["tangent"][0]),)
+                                    + tuple(map(tuple, df["tangent"]))}
+                       if use_jet else {}),
+                }))
     return tuple(stubs)

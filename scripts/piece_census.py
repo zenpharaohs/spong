@@ -67,8 +67,8 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 os.environ.setdefault("SPONG_ENGINE", "native")
 
-TALLIES = ("termination", "zones", "launch", "endpoint", "verdict",
-           "difficulty")
+TALLIES = ("termination", "zones", "pieces", "piece_coverage", "launch",
+           "endpoint", "verdict", "difficulty")
 
 
 def _build(spec, max_degree):
@@ -151,7 +151,12 @@ def _census(job):
     except Exception as exc:                      # a census never aborts
         return spec, None, f"{type(exc).__name__}: {exc}"[:120], 0.0
 
+    from spong.trajectory_check import inventory
     for br in p.branches:
+        coverage = inventory(br.Y, br.pieces)
+        out["piece_coverage"][coverage["status"]] += 1
+        for piece in br.pieces:
+            out["pieces"][f"{br.kind}:{piece.kind}"] += 1
         out["termination"][f"{br.kind}:{br.term}"] += 1
         seen = {z[0] for z in (br.diag or {}).get("zones", [])
                 if isinstance(z, (tuple, list)) and z}

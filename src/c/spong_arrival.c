@@ -10,6 +10,7 @@
 #include "spong/spong_arrival.h"
 
 #include <float.h>
+#include <gmp.h>
 #include <math.h>
 #include <string.h>
 
@@ -39,6 +40,10 @@ typedef struct {
     double geometry_floor;
     int orders[2];
     spong_arrival_result *out;
+    spong_trace *trace;
+    spong_arrival_bridge_diagnostics *bridge;
+    spong_dense dense[2];
+    size_t generation, pushed_generation, source[2];
 } arrival;
 
 static double fmax3(double a, double b, double c) {
@@ -46,8 +51,73 @@ static double fmax3(double a, double b, double c) {
     return fmax(fmax(a, b), c);
 }
 
+/* Exact value of the path-integrated potential of the binary64 jet.
+ * This resolves subtraction roundoff only: coefficient rounding and the
+ * independent original-model geometry obligations remain unchanged. */
+static int exact_potential(const spong_jet *jet, const double z[2], mpq_t out) {
+    if (!isfinite(z[0]) || !isfinite(z[1])) return 0;
+    mpq_t a,b,row,power,coefficient,term,divisor;
+    mpq_inits(a,b,row,power,coefficient,term,divisor,NULL);
+    mpq_set_d(a,z[0]); mpq_set_d(b,z[1]);
+    mpq_set_ui(out,0,1); mpq_set(power,a);
+    int ok=1;
+    for (int i=0; i<jet->rows[0] && ok; ++i) {
+        mpq_set_ui(row,0,1);
+        for (size_t j=jet->n[0][i]; j-- > 0;) {
+            double c=jet->c[0][i][j];
+            if (!isfinite(c)) {ok=0; break;}
+            mpq_mul(row,row,b); mpq_set_d(coefficient,c);
+            mpq_add(row,row,coefficient);
+        }
+        mpq_mul(term,row,power); mpq_set_ui(divisor,(unsigned long)i+1,1);
+        mpq_div(term,term,divisor); mpq_add(out,out,term);
+        mpq_mul(power,power,a);
+    }
+    mpq_set(power,b);
+    if (jet->rows[1]>0) for(size_t j=0; j<jet->n[1][0] && ok; ++j) {
+        double c=jet->c[1][0][j];
+        if (!isfinite(c)) {ok=0; break;}
+        mpq_set_d(coefficient,c); mpq_mul(term,coefficient,power);
+        mpq_set_ui(divisor,(unsigned long)j+1,1); mpq_div(term,term,divisor);
+        mpq_add(out,out,term); mpq_mul(power,power,b);
+    }
+    mpq_clears(a,b,row,power,coefficient,term,divisor,NULL);
+    return ok;
+}
+
+static int bridge_decreases(arrival *s, const double z[2],
+                            const double next[2], double value, double next_value) {
+    if (!isfinite(next_value)) return 0;
+    double uncertainty=256.0*DBL_EPSILON*fmax(fabs(value),fabs(next_value));
+    if (fabs(next_value-value)>uncertainty) return next_value<value;
+    ++s->bridge->exact_loss_checks;
+    mpq_t before,after; mpq_inits(before,after,NULL);
+    int decreases=exact_potential(s->jet,z,before)
+        && exact_potential(s->jet,next,after) && mpq_cmp(after,before)<0;
+    mpq_clears(before,after,NULL);
+    if(decreases) ++s->bridge->exact_loss_decreases;
+    return decreases;
+}
+
 /* charts._append_resolved_point (see spong_potential.c for the capacity
  * semantics: past capacity the logical count keeps growing). */
+static void trace_vertex(arrival *s, size_t index, const double q[2]) {
+    if (!s->trace) return;
+    size_t source=SIZE_MAX;
+    for(int k=0;k<2;++k) {
+        if(s->dense[k].v[0]==1 && q[0]==s->dense[k].v[18]
+                && q[1]==s->dense[k].v[19]) {
+            if(s->generation!=s->pushed_generation) {
+                s->source[0]=spong_trace_push(s->trace,&s->dense[0]);
+                s->source[1]=spong_trace_push(s->trace,&s->dense[1]);
+                s->pushed_generation=s->generation;
+            }
+            source=s->source[k]; break;
+        }
+    }
+    spong_trace_vertex(s->trace,index,q[0],q[1],source,1.0);
+}
+
 static void append_resolved(arrival *s, const double q[2]) {
     SPONG_FP_EXACT
     if (s->n > 0 && s->n <= s->capacity) {
@@ -55,16 +125,20 @@ static void append_resolved(arrival *s, const double q[2]) {
         double scale = 1.0 + fmax(fmax(fabs(p[0]), fabs(p[1])),
                                   fmax(fabs(q[0]), fabs(q[1])));
         double floor_ = fmax(64.0*DBL_EPSILON*scale, s->geometry_floor);
-        if (hypot(q[0]-p[0], q[1]-p[1]) <= floor_) {
+        if (hypot(q[0]-p[0], q[1]-p[1]) <= floor_
+                && !(s->bridge && s->n == 1)) {
             s->points[2*(s->n-1)] = q[0];
             s->points[2*(s->n-1)+1] = q[1];
+            trace_vertex(s,s->n-1,q);
             return;
         }
     }
+    if (s->bridge && s->n == 1) s->bridge->anchor_retained++;
     if (s->n < s->capacity) {
         s->points[2*s->n] = q[0];
         s->points[2*s->n+1] = q[1];
     }
+    trace_vertex(s,s->n,q);
     s->n++;
 }
 
@@ -74,6 +148,7 @@ static void append_raw(arrival *s, const double q[2]) {
         s->points[2*s->n] = q[0];
         s->points[2*s->n+1] = q[1];
     }
+    trace_vertex(s,s->n,q);
     s->n++;
 }
 
@@ -91,19 +166,26 @@ static int segment_capture(double a0, double b0, double a1, double b1,
 }
 
 /* charts._full_and_two_half on the raw centered field. */
-static int full_and_two_half(const spong_jet *jet, const double z[2],
+static int full_and_two_half(arrival *s, const double z[2],
                              double h, int order,
                              double full[2], double mid[2], double end[2]) {
     SPONG_FP_EXACT
+    const spong_jet *jet=s->jet; ++s->generation;
     int ok_full = spong_jet_raw_step(jet, z, h, order, full);
-    int ok_mid = spong_jet_raw_step(jet, z, 0.5*h, order, mid);
+    int ok_mid = spong_irk2_step_recorded((void *)jet, spong_jet_raw_fj, z, 0.5*h, order, mid, s->trace ? &s->dense[0] : NULL);
     if (!ok_full) { full[0] = full[1] = NAN; }
     if (!ok_mid) { mid[0] = mid[1] = NAN; }
     end[0] = mid[0]; end[1] = mid[1];
     if (isfinite(mid[0]) && isfinite(mid[1])) {
-        if (!spong_jet_raw_step(jet, mid, 0.5*h, order, end)) {
+        if (!spong_irk2_step_recorded((void *)jet, spong_jet_raw_fj, mid, 0.5*h, order, end, s->trace ? &s->dense[1] : NULL)) {
             end[0] = end[1] = NAN;
         }
+    }
+    for(int k=0;k<2;++k) {
+        s->dense[k].v[1]=3;
+        s->dense[k].v[22]=s->req->center_a; s->dense[k].v[23]=s->req->center_b;
+        s->dense[k].v[18]+=s->req->center_a;
+        s->dense[k].v[19]+=s->req->center_b;
     }
     return isfinite(full[0]) && isfinite(full[1])
         && isfinite(mid[0]) && isfinite(mid[1])
@@ -114,7 +196,7 @@ static int full_and_two_half(const spong_jet *jet, const double z[2],
  * acceptance path has established that its proposed step crosses it.  The
  * independent variable here already IS unnormalized gradient-flow time, so
  * the elapsed clock is exactly dt; only the loss event needs localization. */
-static int clock_trial(const arrival *s, const double z[2], double dt,
+static int clock_trial(arrival *s, const double z[2], double dt,
                        int order,
                        double value, double finish_r, double turn_reject,
                        int have_last, const double last_direction[2],
@@ -122,7 +204,7 @@ static int clock_trial(const arrival *s, const double z[2], double dt,
                        double *next_value) {
     SPONG_FP_EXACT
     double full[2];
-    if (!full_and_two_half(s->jet, z, -dt, order, full, mid, half))
+    if (!full_and_two_half(s, z, -dt, order, full, mid, half))
         return 0;
     double chord = hypot(half[0]-z[0], half[1]-z[1]);
     *richardson = hypot(full[0]-half[0], full[1]-half[1]);
@@ -211,21 +293,36 @@ static void run(arrival *s) {
         double zn[2] = {0, 0}, accepted_mid[2] = {0, 0};
         double trial_dt = dt;
         int accepted_boundary = 0;  /* 1 start, 2 stop */
-        for (int retry = 0; retry < 16 && !have; retry++) {
+        double stalled_dt = 0.0;
+        for (int retry = 0; retry < (s->bridge ? 64 : 16) && !have; retry++) {
+            int zero_trials = 0;
             double h = -trial_dt;
             for (int k = 0; k < 2; k++) {
                 int order = s->orders[k];
                 if (order == 8) o->gl8_attempted++;
                 double full[2], mid[2], half[2];
-                if (!full_and_two_half(jet, z, h, order, full, mid, half))
+                if (!full_and_two_half(s, z, h, order, full, mid, half)) {
+                    if(s->bridge) s->bridge->step_failures++;
                     continue;
+                }
                 double chord = hypot(half[0]-z[0], half[1]-z[1]);
                 double richardson = hypot(full[0]-half[0], full[1]-half[1]);
                 double next_value = spong_jet_potential(jet, half[0], half[1]);
                 double tolerance = 2e-7*fmax3(chord, 0.05*finish_r, 1e-13);
-                if (!isfinite(next_value) || next_value >= value
-                        || richardson > tolerance)
+                if(s->bridge && half[0]==z[0] && half[1]==z[1]) {
+                    s->bridge->zero_progress++; zero_trials++;
+                    s->bridge->loss_rejections++;
                     continue;
+                }
+                if (s->bridge ? !bridge_decreases(s,z,half,value,next_value)
+                              : (!isfinite(next_value) || next_value >= value)) {
+                    if(s->bridge) s->bridge->loss_rejections++;
+                    continue;
+                }
+                if(richardson > tolerance) {
+                    if(s->bridge) s->bridge->richardson_rejections++;
+                    continue;
+                }
                 double d0 = half[0]-z[0], d1 = half[1]-z[1];
                 if (have_last && chord > 0.0) {
                     double cosine = (d0*last_direction[0]+d1*last_direction[1])
@@ -247,6 +344,7 @@ static void run(arrival *s) {
                      * section.  Bisect in raw time with the same pure order
                      * and the same trajectory acceptance tests. */
                     double lo = 0.0, hi = trial_dt, best_dt = trial_dt;
+                    spong_dense best_dense[2]; memcpy(best_dense,s->dense,sizeof best_dense);
                     double best_half[2] = {half[0], half[1]};
                     double best_mid[2] = {mid[0], mid[1]};
                     double best_richardson = richardson;
@@ -267,6 +365,7 @@ static void run(arrival *s) {
                         if (event_value <= boundary_value) {
                             hi = event_dt;
                             best_dt = event_dt;
+                            memcpy(best_dense,s->dense,sizeof best_dense);
                             best_half[0] = event_half[0];
                             best_half[1] = event_half[1];
                             best_mid[0] = event_mid[0];
@@ -280,6 +379,7 @@ static void run(arrival *s) {
                         }
                     }
                     trial_dt = best_dt;
+                    memcpy(s->dense,best_dense,sizeof best_dense); ++s->generation;
                     half[0] = best_half[0]; half[1] = best_half[1];
                     mid[0] = best_mid[0]; mid[1] = best_mid[1];
                     richardson = best_richardson;
@@ -294,7 +394,21 @@ static void run(arrival *s) {
                 have = 1;
                 break;
             }
-            if (!have) { trial_dt *= 0.5; o->rejected++; }
+            if (!have) {
+                o->rejected++;
+                /* Halving a step that cannot move either trial only loses
+                 * more resolution. Probe upward within the existing cap;
+                 * never cross back into a known stalled interval. */
+                if (s->bridge && zero_trials==2) {
+                    stalled_dt=fmax(stalled_dt,trial_dt);
+                    double larger=fmin(dt_cap,4.0*trial_dt);
+                    if (!(isfinite(larger) && larger>trial_dt)) break;
+                    trial_dt=larger; s->bridge->time_step_grows++;
+                } else {
+                    trial_dt *= 0.5;
+                    if (s->bridge && trial_dt<=stalled_dt) break;
+                }
+            }
         }
         if (!have) { term = SPONG_ARR_STEP_FAILURE; break; }
         double previous[2] = {z[0], z[1]};
@@ -334,18 +448,20 @@ static void run(arrival *s) {
     finish(s, term, physical);
 }
 
-int spong_centered_arrival(
+static int centered_arrival_impl(
     const spong_jet *jet,
     const spong_arrival_request *request,
     double *points, size_t point_capacity,
-    spong_arrival_result *result)
+    spong_arrival_result *result, spong_trace *trace,
+    spong_arrival_bridge_diagnostics *bridge)
 {
     SPONG_FP_EXACT
     if (jet == NULL || request == NULL || result == NULL) return -1;
     memset(result, 0, sizeof(*result));
     result->finish_radius = NAN;
     result->spectral_ratio = NAN;
-    arrival s;
+    arrival s; memset(&s,0,sizeof s); s.trace=trace; s.bridge=bridge;
+    if(bridge) memset(bridge,0,sizeof(*bridge));
     s.jet = jet;
     s.req = request;
     s.points = points;
@@ -365,4 +481,23 @@ int spong_centered_arrival(
     s.out = result;
     run(&s);
     return result->term;
+}
+
+int spong_centered_arrival_recorded(const spong_jet *jet,
+    const spong_arrival_request *request, double *points, size_t capacity,
+    spong_arrival_result *result, spong_trace *trace) {
+    return centered_arrival_impl(jet,request,points,capacity,result,trace,NULL);
+}
+int spong_centered_arrival_bridge_recorded(const spong_jet *jet,
+    const spong_arrival_request *request, double *points, size_t capacity,
+    spong_arrival_result *result, spong_trace *trace,spong_arrival_bridge_diagnostics *diagnostics) {
+    if(!diagnostics || !request || request->clock || !trace) return -1;
+    memset(diagnostics,0,sizeof(*diagnostics));
+    return centered_arrival_impl(jet,request,points,capacity,result,trace,diagnostics);
+}
+
+int spong_centered_arrival(const spong_jet *jet,
+    const spong_arrival_request *request, double *points, size_t capacity,
+    spong_arrival_result *result) {
+    return spong_centered_arrival_recorded(jet,request,points,capacity,result,NULL);
 }

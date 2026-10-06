@@ -3029,10 +3029,11 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     int flow;
     int centered_available = 0;
     int chart_order = 6;
+    int recording = 0;
     Py_ssize_t max_steps;
-    if (!PyArg_ParseTuple(args, "OdddiOdOddOn|ii", &kobj, &C, &b0, &w0, &flow,
+    if (!PyArg_ParseTuple(args, "OdddiOdOddOn|iii", &kobj, &C, &b0, &w0, &flow,
                           &targets_obj, &cap_r, &box_obj, &ds, &ds0, &gate_obj,
-                          &max_steps, &centered_available, &chart_order)) {
+                          &max_steps, &centered_available, &chart_order, &recording)) {
         return NULL;
     }
     if (chart_order != 4 && chart_order != 6) {
@@ -3088,12 +3089,14 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
                                   C};
 
     spong_continue_result res;
+    spong_trace trace = {0};
     double *points = NULL;
     size_t cap = 4096;
     int term = SPONG_CONT_NEED_CAPACITY;
     for (int attempt = 0; attempt < 3; attempt++) {
         double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
         if (grown == NULL) {
+            free(trace.records);
             PyMem_Free(points);
             PyMem_Free(targets);
             PyMem_Free(box);
@@ -3101,10 +3104,11 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
             return PyErr_NoMemory();
         }
         points = grown;
-        Py_BEGIN_ALLOW_THREADS term = spong_continue_curve(
+        trace.count = 0;
+        Py_BEGIN_ALLOW_THREADS term = spong_continue_curve_recorded(
             &field, b0, w0, flow, targets, (size_t)(n_targets_flat / 2), cap_r, box, ds,
             ds0, gate, (size_t)max_steps, centered_available, chart_order, points, cap,
-            &res);
+            &res, recording ? &trace : NULL);
         Py_END_ALLOW_THREADS if (term != SPONG_CONT_NEED_CAPACITY) break;
         cap = res.n_points + 64;
     }
@@ -3113,16 +3117,21 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     PyMem_Free(gate);
 
     if (term == SPONG_CONT_NEED_CAPACITY) {
+        free(trace.records);
         PyMem_Free(points);
         PyErr_SetString(PyExc_RuntimeError,
                         "continue_curve did not settle on a point capacity");
         return NULL;
     }
+    if (trace.failed) { free(trace.records); PyMem_Free(points); return PyErr_NoMemory(); }
+    PyObject *trace_blob = recording ? PyBytes_FromStringAndSize(
+        (const char *)trace.records, (Py_ssize_t)(trace.count*sizeof(spong_dense))) : NULL;
+    free(trace.records);
+    if (recording && !trace_blob) { PyMem_Free(points); return NULL; }
     PyObject *blob = PyBytes_FromStringAndSize(
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
-    if (blob == NULL)
-        return NULL;
+    if (blob == NULL) { Py_XDECREF(trace_blob); return NULL; }
     /* Diagnostics under the reference's engine_diag names: floor-ladder
      * rescue counts, and the step_failure record on that abort. */
     static const char *rescue_names[SPONG_RESCUE_COUNT] = {
@@ -3132,8 +3141,15 @@ static PyObject *native_continue_curve(PyObject *self, PyObject *args) {
     };
     PyObject *diag = PyDict_New();
     if (diag == NULL) {
+        Py_XDECREF(trace_blob);
         Py_DECREF(blob);
         return NULL;
+    }
+    if (recording) {
+        if (PyDict_SetItemString(diag, "trajectory_trace", trace_blob) < 0) {
+            Py_DECREF(trace_blob); Py_DECREF(diag); Py_DECREF(blob); return NULL;
+        }
+        Py_DECREF(trace_blob);
     }
     for (int i = 0; i < SPONG_RESCUE_COUNT; i++) {
         if (res.rescues[i] == 0)
@@ -3187,12 +3203,13 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     double clock_rtol = 0.0, clock_atol = 0.0;
     double clock_start_level = NAN, clock_stop_level = NAN;
     int mode, primary_order, clock = 0;
+    int recording = 0;
     Py_ssize_t n_levels, max_steps;
-    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi|didddd", &kobj, &C, &mode, &a0, &b0,
+    if (!PyArg_ParseTuple(args, "OdiddOdOdnnOdi|diddddi", &kobj, &C, &mode, &a0, &b0,
                           &targets_obj, &cap_r, &box_obj, &ds, &n_levels, &max_steps,
                           &critical_obj, &fraction, &primary_order, &stop_level, &clock,
                           &clock_rtol, &clock_atol, &clock_start_level,
-                          &clock_stop_level)) {
+                          &clock_stop_level, &recording)) {
         return NULL;
     }
     if (!PyObject_TypeCheck(kobj, &KernelType)) {
@@ -3250,12 +3267,14 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     req.clock_stop_level = clock_stop_level;
 
     spong_potential_result res;
+    spong_trace trace = {0};
     double *points = NULL;
     size_t cap = 4096;
     int term = SPONG_POT_NEED_CAPACITY;
     for (int attempt = 0; attempt < 3; attempt++) {
         double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
         if (grown == NULL) {
+            free(trace.records);
             PyMem_Free(points);
             PyMem_Free(targets);
             PyMem_Free(box);
@@ -3263,8 +3282,9 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
             return PyErr_NoMemory();
         }
         points = grown;
+        trace.count = 0;
         Py_BEGIN_ALLOW_THREADS term =
-            spong_potential_rate_segment(&field, &req, points, cap, &res);
+            spong_potential_rate_segment_recorded(&field, &req, points, cap, &res, recording ? &trace : NULL);
         Py_END_ALLOW_THREADS if (term != SPONG_POT_NEED_CAPACITY) break;
         cap = res.n_points + 64;
     }
@@ -3272,22 +3292,28 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
     PyMem_Free(box);
     PyMem_Free(critical);
     if (term < 0) {
+        free(trace.records);
         PyMem_Free(points);
         PyErr_SetString(PyExc_ValueError, "potential_rate_segment: bad request");
         return NULL;
     }
     if (term == SPONG_POT_NEED_CAPACITY) {
+        free(trace.records);
         PyMem_Free(points);
         PyErr_SetString(PyExc_RuntimeError,
                         "potential_rate_segment did not settle on a capacity");
         return NULL;
     }
+    if (trace.failed) { free(trace.records); PyMem_Free(points); return PyErr_NoMemory(); }
+    PyObject *trace_blob = recording ? PyBytes_FromStringAndSize(
+        (const char *)trace.records, (Py_ssize_t)(trace.count*sizeof(spong_dense))) : NULL;
+    free(trace.records);
+    if (recording && !trace_blob) { PyMem_Free(points); return NULL; }
     PyObject *blob = PyBytes_FromStringAndSize(
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
-    if (blob == NULL)
-        return NULL;
-    return Py_BuildValue(
+    if (blob == NULL) { Py_XDECREF(trace_blob); return NULL; }
+    PyObject *out = Py_BuildValue(
         "(iddiddddKKKKKKdddddKKiiN)", res.term, res.a_end, res.b_end, res.captured,
         res.captured_a, res.captured_b, res.event_level, res.level_step,
         (unsigned long long)res.accepted, (unsigned long long)res.rejected,
@@ -3298,6 +3324,13 @@ static PyObject *native_potential_rate_segment(PyObject *self, PyObject *args) {
         res.max_clock_error_ratio, (unsigned long long)res.clock_rejected,
         (unsigned long long)res.clock_steps, res.clock_started, res.clock_available,
         blob);
+    if (!recording) return out;
+    if (!out) { Py_DECREF(trace_blob); return NULL; }
+    PyObject *extra = PyTuple_Pack(1, trace_blob);
+    Py_DECREF(trace_blob);
+    if (!extra) { Py_DECREF(out); return NULL; }
+    PyObject *joined = PySequence_Concat(out, extra);
+    Py_DECREF(out); Py_DECREF(extra); return joined;
 }
 
 /*
@@ -3317,14 +3350,17 @@ static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
     spong_arrival_request req;
     memset(&req, 0, sizeof(req));
     req.clock_start_value = req.clock_stop_value = NAN;
+    int recording = 0, bridge = 0;
+    spong_arrival_bridge_diagnostics bd;
     Py_ssize_t max_steps;
-    if (!PyArg_ParseTuple(args, "Odddddddddndi|iidd", &kobj, &req.a0, &req.b0, &req.at,
+    if (!PyArg_ParseTuple(args, "Odddddddddndi|iiddii", &kobj, &req.a0, &req.b0, &req.at,
                           &req.bt, &req.center_a, &req.center_b, &req.slow, &req.fast,
                           &req.cap_r, &max_steps, &req.turn_reject, &req.primary_order,
                           &req.clock, &req.clock_started, &req.clock_start_value,
-                          &req.clock_stop_value)) {
+                          &req.clock_stop_value, &recording, &bridge)) {
         return NULL;
     }
+    if(bridge && (!recording || req.clock)) {PyErr_SetString(PyExc_ValueError,"bridge requires recording and clock disabled");return NULL;}
     if (!PyObject_TypeCheck(kobj, &LocalKernelType)) {
         PyErr_SetString(PyExc_TypeError, "first argument must be a LocalKernel");
         return NULL;
@@ -3332,44 +3368,72 @@ static PyObject *native_centered_arrival(PyObject *self, PyObject *args) {
     req.max_steps = max_steps < 0 ? 0 : (size_t)max_steps;
     const spong_jet *jet = &((LocalKernel *)kobj)->jet;
     spong_arrival_result res;
+    spong_trace trace = {0};
     double *points = NULL;
     size_t cap = 1024;
     int term = SPONG_ARR_NEED_CAPACITY;
     for (int attempt = 0; attempt < 3; attempt++) {
         double *grown = (double *)PyMem_Realloc(points, cap * 2 * sizeof(double));
         if (grown == NULL) {
+            free(trace.records);
             PyMem_Free(points);
             return PyErr_NoMemory();
         }
         points = grown;
+        trace.count = 0;
         Py_BEGIN_ALLOW_THREADS term =
-            spong_centered_arrival(jet, &req, points, cap, &res);
+            bridge ? spong_centered_arrival_bridge_recorded(jet, &req, points, cap, &res, &trace, &bd)
+                   : spong_centered_arrival_recorded(jet, &req, points, cap, &res, recording ? &trace : NULL);
         Py_END_ALLOW_THREADS if (term != SPONG_ARR_NEED_CAPACITY) break;
         cap = res.n_points + 64;
     }
     if (term < 0) {
+        free(trace.records);
         PyMem_Free(points);
         PyErr_SetString(PyExc_ValueError, "centered_arrival: bad request");
         return NULL;
     }
     if (term == SPONG_ARR_NEED_CAPACITY) {
+        free(trace.records);
         PyMem_Free(points);
         PyErr_SetString(PyExc_RuntimeError,
                         "centered_arrival did not settle on a capacity");
         return NULL;
     }
+    if (trace.failed) { free(trace.records); PyMem_Free(points); return PyErr_NoMemory(); }
+    PyObject *trace_blob = recording ? PyBytes_FromStringAndSize(
+        (const char *)trace.records, (Py_ssize_t)(trace.count*sizeof(spong_dense))) : NULL;
+    free(trace.records);
+    if (recording && !trace_blob) { PyMem_Free(points); return NULL; }
     PyObject *blob = PyBytes_FromStringAndSize(
         (const char *)points, (Py_ssize_t)(res.n_points * 2 * sizeof(double)));
     PyMem_Free(points);
-    if (blob == NULL)
-        return NULL;
-    return Py_BuildValue(
+    if (blob == NULL) { Py_XDECREF(trace_blob); return NULL; }
+    PyObject *out = Py_BuildValue(
         "(iddKKKKKddddKiiN)", res.term, res.a_end, res.b_end,
         (unsigned long long)res.accepted, (unsigned long long)res.rejected,
         (unsigned long long)res.turn_rejected, (unsigned long long)res.gl8_attempted,
         (unsigned long long)res.gl8_accepted, res.max_richardson, res.finish_radius,
         res.spectral_ratio, res.tau, (unsigned long long)res.clock_steps,
         res.clock_started, res.clock_available, blob);
+    if (!recording) return out;
+    if (!out) { Py_DECREF(trace_blob); return NULL; }
+    PyObject *diag = bridge ? Py_BuildValue("{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "step_failures",(unsigned long long)bd.step_failures,
+        "loss_rejections",(unsigned long long)bd.loss_rejections,
+        "richardson_rejections",(unsigned long long)bd.richardson_rejections,
+        "zero_progress",(unsigned long long)bd.zero_progress,
+        "anchor_retained",(unsigned long long)bd.anchor_retained,
+        "exact_loss_checks",(unsigned long long)bd.exact_loss_checks,
+        "exact_loss_decreases",(unsigned long long)bd.exact_loss_decreases,
+        "time_step_grows",(unsigned long long)bd.time_step_grows) : NULL;
+    if(bridge && !diag) {Py_DECREF(trace_blob);Py_DECREF(out);return NULL;}
+    PyObject *extra = bridge ? PyTuple_Pack(2, trace_blob, diag) : PyTuple_Pack(1, trace_blob);
+    Py_XDECREF(diag);
+    Py_DECREF(trace_blob);
+    if (!extra) { Py_DECREF(out); return NULL; }
+    PyObject *joined = PySequence_Concat(out, extra);
+    Py_DECREF(out); Py_DECREF(extra); return joined;
 }
 
 static PyObject *native_orient2d_exact(PyObject *self, PyObject *args) {
@@ -3397,6 +3461,8 @@ static PyObject *native_chord_rejections(PyObject *self, PyObject *args) {
 }
 
 #include "_native_rheostat.inc"
+#include "_native_analytic_arrival.inc"
+#include "_native_precision_bridge.inc"
 
 static PyObject *native_local_solve2(PyObject *self, PyObject *args) {
     (void)self;
@@ -3411,6 +3477,9 @@ static PyObject *native_local_solve2(PyObject *self, PyObject *args) {
 }
 
 static PyMethodDef module_methods[] = {
+    {"arrival_chart", native_arrival_chart, METH_VARARGS, "Build an immutable GMP minimum-entry chart."},
+    {"precision_bridge", native_precision_bridge, METH_VARARGS, "Propose high-precision Radau bridge cubics."},
+    {"arrival_match", native_arrival_match, METH_VARARGS, "Match and evaluate a native analytic arrival proposal."},
     {"local_solve2", native_local_solve2, METH_VARARGS,
      "Native equilibrated, pivoted 2x2 solve with a backward-error check."},
     {"chord_rejections", native_chord_rejections, METH_VARARGS,

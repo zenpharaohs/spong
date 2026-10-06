@@ -10,7 +10,7 @@ jobs:
           python-version: "3.12"
       - run: sudo apt-get update
       - run: sudo apt-get install -y libgmp-dev
-      - run: pip install -e . pytest
+      - run: pip install -e '.[dev]'
       - name: Standalone C ABI
         run: |
           cc -std=c99 -Wall -Wextra -Werror -Iinclude \

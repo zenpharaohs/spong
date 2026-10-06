@@ -73,6 +73,26 @@ typedef struct {
     int      clock_available;
 } spong_arrival_result;
 
+/* Opt-in checked-handoff bridge. Preserves the incoming anchor; uses an
+ * exact comparison of the rounded-jet potential for ambiguous loss changes;
+ * probes larger timesteps when both orders round to zero movement (64 retry
+ * limit). Geometry/Richardson/turn admission thresholds are unchanged.
+ * Requires non-NULL trace/diagnostics and clock==0, otherwise returns -1.
+ * Caller must independently check the retained path against the original
+ * model: exact loss here neither repairs rounded coefficients nor certifies
+ * the trajectory. Existing request/result layouts and entry points remain.
+ * Trial counters include rejected orders; time_step_grows counts retries;
+ * anchor_retained counts the first append after the original input. */
+typedef struct {
+    uint64_t step_failures, loss_rejections, richardson_rejections;
+    uint64_t zero_progress, anchor_retained;
+    uint64_t exact_loss_checks, exact_loss_decreases, time_step_grows;
+} spong_arrival_bridge_diagnostics;
+SPONG_API int spong_centered_arrival_bridge_recorded(
+    const spong_jet *jet, const spong_arrival_request *request,
+    double *points, size_t point_capacity, spong_arrival_result *result,
+    spong_trace *trace, spong_arrival_bridge_diagnostics *diagnostics);
+
 /* Runs the arrival.  Returns result->term, or -1 for a malformed request.
  * points receives packed (a, b) pairs, physical coordinates. */
 SPONG_API int spong_centered_arrival(
@@ -80,6 +100,12 @@ SPONG_API int spong_centered_arrival(
     const spong_arrival_request *request,
     double *points, size_t point_capacity,
     spong_arrival_result *result);
+
+SPONG_API int spong_centered_arrival_recorded(
+    const spong_jet *jet,
+    const spong_arrival_request *request,
+    double *points, size_t point_capacity,
+    spong_arrival_result *result, spong_trace *trace);
 
 #ifdef __cplusplus
 }

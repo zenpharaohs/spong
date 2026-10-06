@@ -378,3 +378,140 @@ finite-difference refinement, conditioning checks, line search and convergence.
 `spong_section.h` adds GL8 loss-section event tracing with step comparison,
 bracketed fractional integration and explicit refusals. Both have standalone
 C tests and Python binding tests. Neither API produces a topology certificate.
+
+## Observational trajectory records
+
+The additive `spong_continue_curve_recorded`,
+`spong_potential_rate_segment_recorded`, `spong_centered_arrival_recorded`,
+`spong_field_step_recorded` and `spong_irk2_step_recorded` APIs retain accepted
+smooth representations. Existing entry points and result structs are unchanged.
+See [native_trace.md](native_trace.md) for schema 1, ownership, allocation failure,
+rescue/trim semantics and the experimental independent checker. ABI 11 is
+unchanged; no new production qualification threshold is introduced.
+
+## Analytic minimum arrival proposals
+
+`include/spong/spong_analytic_arrival.h` exposes an additive C99 API:
+
+- `spong_arrival_chart_create` builds an immutable minimum-entry chart from
+  exact rational gradient/Hessian strings and high-precision decimal spectral
+  data. Order is 2–12 and precision is 50–100 decimal digits.
+- `spong_arrival_chart_match` matches both incoming modal amplitudes and
+  returns exponent/coefficient strings, sampling parameters, points and the
+  analytic endpoint representation. It takes rational center strings so the
+  translation is performed before any binary64 rounding.
+- `spong_arrival_chart_destroy` and `spong_analytic_arrival_destroy` release
+  owned resources. The caller initializes requests; result structs are zeroed
+  by the functions. Failed creation sets the chart pointer to NULL. A match
+  failure destroys and zeroes its partial result.
+
+The chart is immutable and can be shared across threads; matches allocate
+their own scratch space. All numerical construction, amplitude matching and
+display evaluation runs in the C core with GMP and per-object precision.
+No Python or new arithmetic library is required by the C API. Public structs
+do not expose GMP objects. Strings in returned results use ordinary malloc
+ownership through the destroy function; callers must not free individual
+members and then destroy the result again.
+
+The nonresonant Poincare / slow-Frobenius proposal retains the stiffness
+mode switch at 1e4. Its native divisor
+policy is now `componentwise-v1`: each modal gap is divided by the sum of
+the two positive terms being subtracted. It must exceed `10**(20-p)` for
+requested decimal precision `p`. This reserves 20 digits against spectral
+cancellation without comparing a slow divisor against the unrelated fast
+scale. Zero modal gaps remain unsupported.
+
+Working precision adds the estimated spectral condition's binary exponent
+to `ceil(p*log2(10))+64`, plus two norm-conversion guard bits, with a 4096-bit
+budget cap. Each symmetric homological system uses row equilibration and
+partial pivoting. Its original-system componentwise backward error and
+infinity-norm condition produce a forward-error indicator, required to be
+at most 1e-20. These are floating numerical indicators, not interval bounds.
+`SPONG_ARRIVAL_PRECISION` (-6) reports insufficient declared spectral
+precision or working-bit budget; `SPONG_ARRIVAL_SOLVE` (-7) reports an
+unresolved homological solve. Existing explicit errors remain available.
+
+`spong_arrival_chart_inspect` returns owned conditioning strings and the
+budgeted `working_bits` through `spong_arrival_conditioning`; GMP may round
+allocated precision upward. Release them with
+`spong_arrival_conditioning_destroy`. Existing request/result layouts are
+unchanged. The existing `divisor_margin` field now denotes the minimum
+componentwise relative gap, rather than the former globally scaled margin.
+Python evidence exports these diagnostics under `conditioning`.
+
+Matching now uses condition-checked, pivoted Jacobian solves. A failed
+24-update fast path restarts a bounded damped inverse continuation from the
+chart origin to the original entry. The additive
+`spong_arrival_chart_match_inspect` API returns per-call diagnostics through
+`spong_arrival_matching`; release its strings with
+`spong_arrival_matching_destroy`, including on refusal. The original match
+API and result layout remain available unchanged. Python records diagnostics
+under `matching`, also attached to refusal exceptions. See
+`docs/conditioned_arrival_matching.md` for work limits and evidence scope.
+
+No resonant or Hadamard arrival fallback is introduced. The Python reference
+constructor retains its historical guard, so native admissions can now
+exceed its accepted set. The independent sampled geometry and endpoint
+checker still scrutinizes every proposed representation against the original
+model. See `docs/conditioned_analytic_arrival.md` for qualification and limits.
+
+The returned point array includes the target as an analytic endpoint, not a
+finite chord. Its final parameter is implicit infinity (the Python adapter
+uses None). Parameters are valid only for the preceding `point_count-1`
+points. Display evaluation uses a scaled Taylor exponential; negligible fast
+terms beyond argument 10000 may round to zero, with coefficient magnitude
+restricted below 2^3320. Retained coefficient/exponent evidence is not
+tail-truncated. Neither successful C return nor these displayed vertices is
+a certificate or a uniform error bound.
+
+Python exposes the checked path through
+`portrait.compute(..., arrival_policy='checked_native')` and
+`portrait.certified_compute(..., arrival_policy='checked_native')`.
+`arrival_series.refine_capture` uses checked native proposals by default;
+`backend='python'` retains the original unchecked experimental oracle.
+The bounded Python cache retains at most 128 immutable native charts keyed by
+all exact/spectral construction inputs. The frontend-independent C API lets
+other callers own and reuse their charts directly.
+
+Checked dispatch preserves the original prefix, checks geometry and minimum
+attachment independently, and clears inherited branch certificates. A refused
+terminal proposal becomes `abort_analytic_arrival` with its reason and proposed
+target retained in diagnostics. The unaccepted terminal chord is removed, and
+the topology audit refuses that aborted branch. Whole-portrait defaults remain
+`arrival_policy='legacy'` while entry-region/fallback coverage is developed;
+this mode does not promote the experimental sampled policy to certification.
+
+The checked Python path can also retain a recorded native raw-flow prefix
+before a later analytic entry. `native_arrival.checked_path` orchestrates the
+existing native APIs and returns both trajectory pieces only after independent
+prefix, tail, attachment and join checks. No C ABI changes are needed for this
+handoff. The original incoming anchor is preserved exactly; the raw capture
+connector is excluded. See `docs/checked_arrival_handoff.md` for bounded search,
+evidence transport and qualification.
+
+### Resolution-aware arrival bridge
+
+`spong_centered_arrival_bridge_recorded` is an opt-in alternative to the
+legacy centered arrival. It requires recording, disabled clock mode, and a
+`spong_arrival_bridge_diagnostics` output. It preserves the incoming vertex,
+uses exact rounded-jet potential comparisons for ambiguous loss changes,
+and probes bounded larger steps when both orders produce no movement.
+Existing arrival request/result layouts and entry points are unchanged.
+The retained trace still requires independent original-model geometry checks;
+this API does not certify an arrival. See `native_arrival_bridge.md` for
+policy bounds, counter meanings, and validation.
+
+
+### Experimental precision-aware stiff bridge
+
+`spong_precision_bridge` accepts an exact rational gradient translated around
+the original input, spectral-rate strings and bounded precision/step requests.
+It runs a GMP Radau-IIA solver and exports owned decimal cubic coefficients;
+release them with `spong_precision_bridge_destroy`. All exported paths remain
+proposals requiring independent original-model checks.
+
+`spong_arrival_chart_match_exact_inspect` adds exact rational entry coordinates
+to analytic inverse matching; the binary64 start supplies display coordinates.
+Existing match APIs retain their original behavior. See
+`precision_native_bridge.md` for construction bounds, experimental scope,
+and complete qualification results.

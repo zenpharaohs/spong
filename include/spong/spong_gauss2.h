@@ -19,6 +19,7 @@
 #include <stddef.h>
 
 #include "spong/spong_resolution.h"
+#include "spong/spong_trace.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -122,6 +123,15 @@ SPONG_API int spong_normalized_step_clock(
 SPONG_API int spong_potential_step_clock(
     const spong_field *field, const double z[2], double h, int order,
     double out[2], double *tau);
+
+SPONG_API int spong_irk2_step_recorded(void *ctx, spong_vec_fj fj,
+    const double z[2], double h, int order, double out[2], spong_dense *dense);
+
+/* Same solve, with its converged collocation stages retained. potential is
+ * 0 for normalized flow, 1 for loss-rate flow; tau may be NULL. */
+SPONG_API int spong_field_step_recorded(const spong_field *field,
+    int potential, const double z[2], double h, int order, double out[2],
+    double *tau, spong_dense *dense);
 
 #ifdef __cplusplus
 }

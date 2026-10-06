@@ -302,7 +302,7 @@ static double fast_floor(const spong_continue_field *f, double w, double b) {
  * what Kernel.slow_step_gl4 / fast_step_gl4 call): the floor ladder's first
  * rung.  Fused, as _native.c is built. */
 static double gl4_step(const spong_continue_field *ctx, FJ fj, FLOOR fl,
-                       double x, double y, double h) {
+                       double x, double y, double h, spong_dense *dense) {
     SPONG_FP_FUSED
     const double c1 = 0.5 - SQRT3 / 6.0;
     const double c2 = 0.5 + SQRT3 / 6.0;
@@ -352,11 +352,21 @@ static double gl4_step(const spong_continue_field *ctx, FJ fj, FLOOR fl,
         }
     }
     if (!converged) return NAN;
+    if (dense) {
+        memset(dense, 0, sizeof(*dense));
+        dense->v[0]=1; dense->v[2]=4; dense->v[3]=h;
+        dense->v[4]=x; dense->v[5]=y;
+        double nodes[] = {c1,c2}, stages[] = {K1,K2};
+        for (int i=0;i<2;++i) {
+            dense->v[6+2*i]=1.0; dense->v[7+2*i]=stages[i];
+            dense->v[14+i]=nodes[i];
+        }
+    }
     return y + h * 0.5 * (K1 + K2);
 }
 
 static double gl6_step(const spong_continue_field *ctx, FJ fj, FLOOR fl,
-                       double x, double y, double h) {
+                       double x, double y, double h, spong_dense *dense) {
     SPONG_FP_FUSED
     const double c1 = 0.5 - SQRT15 / 10.0;
     const double c2 = 0.5;
@@ -465,6 +475,16 @@ static double gl6_step(const spong_continue_field *ctx, FJ fj, FLOOR fl,
         }
     }
     if (!converged) return NAN;
+    if (dense) {
+        memset(dense, 0, sizeof(*dense));
+        dense->v[0]=1; dense->v[2]=6; dense->v[3]=h;
+        dense->v[4]=x; dense->v[5]=y;
+        double nodes[] = {c1,c2,c3}, stages[] = {K1,K2,K3};
+        for (int i=0;i<3;++i) {
+            dense->v[6+2*i]=1; dense->v[7+2*i]=stages[i];
+            dense->v[14+i]=nodes[i];
+        }
+    }
     return y + h * (5.0 / 18.0 * K1 + 4.0 / 9.0 * K2 + 5.0 / 18.0 * K3);
 }
 
@@ -499,14 +519,14 @@ static int segment_capture(double a0, double b0, double a1, double b1,
  * rescue index taken, or -1. */
 static int plane_step(const spong_continue_field *f, const spong_field *gf,
                       int flow, double b_prev, double w_prev, double chord,
-                      double *b_new, double *w_new) {
+                      double *b_new, double *w_new, spong_dense *dense) {
     SPONG_FP_EXACT
     static const int orders[3] = { 8, 6, 4 };
     const double eps = DBL_EPSILON;
     for (int oi = 0; oi < 3; oi++) {
         double a_prev = a_star(f, b_prev) + w_prev;
         double z[2] = { a_prev, b_prev }, out[2];
-        if (!spong_normalized_step(gf, z, -flow * chord, orders[oi], out))
+        if (!spong_field_step_recorded(gf, 0, z, -flow * chord, orders[oi], out, NULL, dense))
             continue;
         double a_try = out[0], b_try = out[1];
         if (!(isfinite(a_try) && isfinite(b_try))) continue;
@@ -541,6 +561,7 @@ static int plane_step(const spong_continue_field *f, const spong_field *gf,
         } else { overflow = 1; }                                          \
         prev0_a = prev1_a; prev0_b = prev1_b;                             \
         prev1_a = (A_);    prev1_b = (B_);                                \
+        spong_trace_vertex(trace, n_pts, (A_), (B_), source_id, 1.0); \
         n_pts++;                                                          \
     } while (0)
 
@@ -555,7 +576,7 @@ static int plane_step(const spong_continue_field *f, const spong_field *gf,
         return result->term;                                              \
     } while (0)
 
-SPONG_API int spong_continue_curve(
+SPONG_API int spong_continue_curve_recorded(
         const spong_continue_field *f,
         double b0, double w0, int flow,
         const double *targets, size_t n_targets, double cap_r,
@@ -564,7 +585,7 @@ SPONG_API int spong_continue_curve(
         int centered_available,
         int chart_order,
         double *points, size_t point_capacity,
-        spong_continue_result *result) {
+        spong_continue_result *result, spong_trace *trace) {
 
     SPONG_FP_EXACT
     memset(result, 0, sizeof *result);
@@ -596,6 +617,8 @@ SPONG_API int spong_continue_curve(
     int overflow = 0, switches = 0;
     uint64_t taken = 0, rejected = 0;
 
+    size_t source_id = SIZE_MAX;
+    spong_dense dense = {{0}};
     EMIT(a_star(f, b) + w, b);
 
     double vb, vw, va0;
@@ -653,6 +676,7 @@ SPONG_API int spong_continue_curve(
                         size_t n_trim = (n_pts - 1 < STALL_WINDOW)
                                         ? n_pts - 1 : STALL_WINDOW;
                         n_pts -= n_trim;
+                        spong_trace_trim(trace, n_pts);
                         double a_bk = points[2 * (n_pts - 1)];
                         double b_bk = points[2 * (n_pts - 1) + 1];
                         b_end = b_bk; w_end = a_bk - a_star(f, b_bk);
@@ -674,16 +698,18 @@ SPONG_API int spong_continue_curve(
             if (slow) {
                 h = cur * vb / vp;
                 w_new = primary_gl4
-                    ? gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h)
-                    : gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
+                    ? gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h, trace ? &dense : NULL)
+                    : gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h, trace ? &dense : NULL);
                 b_new = b_prev + h;
             } else {
                 h = cur * vw / vp;
                 b_new = primary_gl4
-                    ? gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h)
-                    : gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
+                    ? gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h, trace ? &dense : NULL)
+                    : gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h, trace ? &dense : NULL);
                 w_new = w_prev + h;
             }
+            dense.v[1] = slow ? 1 : 2;
+            dense.v[21] = 0;
             if (!(isfinite(b_new) && isfinite(w_new))) failed = 1;
 
             if (!failed) {
@@ -713,11 +739,12 @@ SPONG_API int spong_continue_curve(
                 int rescued = 0;
                 {
                     double bp, wp;
-                    int kind = plane_step(f, gf, flow, b_prev, w_prev, cur, &bp, &wp);
+                    int kind = plane_step(f, gf, flow, b_prev, w_prev, cur, &bp, &wp, trace ? &dense : NULL);
                     if (kind >= 0) {
                         a_prev = a_star(f, b_prev) + w_prev;
                         b_new = bp; w_new = wp;
                         result->rescues[kind]++;
+                        dense.v[1] = 0; dense.v[21] = 2;
                         rescued = 1;
                     }
                 }
@@ -738,13 +765,13 @@ SPONG_API int spong_continue_curve(
                     double bn, wn;
                     if (alt_slow[alt]) {
                         h = cur * vb / vp;
-                        wn = alt_gl6[alt] ? gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h)
-                                          : gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h);
+                        wn = alt_gl6[alt] ? gl6_step(f, slow_fj, slow_floor, b_prev, w_prev, h, trace ? &dense : NULL)
+                                          : gl4_step(f, slow_fj, slow_floor, b_prev, w_prev, h, trace ? &dense : NULL);
                         bn = b_prev + h;
                     } else {
                         h = cur * vw / vp;
-                        bn = alt_gl6[alt] ? gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h)
-                                          : gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h);
+                        bn = alt_gl6[alt] ? gl6_step(f, fast_fj, fast_floor, w_prev, b_prev, h, trace ? &dense : NULL)
+                                          : gl4_step(f, fast_fj, fast_floor, w_prev, b_prev, h, trace ? &dense : NULL);
                         wn = w_prev + h;
                     }
                     if (!(isfinite(bn) && isfinite(wn))) continue;
@@ -760,6 +787,8 @@ SPONG_API int spong_continue_curve(
                     if (expected >= 0.0 || actual > 1e-4 * expected + slack)
                         continue;
                     b_new = bn; w_new = wn;
+                    dense.v[1] = alt_slow[alt] ? 1 : 2;
+                    dense.v[21] = 1;
                     result->rescues[alt_slow[alt]
                         ? (alt_gl6[alt] ? SPONG_RESCUE_SLOW_GL6 : SPONG_RESCUE_SLOW_GL4)
                         : (alt_gl6[alt] ? SPONG_RESCUE_FAST_GL6 : SPONG_RESCUE_FAST_GL4)]++;
@@ -817,6 +846,7 @@ SPONG_API int spong_continue_curve(
              * instead descend the ladder is a separate decision, and this
              * comment is where it is flagged. */
             settled = 1;
+            dense.v[21] = 3; /* retry-exhausted, explicitly unvalidated */
         }
 
         b = b_new; w = w_new;
@@ -830,6 +860,8 @@ SPONG_API int spong_continue_curve(
         if (!(isfinite(b) && isfinite(w))) { b_end = b; w_end = w;
             FINISH(SPONG_CONT_ABORT_NONFINITE, SPONG_DELEGATE_NONE); }
 
+        dense.v[18] = a; dense.v[19] = b; dense.v[20] = n_pts-1;
+        source_id = spong_trace_push(trace, &dense);
         for (size_t t = 0; t < n_targets; t++) {
             double at = targets[2 * t], bt = targets[2 * t + 1];
             if (!segment_capture(a_prev, b_prev, a, b, at, bt, cap_r)) continue;
@@ -840,7 +872,9 @@ SPONG_API int spong_continue_curve(
                 if (target_level > current_level + slack) continue;
             }
             EMIT(a, b);
-            if ((a - at) * (a - at) + (b - bt) * (b - bt) > 1e-24) EMIT(at, bt);
+            if ((a - at) * (a - at) + (b - bt) * (b - bt) > 1e-24) {
+                source_id = SIZE_MAX; EMIT(at, bt);
+            }
             b_end = b; w_end = w;
             FINISH(SPONG_CONT_CAPTURE, SPONG_DELEGATE_NONE);
         }
@@ -854,4 +888,13 @@ SPONG_API int spong_continue_curve(
 
     b_end = b; w_end = w;
     FINISH(SPONG_CONT_ABORT_MAX_STEPS, SPONG_DELEGATE_NONE);
+}
+
+int spong_continue_curve(const spong_continue_field *f,
+        double b0, double w0, int flow, const double *targets, size_t n_targets,
+        double cap_r, const double box[4], double ds, double ds0,
+        const double *gate, size_t max_steps, int centered, int order,
+        double *points, size_t capacity, spong_continue_result *result) {
+    return spong_continue_curve_recorded(f,b0,w0,flow,targets,n_targets,cap_r,
+        box,ds,ds0,gate,max_steps,centered,order,points,capacity,result,NULL);
 }

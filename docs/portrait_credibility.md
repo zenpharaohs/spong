@@ -20,6 +20,12 @@ imposing that cost on every other branch.
 
 ## Technology and remaining integration
 
+Trajectory objects retain construction-phase ownership, local smooth jets,
+and accepted native step representations. The independent checker now measures
+attachments and boundary orientation under an explicit experimental policy. See [trajectory evidence](trajectory_evidence.md)
+for the exact coverage and independent-check boundary; it is not yet a new
+production verdict.
+
 | Obligation | Existing machinery | What needs scrutiny or completion |
 |---|---|---|
 | Complete, consistent connections | Exact Sturm inventory; exact merge tree and terminal component tests; oriented inventory with opposing launch sections | Keep identity and endpoint evidence explicit. Merge-tree compatibility alone need not determine the attaching map. |

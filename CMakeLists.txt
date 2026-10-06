@@ -23,7 +23,9 @@ add_library(spong_core ${SPONG_LIBRARY_TYPE}
     src/c/spong_gauss2.c
     src/c/spong_potential.c
     src/c/spong_jet.c
+    src/c/spong_precision_bridge.c
     src/c/spong_arrival.c
+    src/c/spong_analytic_arrival.c
     src/c/spong_rheostat_gmp.c
     src/c/spong_section.c
 )
@@ -47,7 +49,7 @@ set_target_properties(spong_core PROPERTIES
     C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     PUBLIC_HEADER
-        "include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_smale.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h;include/spong/spong_rheostat.h;include/spong/spong_rheostat_pair.h;include/spong/spong_section.h"
+        "include/spong/spong_trace.h;include/spong/spong_resolution.h;include/spong/spong_exact.h;include/spong/spong_topology.h;include/spong/spong_geometry.h;include/spong/spong_local.h;include/spong/spong_smale.h;include/spong/spong_continue.h;include/spong/spong_gauss2.h;include/spong/spong_potential.h;include/spong/spong_jet.h;include/spong/spong_arrival.h;include/spong/spong_precision_bridge.h;include/spong/spong_analytic_arrival.h;include/spong/spong_rheostat.h;include/spong/spong_rheostat_pair.h;include/spong/spong_section.h"
 )
 if(SPONG_BUILD_SHARED)
     target_compile_definitions(spong_core
@@ -62,6 +64,9 @@ endif()
 
 if(SPONG_BUILD_C_TESTS)
     enable_testing()
+    add_executable(test_spong_analytic_arrival tests/c/test_spong_analytic_arrival.c)
+    target_link_libraries(test_spong_analytic_arrival PRIVATE spong_core)
+    add_test(NAME spong_analytic_arrival_c_abi COMMAND test_spong_analytic_arrival)
     add_executable(test_spong_section tests/c/test_spong_section.c)
     target_link_libraries(test_spong_section PRIVATE spong::core)
     add_test(NAME spong_section_c_abi COMMAND test_spong_section)
@@ -93,6 +98,13 @@ if(SPONG_BUILD_C_TESTS)
     add_executable(test_spong_smale tests/c/test_spong_smale.c)
     target_link_libraries(test_spong_smale PRIVATE spong::core)
     add_test(NAME spong_smale_c_abi COMMAND test_spong_smale)
+    add_executable(test_spong_precision_bridge tests/c/test_spong_precision_bridge.c)
+    target_include_directories(test_spong_precision_bridge PRIVATE ${GMP_INCLUDE_DIR})
+    target_link_libraries(test_spong_precision_bridge PRIVATE spong::core m)
+    add_test(NAME spong_precision_bridge_c_abi COMMAND test_spong_precision_bridge)
+    add_executable(test_spong_arrival_bridge tests/c/test_spong_arrival_bridge.c)
+    target_link_libraries(test_spong_arrival_bridge PRIVATE spong::core m)
+    add_test(NAME spong_arrival_bridge_c_abi COMMAND test_spong_arrival_bridge)
     add_executable(test_spong_gauss2 tests/c/test_spong_gauss2.c)
     target_link_libraries(test_spong_gauss2 PRIVATE spong::core m)
     add_test(NAME spong_gauss2_c_abi COMMAND test_spong_gauss2)

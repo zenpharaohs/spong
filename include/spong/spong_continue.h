@@ -55,6 +55,7 @@
 #include <stdint.h>
 
 #include "spong/spong_resolution.h"
+#include "spong/spong_trace.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -181,6 +182,21 @@ SPONG_API int spong_continue_curve(
     int chart_order,                         /* 4, or 6 for the default */
     double *points, size_t point_capacity,
     spong_continue_result *result);
+
+SPONG_API int spong_continue_curve_recorded(
+    const spong_continue_field *field,
+    double b0, double w0,
+    int flow,                                /* +1 descent, -1 ascent */
+    const double *targets, size_t n_targets,
+    double cap_r,
+    const double box[4],                     /* a_lo, a_hi, b_lo, b_hi */
+    double ds, double ds0,
+    const double *shallow_gate,              /* may be NULL */
+    size_t max_steps,
+    int centered_available,
+    int chart_order,                         /* 4, or 6 for the default */
+    double *points, size_t point_capacity,
+    spong_continue_result *result, spong_trace *trace);
 
 #ifdef __cplusplus
 }

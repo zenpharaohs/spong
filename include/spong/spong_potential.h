@@ -115,6 +115,12 @@ SPONG_API int spong_potential_rate_segment(
     double *points, size_t point_capacity,
     spong_potential_result *result);
 
+SPONG_API int spong_potential_rate_segment_recorded(
+    const spong_field *field,
+    const spong_potential_request *request,
+    double *points, size_t point_capacity,
+    spong_potential_result *result, spong_trace *trace);
+
 #ifdef __cplusplus
 }
 #endif

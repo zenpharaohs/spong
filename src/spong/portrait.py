@@ -202,7 +202,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
             _genericity=None, _skip_audit: bool = False,
             pair_contact_policy: str = "order_sweep",
             _potential_clock=None,
-            _potential_n_levels: int | None = None) -> Portrait:
+            _potential_n_levels: int | None = None,
+            arrival_policy: str = 'legacy') -> Portrait:
     """Compute the certified portrait inside the §8b box contract.
 
     _skip_audit returns the geometry with NO topology certificate.  It exists
@@ -214,7 +215,14 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     ``pair_contact_policy`` selects the production loss-level order sweep,
     its chord-verdict shadow comparison, or the former chord audit; see
     :func:`spong.topology.audit`.
+
+    ``arrival_policy='checked_native'`` replaces terminal capture connectors
+    with independently checked native analytic arrivals. A refused proposal
+    leaves an explicitly aborted prefix, never an accepted fallback chord.
+    This local sampled check does not promote a portrait certificate.
     """
+    if arrival_policy not in ('legacy', 'checked_native'):
+        raise ValueError('arrival_policy')
     e = (_enumeration if _enumeration is not None else
          sturm.materialize_stubs(m, sturm.enumerate_critical_points(m)))
     display_view = (_display_view if _display_view is not None else
@@ -403,10 +411,18 @@ def compute(m: Model, view=None, geometry_level: int = 0,
         [(s, direction) for s in e.saddles for direction in (+1, -1)],
         workers=n_workers))
 
+    if arrival_policy == 'checked_native':
+        from .native_arrival import refine_branches
+        branches = refine_branches(m, e, branches)
+
     p = Portrait(m, e, branches, box,
                  view if view is not None else display_view)
     _t_ledger = time.perf_counter()
     p.ledger = build_ledger(p, gen)
+    p.ledger['arrival_policy'] = arrival_policy
+    from .trajectory_check import inspect_trajectory
+    p.ledger["trajectory_evidence"] = [
+        inspect_trajectory(m, br) for br in branches]
     _t_audit = time.perf_counter()
     if _skip_audit:
         p.ledger["topology"] = {
@@ -471,7 +487,8 @@ def compute(m: Model, view=None, geometry_level: int = 0,
 
 def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
                       _enumeration=None,
-                      pair_contact_policy: str = "order_sweep") -> Portrait:
+                      pair_contact_policy: str = "order_sweep",
+                      arrival_policy: str = 'legacy') -> Portrait:
     """Step up the portraitist until topology certifies or explicitly refuse."""
     # Geometry escalation must not redo the exact zero-dimensional Morse
     # skeleton, its conditioned critical jets, or its materialized stubs.
@@ -492,7 +509,7 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
         result = compute(
             m, view=view, geometry_level=level, _enumeration=enumeration,
             _display_view=display_view, _genericity=genericity,
-            pair_contact_policy=pair_contact_policy)
+            pair_contact_policy=pair_contact_policy, arrival_policy=arrival_policy)
         top = result.ledger["topology"]
         attempts.append({
             "geometry_level": level, "status": top["status"],

@@ -33,6 +33,7 @@ import numpy as np
 
 from . import gauss
 from .model import Model
+from .trajectory import PieceRecorder, TrajectoryPiece, launch_evidence, trace_evidence
 
 KAPPA_HI = 1e4          # shallow-water threshold (fixed point owns κ ≥ this)
 KAPPA_LO = 1e2          # channel floor for the seam certificate
@@ -708,6 +709,13 @@ class Branch:
     term: str                    # 'capture' | 'box_exit' | 'abort_*'
     certs: dict = field(default_factory=dict)
     diag: dict = field(default_factory=dict)
+    pieces: tuple[TrajectoryPiece, ...] | None = None
+
+    def __post_init__(self):
+        # Legacy/comparison constructors must not accidentally claim coverage.
+        if self.pieces is None:
+            self.pieces = ((TrajectoryPiece("unknown", 0, len(self.Y)-1),)
+                           if len(self.Y) > 1 else ())
 
 
 def _segment_capture(a0, b0, a1, b1, at, bt, radius):
@@ -1428,6 +1436,7 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
                           engine_diag: dict, max_steps: int = 4096,
                           clock=None):
     """Dispatch the centered raw arrival; see _centered_raw_arrival_python."""
+    engine_diag.pop("_last_trace", None)
     native = _arrival_native(arrival_local)
     if native is None:
         if clock is not None:
@@ -1450,12 +1459,13 @@ def _centered_raw_arrival(start, target, arrival_local, cap_r: float,
     (term_code, _a_end, _b_end, accepted, rejected, turn_rejected,
      gl8_attempted, gl8_accepted, max_richardson, finish_r,
      spectral_ratio, tau, clock_steps, clock_started,
-     clock_available, blob) = native.centered_arrival(
+     clock_available, blob, trace_blob) = native.centered_arrival(
         arrival_local.native, float(start[0]), float(start[1]), at, bt,
         float(arrival_local.a), float(arrival_local.b), slow, fast,
         float(cap_r), int(max_steps), turn_reject, GEOMETRIC_IRK_PRIMARY,
         int(clock_enabled), int(clock_started_in), clock_start_value,
-        clock_stop_value)
+        clock_stop_value, 1)
+    engine_diag["_last_trace"] = trace_blob
     term = _ARRIVAL_TERM[term_code]
     pts = [tuple(p) for p in
            np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
@@ -1705,19 +1715,20 @@ def _potential_segment(native, kernel, m: Model, mode: str, a0: float,
      arclength_steps, gl8_attempted, gl8_accepted,
      max_richardson, max_interpolation_error, tau, max_clock_error,
      max_clock_error_ratio, clock_rejected, clock_steps,
-     clock_started, clock_available, blob) = \
+     clock_started, clock_available, blob, trace_blob) = \
         native.potential_rate_segment(
             kernel, float(m.C), _POTENTIAL_MODE[mode], float(a0), float(b0),
             flat_targets, float(cap_r), [float(x) for x in box], float(ds),
             int(n_levels), int(max_steps), flat_critical,
             CRITICAL_STEP_FRACTION, GEOMETRIC_IRK_PRIMARY,
             float(stop_level), int(clock_enabled), clock_rtol, clock_atol,
-            clock_start, clock_stop)
+            clock_start, clock_stop, 1)
     pts = [tuple(p) for p in
            np.frombuffer(blob, dtype=float).reshape(-1, 2).tolist()]
     return (_POTENTIAL_TERM[term_code], pts,
             ((captured_a, captured_b) if captured else None),
-            {"a_end": float(a_end), "b_end": float(b_end),
+            {"trajectory_trace": trace_blob,
+             "a_end": float(a_end), "b_end": float(b_end),
              "event_level": float(event_level),
              "level_step": float(level_step),
              "accepted": int(accepted), "rejected": int(rejected),
@@ -1740,6 +1751,7 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
                            box, cap_r: float, engine_diag: dict,
                            n_levels: int = 12000, critical=None, clock=None):
     """Dispatch one prefix segment; see _potential_rate_prefix_python."""
+    engine_diag.pop("_last_trace", None)
     native, kernel = _potential_native(m)
     if native is None:
         if clock is not None:
@@ -1751,6 +1763,7 @@ def _potential_rate_prefix(m: Model, a0: float, b0: float, target,
         native, kernel, m, "prefix", a0, b0,
         [tuple(map(float, target))], cap_r, box, 0.0, n_levels, 0, critical,
         clock=clock)
+    engine_diag["_last_trace"] = r["trajectory_trace"]
     if term == "unavailable":
         return [(a0, b0)], b0, float(a0-m.s_a_star(b0)), "unavailable"
     engine_diag["potential_rate"] = {
@@ -1787,6 +1800,7 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
                                 box, cap_r: float, engine_diag: dict,
                                 n_levels: int = 2048, critical=None):
     """Dispatch one level-event segment; see the _python specification."""
+    engine_diag.pop("_last_trace", None)
     native, kernel = _potential_native(m)
     if native is None:
         return _potential_rate_level_event_python(
@@ -1796,6 +1810,7 @@ def _potential_rate_level_event(m: Model, a0: float, b0: float, targets,
         native, kernel, m, "level_event", a0, b0,
         [tuple(map(float, t)) for t in targets], cap_r, box, 0.0,
         n_levels, 0, critical)
+    engine_diag["_last_trace"] = r["trajectory_trace"]
     if term == "unavailable":
         return [(float(a0), float(b0))], "unavailable", None
     engine_diag.setdefault("candidate_level_events", []).append({
@@ -1818,6 +1833,7 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
                              critical=None, stop_loss: float | None = None):
     """Dispatch one ascent segment; see the _python specification."""
     stop_level = float("inf") if stop_loss is None else float(stop_loss)
+    engine_diag.pop("_last_trace", None)
     native, kernel = _potential_native(m)
     if native is None:
         return _potential_rate_box_exit_python(
@@ -1827,6 +1843,7 @@ def _potential_rate_box_exit(m: Model, start, box, ds: float,
     term, pts, _captured, r = _potential_segment(
         native, kernel, m, "ascent", a0, b0, [], 0.0, box, ds, 0,
         max_steps, critical, stop_level=stop_level)
+    engine_diag["_last_trace"] = r["trajectory_trace"]
     engine_diag["potential_rate_ascent"] = {
         "accepted_steps": r["accepted"],
         "rejected_steps": r["rejected"],
@@ -1866,6 +1883,8 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
     across the boundary.  Passing the jet through the ABI retires it.
     """
     from . import engine
+    if engine_diag is not None:
+        engine_diag.pop("_last_trace", None)
     if max_steps is None:
         # TWO bounds, and they answer different questions.
         #
@@ -1914,7 +1933,7 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         flat, float(cap_r), [float(x) for x in box],
         float(ds), -1.0 if ds0 is None else float(ds0),
         None if shallow_gate is None else [float(x) for x in shallow_gate],
-        int(max_steps), centered_available, int(CHART_IRK_ORDER))
+        int(max_steps), centered_available, int(CHART_IRK_ORDER), 1)
 
     if term_code == _NATIVE_DELEGATE:
         if engine_diag is not None:
@@ -1934,7 +1953,9 @@ def _continue_curve(m: Model, b0: float, w0: float, flow: int,
         # The port's floor_fallback_* counts and step_failure record, under
         # the reference's names, so a native diag reads like a Python one.
         for key, value in native_diag.items():
-            if key == "step_failure":
+            if key == "trajectory_trace":
+                engine_diag["_last_trace"] = value
+            elif key == "step_failure":
                 engine_diag[key] = value
             else:
                 engine_diag[key] = engine_diag.get(key, 0) + int(value)
@@ -2551,6 +2572,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     hstep = abs(span) / (n_grid - 1)
 
     pts: list[tuple[float, float]] = []
+    recorder = PieceRecorder()
     certs: dict = {"seam_residuals": []}
     diag: dict = {"kappa_saddle": float(kap[0]), "zones": [],
                   "switches": 0}
@@ -2571,6 +2593,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
     if critical_stub is not None:
         local_Y = np.asarray(critical_stub.curve)
         pts.extend(map(tuple, local_Y))
+        launch_kind, evidence = launch_evidence(critical_stub)
+        recorder.add(launch_kind, 0, len(pts)-1, evidence)
         a_cur, b_cur = local_Y[-1]
         w_cur = float(a_cur - m.a_star(b_cur))
         sc = dict(critical_stub.certificates)
@@ -2656,6 +2680,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                     diag["shallow_launch"] = "backbone"
                     diag["backbone_launch"] = {
                         "b0": b0, "a0": a0, "db0": float(db0)}
+                    recorder.truncate(0)
+                    recorder.add("backbone_launch", 0, len(pts)-1)
             if saddle_mild or len(local_Y) < 2:
                 # A mild saddle whose stub cannot reach the global field has
                 # no second owner -- the sounding says deep water, where the
@@ -2666,7 +2692,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 # finitely -- then the honest answer is still the refusal.)
                 return Branch(
                     "unstable", local_Y, "abort_conditioning_handoff",
-                    {"handoff_certified": False}, diag)
+                    {"handoff_certified": False}, diag, tuple(recorder.pieces))
             # Otherwise the sounding already says SHALLOW, and the Hadamard
             # fixed point in the zone loop below is the other downstream owner
             # this chart was always meant to have (see the comment on the
@@ -2720,6 +2746,9 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
         b_cur, w_cur = b_saddle + db0, (d_w / d_b) * db0
         launch_scale = abs(db0)
 
+    if critical_stub is None:
+        recorder.add("centered_launch" if diag.get("critical_chart")
+                     else "linear_launch", 0, len(pts)-1)
     term = None
     live_minima = list(candidate_minima or ())
     if (critical_stub is not None and len(live_minima) > 1):
@@ -2733,7 +2762,9 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                         m, float(m.s_a_star(b_cur)+w_cur), float(b_cur),
                         [(q.a, q.b) for q in live_minima],
                         box, cap_r, diag, critical=critical))
-                pts.extend(event_curve[1:])
+                recorder.append(pts, event_curve, "potential_level_event",
+                                term=event_term,
+                                evidence=trace_evidence(diag))
                 if event_term == "capture":
                     term = "capture"
                     b_cur = float(captured[1])
@@ -2763,7 +2794,9 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                         arrival, arrival_term = _centered_raw_arrival(
                             event_curve[-1], (q.a, q.b), q.local,
                             cap_r, diag)
-                        pts.extend(arrival[1:])
+                        recorder.append(pts, arrival, "centered_arrival",
+                                        term=arrival_term,
+                                        evidence=trace_evidence(diag))
                         if arrival_term == "capture":
                             term = "capture"
                             b_cur = float(q.b)
@@ -2827,7 +2860,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 n_levels=(12000 if potential_n_levels is None
                           else int(potential_n_levels)),
                 critical=critical, clock=potential_clock)
-            pts.extend(prefix[1:])
+            recorder.append(pts, prefix, "potential_prefix", term=prefix_term,
+                                evidence=trace_evidence(diag))
             if prefix_term == "capture":
                 term = "capture"
             elif prefix_term == "box_exit":
@@ -2862,7 +2896,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                         arrival_result.get("started", prefix_clock["started"]))
                     prefix_clock["available"] = bool(
                         arrival_result.get("available", False))
-                pts.extend(arrival[1:])
+                recorder.append(pts, arrival, "centered_arrival", term=arrival_term,
+                                        evidence=trace_evidence(diag))
                 if arrival_term == "capture":
                     term = "capture"
                     b_cur = bt_unique
@@ -3039,7 +3074,9 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                     cap_r=cap_r, ds0=launch_scale,
                     shallow_gate=shallow_gate, engine_diag=diag,
                     centered_local=critical_local)
-                pts.extend(tail if not pts else tail[1:])
+                recorder.append(pts, tail, "continuation_after_shallow_rejection",
+                                term=term_e,
+                                evidence=trace_evidence(diag))
                 diag["switches"] += sw
                 launch_scale = ds
                 if term_e == "enter_shallow":
@@ -3056,7 +3093,23 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 start = 1                    # grid re-includes current point
             previous = (np.asarray(pts[-1]) if pts else
                         np.array([a_zone[0], b_zone[0]]))
+            piece_start = max(0, len(pts)-1)
+            seam = bool(pts and not np.array_equal(
+                pts[-1], (float(a_zone[0]), float(b_zone[0]))))
             pts.extend(zip(a_zone.tolist()[start:], b_zone.tolist()[start:]))
+            # Retain the solved deviation, which may disappear when added to
+            # the backbone in physical binary64 coordinates. No smooth tangent
+            # is claimed for a grid solve.
+            if seam and len(pts)-1 > piece_start:
+                recorder.add("handoff", piece_start, piece_start+1,
+                             {"to_kind": "hadamard_graph"})
+                piece_start += 1
+            recorder.add("hadamard_graph", piece_start, len(pts)-1, {
+                "representation": "deviation_grid",
+                "b": tuple(map(float, b_zone)),
+                "w": tuple(map(float, w_zone)),
+                "sample_offset": start if seam else 0,
+                "iterations": int(iters)})
             captured_at = None
             for k, (az, bz) in enumerate(zip(a_zone[start:], b_zone[start:]),
                                          start=start):
@@ -3080,7 +3133,10 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 k, at, bt = captured_at
                 keep = len(pts) - (len(b_zone)-k)
                 pts = pts[:max(keep, 0)]
+                recorder.truncate(max(0, len(pts)-1))
+                connector_start = max(0, len(pts)-1)
                 pts.append((at, bt))
+                recorder.add("capture_connector", connector_start, len(pts)-1)
                 b_cur, w_cur = bt, float(at-m.a_star(bt))
                 term = "capture"
                 break
@@ -3095,7 +3151,8 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
                 m, b_cur, w_cur, +1, targets, box, ds,
                 cap_r=cap_r, ds0=launch_scale, engine_diag=diag,
                 centered_local=critical_local)
-            pts.extend(tail if not pts else tail[1:])
+            recorder.append(pts, tail, "chart_continuation", term=term_e,
+                                evidence=trace_evidence(diag))
             diag["switches"] += sw
             diag["zones"].append(("engine", tail[0][1], b_cur, term_e))
             launch_scale = ds
@@ -3121,7 +3178,7 @@ def trace_unstable(m: Model, b_saddle: float, target: tuple[float, float],
         certs["seam_residual"] = max(certs["seam_residuals"])
     diag["stiff_frac"] = float(np.mean(kap >= KAPPA_HI))
     diag["final_state_bw"] = (float(b_cur), float(w_cur))
-    return Branch("unstable", Y, term, certs, diag)
+    return Branch("unstable", Y, term, certs, diag, tuple(recorder.pieces))
 
 
 def _slaved_valley_points(m: Model, b0: float, b1: float,
@@ -3238,6 +3295,7 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
         delta = STABLE_LAUNCH_DELTA
 
     diag = {"switches": 0}
+    recorder = PieceRecorder()
     prefix = []
     launch_scale = abs(delta)
     if critical_stub is not None:
@@ -3272,9 +3330,12 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
                 "fp64_spectral_resolved":
                     sc.get("fp64_spectral_resolved"),
             }
+            kind, evidence = launch_evidence(critical_stub)
             return Branch(
                 "stable", local_Y, "abort_conditioning_handoff",
-                {"handoff_certified": False}, diag)
+                {"handoff_certified": False}, diag,
+                (TrajectoryPiece(kind, 0, len(local_Y)-1, evidence),)
+                if len(local_Y) > 1 else ())
     elif critical_local is not None and critical_local.native is not None:
         try:
             local_Y, local_diag = _critical_chart_curve(
@@ -3291,6 +3352,10 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
     else:
         w0 = sign * delta
         b0 = b_saddle + (d_b / d_w) * w0
+    kind, evidence = launch_evidence(critical_stub)
+    if critical_stub is None and diag.get("critical_chart"):
+        kind = "centered_launch"
+    recorder.add(kind, 0, len(prefix) if prefix else 1, evidence)
     potential_term = None
     if (critical_stub is not None
             and dict(critical_stub.certificates).get(
@@ -3299,6 +3364,12 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
             m, (m.a_star(b0)+w0, b0), box, ds, diag,
             critical=_critical_array(critical_points),
             stop_loss=stop_loss)
+        # Use a temporary assembly to record precisely the same ranges,
+        # including a seam when the reconstructed starting point differs.
+        recorded = [(a_s, b_saddle)] + (prefix or [potential_pts[0]])
+        recorder.append(recorded, potential_pts, "potential_ascent",
+                        term=potential_term,
+                                evidence=trace_evidence(diag))
         if prefix:
             prefix.extend(potential_pts[1:])
         else:
@@ -3311,6 +3382,9 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
         engine_pts, term, sw, _ = _continue_curve(
             m, b0, w0, -1, [], box, ds, ds0=launch_scale,
             engine_diag=diag, centered_local=critical_local)
+    recorded = [(a_s, b_saddle)] + (prefix or [engine_pts[0]])
+    recorder.append(recorded, engine_pts, "chart_continuation", term=term,
+                    evidence=trace_evidence(diag))
     pts = prefix + engine_pts[1:] if prefix else engine_pts
     Y = np.array([(a_s, b_saddle)] + pts)
     certificate_start = int(diag.get("critical_steps", 0)) + 1
@@ -3322,4 +3396,4 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
                  m, Y, start=certificate_start),
              "endpoint": tuple(Y[-1])}
     diag["switches"] = sw
-    return Branch("stable", Y, term, certs, diag)
+    return Branch("stable", Y, term, certs, diag, tuple(recorder.pieces))

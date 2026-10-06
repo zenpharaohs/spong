@@ -53,6 +53,12 @@ typedef struct {
     int clock_done;
     int clock_failed;
     spong_potential_result *out;
+    spong_trace *trace;
+    spong_dense dense[2], hermite;
+    size_t generation, pushed_generation, source[2];
+    int hermite_active;
+    double sample_t;
+
 } segment;
 
 /* ------------------------------------------------------------------ */
@@ -73,6 +79,32 @@ static int in_box(const double box[4], const double p[2]) {
  * not resolve a new point; otherwise append.  Writes only inside the
  * buffer; the logical count keeps growing so the caller learns the
  * capacity it needs. */
+static void trace_vertex(segment *s, size_t index, const double q[2]) {
+    if (!s->trace) return;
+    size_t source = SIZE_MAX;
+    double parameter = 1.0;
+    if (s->hermite_active) {
+        if (s->pushed_generation != s->generation) {
+            s->source[0] = spong_trace_push(s->trace, &s->hermite);
+            s->pushed_generation = s->generation;
+        }
+        source = s->source[0]; parameter = s->sample_t;
+    } else {
+        for (int k=0;k<2;++k) {
+            if (s->dense[k].v[0] == 1 && q[0] == s->dense[k].v[18]
+                    && q[1] == s->dense[k].v[19]) {
+                if (s->pushed_generation != s->generation) {
+                    s->source[0] = spong_trace_push(s->trace, &s->dense[0]);
+                    s->source[1] = spong_trace_push(s->trace, &s->dense[1]);
+                    s->pushed_generation = s->generation;
+                }
+                source = s->source[k]; break;
+            }
+        }
+    }
+    spong_trace_vertex(s->trace,index,q[0],q[1],source,parameter);
+}
+
 static void append_resolved(segment *s, const double q[2]) {
     SPONG_FP_EXACT
     if (s->n > 0 && s->n <= s->capacity) {
@@ -83,6 +115,7 @@ static void append_resolved(segment *s, const double q[2]) {
         if (hypot(q[0]-p[0], q[1]-p[1]) <= floor_) {
             s->points[2*(s->n-1)] = q[0];
             s->points[2*(s->n-1)+1] = q[1];
+            trace_vertex(s, s->n-1, q);
             return;
         }
     } else if (s->n > s->capacity) {
@@ -94,6 +127,7 @@ static void append_resolved(segment *s, const double q[2]) {
         s->points[2*s->n] = q[0];
         s->points[2*s->n+1] = q[1];
     }
+    trace_vertex(s, s->n, q);
     s->n++;
 }
 
@@ -103,6 +137,7 @@ static void append_raw(segment *s, const double q[2]) {
         s->points[2*s->n] = q[0];
         s->points[2*s->n+1] = q[1];
     }
+    trace_vertex(s, s->n, q);
     s->n++;
 }
 
@@ -122,30 +157,28 @@ static int segment_capture(double a0, double b0, double a1, double b1,
 /* charts._full_and_two_half on either field.  When clock != 0, the three
  * calls also return collocation-stage quadrature for the full step and the
  * accepted two-half composition. */
-static int full_and_two_half_clock(const spong_field *f, int potential,
+static int full_and_two_half_clock(segment *s, int potential,
                                    const double z[2], double h, int order,
                                    double full[2], double mid[2], double end[2],
                                    int clock, double *tau_full,
                                    double *tau_half) {
     SPONG_FP_EXACT
-    int (*step)(const spong_field *, const double[2], double, int, double[2]) =
-        potential ? spong_potential_step : spong_normalized_step;
-    int (*clock_step)(const spong_field *, const double[2], double, int,
-                      double[2], double *) =
-        potential ? spong_potential_step_clock : spong_normalized_step_clock;
-    double tau0 = 0.0, tau1 = 0.0, tau2 = 0.0;
-    int ok_full = clock ? clock_step(f, z, h, order, full, &tau0)
-                        : step(f, z, h, order, full);
-    int ok_mid = clock ? clock_step(f, z, 0.5*h, order, mid, &tau1)
-                       : step(f, z, 0.5*h, order, mid);
-    if (!ok_full) { full[0] = full[1] = NAN; }
-    if (!ok_mid) { mid[0] = mid[1] = NAN; }
-    end[0] = mid[0]; end[1] = mid[1];
+    const spong_field *f = s->field;
+    ++s->generation; s->hermite_active = 0;
+    double tau0=0, tau1=0, tau2=0;
+    int ok_full = spong_field_step_recorded(f,potential,z,h,order,full,
+        clock ? &tau0 : NULL,NULL);
+    int ok_mid = spong_field_step_recorded(f,potential,z,0.5*h,order,mid,
+        clock ? &tau1 : NULL,s->trace ? &s->dense[0] : NULL);
+    if (!ok_full) full[0]=full[1]=NAN;
+    if (!ok_mid) mid[0]=mid[1]=NAN;
+    end[0]=mid[0]; end[1]=mid[1];
     if (isfinite(mid[0]) && isfinite(mid[1])) {
-        int ok_end = clock ? clock_step(f, mid, 0.5*h, order, end, &tau2)
-                           : step(f, mid, 0.5*h, order, end);
-        if (!ok_end) { end[0] = end[1] = NAN; }
+        int ok = spong_field_step_recorded(f,potential,mid,0.5*h,order,end,
+            clock ? &tau2 : NULL,s->trace ? &s->dense[1] : NULL);
+        if (!ok) end[0]=end[1]=NAN;
     }
+    for(int k=0;k<2;++k) s->dense[k].v[21] = potential ? 0 : 2;
     if (clock) {
         *tau_full = tau0;
         *tau_half = tau1+tau2;
@@ -156,11 +189,11 @@ static int full_and_two_half_clock(const spong_field *f, int potential,
         && (!clock || (isfinite(*tau_full) && isfinite(*tau_half)));
 }
 
-static int full_and_two_half(const spong_field *f, int potential,
+static int full_and_two_half(segment *s, int potential,
                              const double z[2], double h, int order,
                              double full[2], double mid[2], double end[2]) {
     SPONG_FP_EXACT
-    return full_and_two_half_clock(f, potential, z, h, order,
+    return full_and_two_half_clock(s, potential, z, h, order,
                                    full, mid, end, 0, NULL, NULL);
 }
 
@@ -220,7 +253,7 @@ static double step_arclength_cap(const segment *s, const double z[2],
  * clock-aware form returns 2 when the trajectory tests pass but the clock
  * defect does not, allowing the caller to distinguish clock rejection from
  * an unavailable geometric step. */
-static int arclength_step_clock(const segment *s, const double z[2],
+static int arclength_step_clock(segment *s, const double z[2],
                                 double arclength, double sign, int clock,
                                 double half[2], double mid[2],
                                 double *tau, double *clock_err,
@@ -233,7 +266,7 @@ static int arclength_step_clock(const segment *s, const double z[2],
         double full[2], m[2], end[2];
         double tau_full = 0.0, tau_half = 0.0;
         if (!full_and_two_half_clock(
-                s->field, 0, z, sign*arclength, order, full, m, end,
+                s, 0, z, sign*arclength, order, full, m, end,
                 clock, &tau_full, &tau_half))
             continue;
         double chord = hypot(end[0]-z[0], end[1]-z[1]);
@@ -256,7 +289,7 @@ static int arclength_step_clock(const segment *s, const double z[2],
     return 0;
 }
 
-static int arclength_step(const segment *s, const double z[2],
+static int arclength_step(segment *s, const double z[2],
                           double arclength, double sign,
                           double half[2], double mid[2]) {
     SPONG_FP_EXACT
@@ -358,6 +391,7 @@ static int prefix_arclength_step(segment *s, const double z[2],
     if (!(end_level <= boundary)) return 1;
 
     double lo = 0.0, hi = arclength;
+    spong_dense best_dense[2]; memcpy(best_dense,s->dense,sizeof best_dense);
     double best_half[2] = {half[0], half[1]};
     double best_mid[2] = {mid[0], mid[1]};
     double best_tau = *tau, best_error = *error, best_ratio = *ratio;
@@ -382,6 +416,7 @@ static int prefix_arclength_step(segment *s, const double z[2],
             hi = trial_length;
             best_half[0] = trial_half[0]; best_half[1] = trial_half[1];
             best_mid[0] = trial_mid[0]; best_mid[1] = trial_mid[1];
+            memcpy(best_dense,s->dense,sizeof best_dense);
             best_tau = trial_tau;
             best_error = trial_error;
             best_ratio = trial_ratio;
@@ -390,6 +425,7 @@ static int prefix_arclength_step(segment *s, const double z[2],
             lo = trial_length;
         }
     }
+    memcpy(s->dense,best_dense,sizeof best_dense); ++s->generation;
     half[0] = best_half[0]; half[1] = best_half[1];
     mid[0] = best_mid[0]; mid[1] = best_mid[1];
     *tau = best_tau; *error = best_error; *ratio = best_ratio;
@@ -525,7 +561,7 @@ static void run_prefix(segment *s) {
                 double full[2], mid[2], half[2];
                 double tau_full = 0.0, tau_half = 0.0;
                 if (!full_and_two_half_clock(
-                        s->field, 1, z, h, order, full, mid, half,
+                        s, 1, z, h, order, full, mid, half,
                         timed, &tau_full, &tau_half))
                     continue;
                 double chord = hypot(half[0]-z[0], half[1]-z[1]);
@@ -693,7 +729,7 @@ static void run_level_event(segment *s) {
                 int order = s->orders[k];
                 if (order == 8) o->gl8_attempted++;
                 double full[2], mid[2], half[2];
-                if (!full_and_two_half(s->field, 1, z, h, order,
+                if (!full_and_two_half(s, 1, z, h, order,
                                        full, mid, half))
                     continue;
                 double chord = hypot(half[0]-z[0], half[1]-z[1]);
@@ -814,7 +850,7 @@ static void run_ascent(segment *s) {
                 int order = s->orders[k];
                 if (order == 8) o->gl8_attempted++;
                 double full[2], mid[2], half[2];
-                if (!full_and_two_half(s->field, 1, z, h, order,
+                if (!full_and_two_half(s, 1, z, h, order,
                                        full, mid, half))
                     continue;
                 double chord = hypot(half[0]-z[0], half[1]-z[1]);
@@ -857,8 +893,16 @@ static void run_ascent(segment *s) {
             o->max_interpolation_error = interp_used;
         double subdiv_d = ceil(chord_used/geometric_ds);
         size_t subdivisions = subdiv_d < 1.0 ? 1 : (size_t)subdiv_d;
+        s->hermite_active = 1; ++s->generation;
+        memset(&s->hermite,0,sizeof s->hermite);
+        s->hermite.v[0]=2; s->hermite.v[3]=h_used;
+        for(int d=0;d<2;++d) {
+            s->hermite.v[4+d]=z0[d]; s->hermite.v[6+d]=z[d];
+            s->hermite.v[8+d]=f0[d]; s->hermite.v[10+d]=f1[d];
+        }
         int exited = 0;
         for (size_t j = 1; j <= subdivisions; j++) {
+            s->sample_t = (double)j/(double)subdivisions;
             double p[2];
             cubic_hermite(z0, z, f0, f1, h_used, (double)j/(double)subdivisions, p);
             append_resolved(s, p);
@@ -875,11 +919,11 @@ static void run_ascent(segment *s) {
 
 /* ------------------------------------------------------------------ */
 
-int spong_potential_rate_segment(
+int spong_potential_rate_segment_recorded(
     const spong_field *field,
     const spong_potential_request *request,
     double *points, size_t point_capacity,
-    spong_potential_result *result)
+    spong_potential_result *result, spong_trace *trace)
 {
     SPONG_FP_EXACT
     if (field == NULL || request == NULL || result == NULL) return -1;
@@ -889,7 +933,7 @@ int spong_potential_rate_segment(
     result->event_level = NAN;
     result->level_step = NAN;
     result->captured_a = result->captured_b = NAN;
-    segment s;
+    segment s; memset(&s,0,sizeof s); s.trace=trace;
     s.field = field;
     s.req = request;
     s.points = points;
@@ -933,4 +977,10 @@ int spong_potential_rate_segment(
     default:                    return -1;
     }
     return result->term;
+}
+
+int spong_potential_rate_segment(const spong_field *field,
+    const spong_potential_request *request, double *points, size_t capacity,
+    spong_potential_result *result) {
+    return spong_potential_rate_segment_recorded(field,request,points,capacity,result,NULL);
 }
