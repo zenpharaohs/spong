@@ -82,6 +82,11 @@ and requested optimizer-step budget.  The independent equal-allocation arm
 prefixes are computed first, in parallel for larger runs, and their chunk
 losses and iterates are recorded.  Thompson then plays back those exact same
 prefixes; only an arm selected beyond its recorded uniform prefix is extended.
+Adam and the AdamW-style auxiliary variant use a fused native minibatch-gradient
+and optimizer chunk kernel when a local C compiler is available.  NumPy still
+draws each arm's samples in the same order, and the Python implementation is
+used automatically when the kernel cannot be built.  Set
+`SPONG_DEMO_ADAM_NATIVE=0` to force that reference path for comparison.
 Equal allocation is round-robin; Thompson gives every arm one forced
 continuation and thereafter selects the smallest exact continuous-Bernoulli
 posterior draw after observing

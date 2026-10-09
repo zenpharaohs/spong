@@ -1111,6 +1111,7 @@ def allocator(payload: dict) -> dict:
             "seed": seed,
             "distribution": distribution,
             "cb_library": comparison["library_path"],
+            "optimizer_backend": comparison["optimizer_backend"],
             "uniform_workers": comparison["uniform_workers"],
             "replayed_bandit_chunks": comparison["replayed_chunks"],
             "extended_bandit_chunks": comparison["extended_chunks"],

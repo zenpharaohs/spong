@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 import pytest
 
-from demos import thompson_moustaches
+from demos import native_adam, thompson_moustaches
 from demos.explorer import serve
 from spong import zoo
 
@@ -189,6 +189,8 @@ def test_allocator_endpoint_uses_active_empirical_portrait_and_visible_view(
     assert result["configuration"]["uniform_workers"] == 1
     assert result["configuration"]["replayed_bandit_chunks"] == 4
     assert result["configuration"]["extended_bandit_chunks"] == 2
+    assert result["configuration"]["optimizer_backend"] == (
+        "native-adam" if native_adam.available() else "python")
     assert result["equal"]["allocations"] == [2, 2, 2]
     assert result["thompson"]["allocations"] == [1, 1, 4]
     assert result["equal"]["executed_optimizer_steps"] == 6

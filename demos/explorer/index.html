@@ -2730,7 +2730,8 @@ async function runAllocator(){
     if (Number.isFinite(cfg.replayed_bandit_chunks)){
       summary += `<br>bandit playback — ${cfg.replayed_bandit_chunks.toLocaleString()} cached chunks, `
               + `${cfg.extended_bandit_chunks.toLocaleString()} extended; `
-              + `uniform workers ${cfg.uniform_workers}`;
+              + `uniform workers ${cfg.uniform_workers}; `
+              + `optimizer ${cfg.optimizer_backend}`;
     }
     const hist = data.work_loss_histogram;
     if (hist){

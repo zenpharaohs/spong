@@ -67,6 +67,18 @@ class BatchGradient:
             return np.copysign(np.sqrt(np.abs(y)), y)
         return self.rng.choice(self.samples, size=self.n, replace=True)
 
+    def _draw_many(self, steps):
+        """Draw consecutive batches in one array, preserving stream order."""
+        shape = (int(steps), self.n)
+        if self.distribution == "uniform01":
+            return self.rng.random(shape)
+        if self.distribution == "normal01":
+            return self.rng.normal(size=shape)
+        if self.distribution == "absolute_x":
+            y = 2.0 * self.rng.random(shape) - 1.0
+            return np.copysign(np.sqrt(np.abs(y)), y)
+        return self.rng.choice(self.samples, size=shape, replace=True)
+
     def __call__(self, a, b):
         x = self._draw()
         # A divergent demo optimizer is an ordinary experimental outcome,

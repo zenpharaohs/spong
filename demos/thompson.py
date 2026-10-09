@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from demos import optimizers
+from demos import native_adam, optimizers
 
 
 def transformed_loss(loss):
@@ -88,16 +88,26 @@ class ArmTape:
 
     def extend_to(self, pulls, should_stop=None):
         while len(self.records) < pulls and self.terminal_reason is None:
-            points = []
-            reason = None
-            for _ in range(self.chunk_steps):
-                if should_stop is not None and should_stop():
-                    raise TimeoutError("allocation stopped by interactive time limit")
-                z, failure = optimizers.checked_step(self.state, self.gradient)
-                if failure is not None:
-                    reason = failure
-                    break
-                points.append(z.copy())
+            if should_stop is not None and should_stop():
+                raise TimeoutError("allocation stopped by interactive time limit")
+            native = native_adam.run_chunk(
+                self.state, self.gradient, self.chunk_steps,
+                should_stop=should_stop)
+            if native is not None:
+                points, reason = native
+            else:
+                points = []
+                reason = None
+                for _ in range(self.chunk_steps):
+                    if should_stop is not None and should_stop():
+                        raise TimeoutError(
+                            "allocation stopped by interactive time limit")
+                    z, failure = optimizers.checked_step(
+                        self.state, self.gradient)
+                    if failure is not None:
+                        reason = failure
+                        break
+                    points.append(z.copy())
             raw_loss = _raw_loss(self.loss, self.state.z)
             observation = transformed_loss(raw_loss)
             if reason is None and not np.isfinite(raw_loss):

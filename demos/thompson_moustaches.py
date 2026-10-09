@@ -14,6 +14,7 @@ import numpy as np
 
 from demos import cb_sampler
 from demos import initializers
+from demos import native_adam
 from demos import optimizer_moustaches as gallery
 from demos import optimizers as opt
 from demos import thompson
@@ -370,6 +371,9 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         distribution=distribution, samples=samples,
         learning_rate=learning_rate, warmup_steps=warmup_steps,
         auto_lr=auto_lr)
+    optimizer_backend = (
+        "native-adam" if method in {"adam", "muon-adamw"}
+        and native_adam.available() else "python")
     equal_states, equal_gradients = _problem(**common)
     cache, workers_used = _uniform_cache(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
@@ -397,6 +401,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
             gallery.DEFAULT_LR[method] if learning_rate is None
             else float(learning_rate)),
         "library_path": library_path,
+        "optimizer_backend": optimizer_backend,
         "uniform_workers": workers_used,
         "replayed_chunks": int(sum(min(int(pulls), cached)
                                    for pulls, cached in zip(
@@ -500,6 +505,10 @@ def main(argv=None):
             "learning_rate": comparison["learning_rate"],
             "seed": args.seed,
             "cb_library": comparison["library_path"],
+            "optimizer_backend": comparison["optimizer_backend"],
+            "uniform_workers": comparison["uniform_workers"],
+            "replayed_bandit_chunks": comparison["replayed_chunks"],
+            "extended_bandit_chunks": comparison["extended_chunks"],
         },
         "equal": _allocation_summary(equal),
         "thompson": _allocation_summary(adaptive),
