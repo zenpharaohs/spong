@@ -309,6 +309,25 @@ def test_inverse_sqrt_allocator_schedule_is_budget_prefix_consistent():
         long(t) for t in (1, 40, 80, 2000)]
 
 
+def test_optimizer_lttb_thinning_keeps_a_missed_excursion():
+    points = np.column_stack((np.arange(101, dtype=float),
+                              np.zeros(101, dtype=float)))
+    points[17, 1] = 20.0
+    thinned = optimizer_moustaches._thin(points, max_points=5)
+    assert len(thinned) == 5
+    assert np.array_equal(thinned[0], points[0])
+    assert np.array_equal(thinned[-1], points[-1])
+    assert np.array_equal(thinned[1], points[17])
+    assert np.all(np.diff(thinned[:, 0]) > 0)
+
+
+def test_optimizer_lttb_thinning_stops_at_first_nonfinite_iterate():
+    points = np.array([[0.0, 0.0], [1.0, 2.0],
+                       [np.inf, 3.0], [4.0, 5.0]])
+    assert np.array_equal(optimizer_moustaches._thin(points, 3),
+                          points[:2])
+
+
 def test_thompson_allocation_honors_interactive_stop_hook():
     state = opt.SGDState(np.array([1.0, 0.0]), lr=0.1)
     posterior = _DeterministicPosterior(())

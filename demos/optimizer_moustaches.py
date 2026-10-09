@@ -85,11 +85,51 @@ def _run(method, gradient, start, lr, steps, box):
 
 
 def _thin(trajectory, max_points=350):
-    if len(trajectory) <= max_points:
-        return trajectory
-    indices = np.unique(
-        np.linspace(0, len(trajectory)-1, max_points).astype(int))
-    return trajectory[indices]
+    """LTTB display thinning in the (a, b) plane, bucketed by step order.
+
+    Keep the first and last finite iterates.  In each equal-sized interior
+    bucket, select the point making the largest triangle with the previous
+    selection and the mean of the next bucket.  This preserves excursions and
+    bends that uniform index sampling can skip entirely.
+    """
+    points = np.asarray(trajectory, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("trajectory must have shape (steps, 2)")
+    if max_points < 2:
+        raise ValueError("max_points must be at least 2")
+    finite = np.all(np.isfinite(points), axis=1)
+    if not np.all(finite):
+        points = points[:int(np.flatnonzero(~finite)[0])]
+    n = len(points)
+    if n <= max_points:
+        return points
+
+    # Normalize before taking cross products so even very large but finite
+    # iterates cannot overflow the area calculation.  A fixed scale per axis
+    # multiplies every triangle area by the same factor, preserving its rank.
+    scale = np.max(np.abs(points), axis=0)
+    scale[scale == 0.0] = 1.0
+    xy = points / scale
+    buckets = max_points - 2
+    interior = n - 2
+    indices = np.empty(max_points, dtype=np.intp)
+    indices[0], indices[-1] = 0, n - 1
+    previous = 0
+    for i in range(buckets):
+        start = 1 + i * interior // buckets
+        end = 1 + (i + 1) * interior // buckets
+        next_start = end
+        next_end = (1 + (i + 2) * interior // buckets
+                    if i + 1 < buckets else n)
+        center = np.mean(xy[next_start:next_end], axis=0)
+        candidates = xy[start:end]
+        delta = candidates - xy[previous]
+        toward_center = center - xy[previous]
+        areas = np.abs(delta[:, 0] * toward_center[1]
+                       - delta[:, 1] * toward_center[0])
+        previous = start + int(np.argmax(areas))
+        indices[i + 1] = previous
+    return points[indices]
 
 
 def _loss(m, point):

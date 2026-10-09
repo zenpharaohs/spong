@@ -541,7 +541,8 @@
       <p style="margin:0 0 8px;color:var(--ink-2)">Many-start optimizer trajectories over the certified portrait,
         under two initialization/allocation policies
         <span class="help" tabindex="0" title="Equal: every start gets the same fixed budget of steps. Thompson: budget is allocated adaptively by a continuous-Bernoulli posterior over each start's observed loss. Both use the same random design and, within each start/batch pair, the same seed.">?</span>.
-        Runs against the model currently shown, in the current view.</p>
+        Runs against the model currently shown, in the current view.
+        Long paths use LTTB display thinning, so a drawn segment can span multiple optimizer steps.</p>
       <div class="controls">
         <div>
           <label for="allocMethod">method</label>
