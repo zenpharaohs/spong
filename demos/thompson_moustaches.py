@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import html
 import json
+import os
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -166,7 +169,8 @@ def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
     return states, gradients
 
 
-def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None):
+def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None,
+           cache=None):
     class RoundRobin:
         def __init__(self, n):
             self.n = n
@@ -185,7 +189,40 @@ def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None):
     bank = RoundRobin(len(states))
     return thompson.allocate(
         states, gradients, loss, bank, rounds, chunk_steps,
-        should_stop=should_stop)
+        should_stop=should_stop, cache=cache)
+
+
+def _precompute_arm(task):
+    tape, pulls, deadline = task
+    stop = (None if deadline is None else
+            lambda: time.perf_counter() >= deadline)
+    tape.extend_to(pulls, should_stop=stop)
+    return tape
+
+
+def _uniform_cache(states, gradients, loss, rounds, chunk_steps,
+                   should_stop=None, deadline=None, workers=None):
+    """Compute independent uniform prefixes, then retain live arm states."""
+    cache = thompson.TrajectoryCache(states, gradients, loss, chunk_steps)
+    n_arms = len(states)
+    pulls = [len(range(i, rounds, n_arms)) for i in range(n_arms)]
+    if workers is None:
+        workers = (min(4, n_arms, os.cpu_count() or 1)
+                   if rounds * chunk_steps >= 20000 else 1)
+    workers = max(1, min(int(workers), n_arms))
+    tasks = [(arm, count, deadline) for arm, count in zip(cache.arms, pulls)]
+    if should_stop is not None and should_stop():
+        raise TimeoutError("allocation stopped by interactive time limit")
+    if workers == 1 or (should_stop is not None and deadline is None):
+        for tape, count, _ in tasks:
+            tape.extend_to(count, should_stop=should_stop)
+        workers = 1
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            cache.arms = list(pool.map(_precompute_arm, tasks))
+    if should_stop is not None and should_stop():
+        raise TimeoutError("allocation stopped by interactive time limit")
+    return cache, workers
 
 
 def _overlays(result, color):
@@ -281,13 +318,15 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
                        schedule="inverse-sqrt", design="low-discrepancy",
                        seed=1729, distribution="uniform01", samples=None,
                        learning_rate=None, cb_library=None,
-                       should_stop=None, warmup_steps=100):
+                       should_stop=None, warmup_steps=100, deadline=None,
+                       workers=None):
     """Run equal and exact Thompson allocation on an arbitrary portrait.
 
     ``m`` supplies only the exact loss used for the posterior observation.
     The minibatch oracle is reconstructed from ``f``, ``g`` and the same
-    input law that supplied the portrait moments.  The two policies receive
-    identical starts and per-arm random streams.
+    input law that supplied the portrait moments.  Uniform arm prefixes are
+    recorded once; Thompson replays those exact iterates and losses, extending
+    a live arm state only when its selections exceed the uniform prefix.
     """
     starts = int(starts)
     rounds = int(rounds)
@@ -332,16 +371,19 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         learning_rate=learning_rate, warmup_steps=warmup_steps,
         auto_lr=auto_lr)
     equal_states, equal_gradients = _problem(**common)
+    cache, workers_used = _uniform_cache(
+        equal_states, equal_gradients, m.L, rounds, chunk_steps,
+        should_stop=should_stop, deadline=deadline, workers=workers)
     equal = _equal(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
-        should_stop=should_stop)
+        should_stop=should_stop, cache=cache)
 
-    ts_states, ts_gradients = _problem(**common)
+    uniform_lengths = [len(arm.records) for arm in cache.arms]
     with cb_sampler.ContinuousBernoulliBank(
             starts, seed=seed, library=cb_library) as bank:
         adaptive = thompson.allocate(
-            ts_states, ts_gradients, m.L, bank, rounds, chunk_steps,
-            should_stop=should_stop)
+            equal_states, equal_gradients, m.L, bank, rounds, chunk_steps,
+            should_stop=should_stop, cache=cache)
         library_path = str(bank.library_path)
 
     return {
@@ -355,6 +397,13 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
             gallery.DEFAULT_LR[method] if learning_rate is None
             else float(learning_rate)),
         "library_path": library_path,
+        "uniform_workers": workers_used,
+        "replayed_chunks": int(sum(min(int(pulls), cached)
+                                   for pulls, cached in zip(
+                                       adaptive.allocations, uniform_lengths))),
+        "extended_chunks": int(sum(max(0, int(pulls) - cached)
+                                   for pulls, cached in zip(
+                                       adaptive.allocations, uniform_lengths))),
     }
 
 

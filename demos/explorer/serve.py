@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -1064,7 +1065,7 @@ def allocator(payload: dict) -> dict:
         learning_rate = float(raw_lr)
         if not math.isfinite(learning_rate) or learning_rate <= 0.0:
             raise ValueError("learning_rate must be finite and positive")
-    time_limit_sec = float(payload.get("time_limit_sec", 20.0))
+    time_limit_sec = float(payload.get("time_limit_sec", 60.0))
     if not math.isfinite(time_limit_sec) or not 1.0 <= time_limit_sec <= 300.0:
         raise ValueError("time_limit_sec must be finite and in [1, 300]")
 
@@ -1079,7 +1080,8 @@ def allocator(payload: dict) -> dict:
         schedule=schedule, design=design, seed=seed,
         distribution=distribution, samples=samples,
         learning_rate=learning_rate, cb_library=cb_library,
-        should_stop=lambda: time.perf_counter() >= deadline)
+        should_stop=lambda: time.perf_counter() >= deadline,
+        deadline=deadline)
     elapsed = time.perf_counter() - t0
 
     return {
@@ -1109,6 +1111,9 @@ def allocator(payload: dict) -> dict:
             "seed": seed,
             "distribution": distribution,
             "cb_library": comparison["library_path"],
+            "uniform_workers": comparison["uniform_workers"],
+            "replayed_bandit_chunks": comparison["replayed_chunks"],
+            "extended_bandit_chunks": comparison["extended_chunks"],
         },
         # Equal is deliberately a broad, half-transparent underlay.  The
         # narrower saturated Thompson trace then remains legible while the
@@ -1131,25 +1136,33 @@ def isolated_allocator(payload: dict) -> dict:
     cheap to stop.  This outer deadline also covers a native sampler call
     that never returns to Python.
     """
-    raw_limit = payload.get("time_limit_sec", 20.0)
+    raw_limit = payload.get("time_limit_sec", 60.0)
     try:
         requested_limit = float(raw_limit)
     except (TypeError, ValueError):
-        requested_limit = 20.0
+        requested_limit = 60.0
     if not math.isfinite(requested_limit):
-        requested_limit = 20.0
-    hard_limit = min(300.0, max(1.0, requested_limit)) + 2.0
+        requested_limit = 60.0
+    # Allow worker startup, library discovery and pool teardown outside the
+    # cooperative allocation clock before enforcing the hard process limit.
+    hard_limit = min(300.0, max(1.0, requested_limit)) + 15.0
 
     command = [sys.executable, str(Path(__file__).resolve()),
                "--allocator-worker"]
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True)
+        stderr=subprocess.PIPE, text=True,
+        start_new_session=(os.name == "posix"))
     try:
         stdout, stderr = process.communicate(
             json.dumps(payload), timeout=hard_limit)
     except subprocess.TimeoutExpired:
-        process.kill()
+        # The worker may own a parallel uniform-prefix pool.  End the whole
+        # session so a hard timeout cannot strand those child processes.
+        if os.name == "posix" and getattr(process, "pid", None) is not None:
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
         process.communicate()
         raise TimeoutError(
             "allocation stopped by hard interactive time limit") from None

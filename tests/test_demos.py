@@ -379,6 +379,23 @@ def test_thompson_escalates_nonfinite_loss_without_sampling_from_one():
     assert np.all(np.isinf(result.allocation_losses))
 
 
+def test_cached_zero_loss_is_observed_before_global_stop():
+    loss = lambda a, b: a*a + b*b
+    gradient = lambda a, b: np.array([1.0, 0.0])
+    state = opt.SGDState(np.array([1.0, 0.0]), lr=1.0)
+    cache = thompson.TrajectoryCache([state], [gradient], loss, 1)
+    cache.arms[0].extend_to(3)
+    assert len(cache.arms[0].records) == 1
+    posterior = _DeterministicPosterior(())
+    result = thompson.allocate(
+        [state], [gradient], loss, posterior, rounds=3,
+        chunk_steps=1, cache=cache)
+    assert result.termination_reasons == ("zero_loss",)
+    assert result.observations == [[0.0]]
+    assert posterior.updates == [(0, 0.0)]
+    assert result.executed_steps.tolist() == [1]
+
+
 def test_work_loss_histogram_accounts_for_every_executed_step():
     from types import SimpleNamespace
 
@@ -418,6 +435,48 @@ def test_equal_thompson_comparison_accepts_arbitrary_model_and_view(
     assert np.array_equal(result["equal"].executed_steps, [2, 2, 2])
     assert not np.any(result["equal"].terminated)
     assert result["library_path"] == "/fake/libcb_core"
+
+
+def test_parallel_uniform_tape_replays_exact_policy_prefixes(d2, monkeypatch):
+    m, _ = d2
+    monkeypatch.setattr(
+        thompson_moustaches.cb_sampler, "ContinuousBernoulliBank",
+        _FakeContinuousBernoulliBank)
+    f = g = [1, 1, 1]
+    view = (-0.5, 0.5, -0.75, 0.75)
+    points = initializers.low_discrepancy(3, view)
+    common = dict(f=f, g=g, starts=points, method="adam", batch_size=4,
+                  schedule="cosine", horizon=10, seed=41,
+                  design="low-discrepancy")
+    states, gradients = thompson_moustaches._problem(**common)
+    expected_equal = thompson_moustaches._equal(
+        states, gradients, m.L, rounds=15, chunk_steps=2)
+    states, gradients = thompson_moustaches._problem(**common)
+    with _FakeContinuousBernoulliBank(3) as bank:
+        expected_bandit = thompson.allocate(
+            states, gradients, m.L, bank, rounds=15, chunk_steps=2)
+
+    actual = thompson_moustaches.compare_allocators(
+        m, f, g, view, starts=3, rounds=15, chunk_steps=2,
+        batch_size=4, method="adam", schedule="cosine", seed=41,
+        workers=2)
+    assert actual["uniform_workers"] == 2
+    assert actual["replayed_chunks"] == 7
+    assert actual["extended_chunks"] == 8
+    for name, expected in (("equal", expected_equal),
+                           ("thompson", expected_bandit)):
+        observed = actual[name]
+        np.testing.assert_array_equal(observed.choices, expected.choices)
+        np.testing.assert_array_equal(observed.allocations,
+                                      expected.allocations)
+        np.testing.assert_array_equal(observed.allocation_losses,
+                                      expected.allocation_losses)
+        np.testing.assert_array_equal(observed.allocation_steps,
+                                      expected.allocation_steps)
+        assert observed.termination_reasons == expected.termination_reasons
+        for trace, reference in zip(observed.trajectories,
+                                    expected.trajectories):
+            np.testing.assert_array_equal(trace, reference)
 
 
 def test_saddle_connection_coefficients_are_bounded_dyadics():

@@ -186,6 +186,9 @@ def test_allocator_endpoint_uses_active_empirical_portrait_and_visible_view(
     assert result["configuration"]["distribution"] == "empirical"
     assert result["configuration"]["cb_library"] == "/fake/libcb_core"
     assert result["configuration"]["time_limit_sec"] == 7
+    assert result["configuration"]["uniform_workers"] == 1
+    assert result["configuration"]["replayed_bandit_chunks"] == 4
+    assert result["configuration"]["extended_bandit_chunks"] == 2
     assert result["equal"]["allocations"] == [2, 2, 2]
     assert result["thompson"]["allocations"] == [1, 1, 4]
     assert result["equal"]["executed_optimizer_steps"] == 6

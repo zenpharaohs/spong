@@ -78,9 +78,13 @@ blue-noise initialization design, so pan or zoom before running when the
 question concerns a local part of a large portrait.
 
 Both policies receive the same starts, per-arm minibatch streams, optimizer,
-and requested optimizer-step budget.  Equal allocation is round-robin; Thompson
-allocation gives every arm one forced continuation and thereafter selects the
-smallest exact continuous-Bernoulli posterior draw after observing
+and requested optimizer-step budget.  The independent equal-allocation arm
+prefixes are computed first, in parallel for larger runs, and their chunk
+losses and iterates are recorded.  Thompson then plays back those exact same
+prefixes; only an arm selected beyond its recorded uniform prefix is extended.
+Equal allocation is round-robin; Thompson gives every arm one forced
+continuation and thereafter selects the smallest exact continuous-Bernoulli
+posterior draw after observing
 `L/(1+L)`.  The posterior state is sample-and-hold `(N Z,N)` at the arm's
 current loss, not a historical average of its trajectory.  Capture balls,
 critical-point labels, and portrait topology do not
@@ -105,7 +109,7 @@ Posterior observations use the sampler's closed family.  Exact zero loss maps
 to the point mass at zero and is a resolved success that ends that policy run.
 Upper-endpoint failure sentinels are recorded for the result but are not
 passed to the sampler, so neither endpoint enters rejection sampling.
-Interactive allocation also has a configurable wall-clock limit (20 seconds
+Interactive allocation also has a configurable wall-clock limit (60 seconds
 by default, at most 300 seconds).  The status shows elapsed time while the
 request runs, and Cancel releases the viewer immediately.  The HTTP endpoint
 runs allocation beyond a process boundary: ordinary code cooperatively checks

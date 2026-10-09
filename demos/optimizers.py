@@ -86,29 +86,41 @@ class BatchGradient:
 def cosine_schedule(base_lr, total_steps, warmup_fraction=0.05,
                     final_fraction=0.01):
     """Linear warmup followed by cosine decay."""
-    warmup = max(1, int(round(total_steps*warmup_fraction)))
-
-    def schedule(t):
-        if t <= warmup:
-            return float(base_lr)*t/warmup
-        u = min(1.0, (t-warmup)/max(1, total_steps-warmup))
-        multiplier = final_fraction+(1-final_fraction)*0.5*(
-            1+np.cos(np.pi*u))
-        return float(base_lr)*float(multiplier)
-
-    return schedule
+    return CosineSchedule(float(base_lr), int(total_steps),
+                          float(warmup_fraction), float(final_fraction))
 
 
 def inverse_sqrt_schedule(base_lr, warmup_steps=100):
     """Linear warmup followed by the conventional inverse-square-root tail."""
-    warmup_steps = max(1, int(warmup_steps))
+    return InverseSqrtSchedule(float(base_lr), max(1, int(warmup_steps)))
 
-    def schedule(t):
-        if t <= warmup_steps:
-            return float(base_lr)*t/warmup_steps
-        return float(base_lr)*np.sqrt(warmup_steps/t)
 
-    return schedule
+@dataclass(frozen=True)
+class CosineSchedule:
+    base_lr: float
+    total_steps: int
+    warmup_fraction: float
+    final_fraction: float
+
+    def __call__(self, t):
+        warmup = max(1, int(round(self.total_steps*self.warmup_fraction)))
+        if t <= warmup:
+            return self.base_lr*t/warmup
+        u = min(1.0, (t-warmup)/max(1, self.total_steps-warmup))
+        multiplier = self.final_fraction+(1-self.final_fraction)*0.5*(
+            1+np.cos(np.pi*u))
+        return self.base_lr*float(multiplier)
+
+
+@dataclass(frozen=True)
+class InverseSqrtSchedule:
+    base_lr: float
+    warmup_steps: int
+
+    def __call__(self, t):
+        if t <= self.warmup_steps:
+            return self.base_lr*t/self.warmup_steps
+        return self.base_lr*np.sqrt(self.warmup_steps/t)
 
 
 def _lr_at(lr, t):

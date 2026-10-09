@@ -63,8 +63,69 @@ def _observe(loss, z):
     return transformed_loss(_raw_loss(loss, z))
 
 
+@dataclass
+class ChunkRecord:
+    points: list
+    raw_loss: float
+    reason: str | None
+
+
+@dataclass
+class ArmTape:
+    """One optimizer stream, recorded by chunk for both allocation policies."""
+    state: object
+    gradient: object
+    loss: object
+    chunk_steps: int
+    start: np.ndarray
+    records: list
+    terminal_reason: str | None = None
+
+    @classmethod
+    def create(cls, state, gradient, loss, chunk_steps):
+        return cls(state, gradient, loss, chunk_steps,
+                   np.asarray(state.z, dtype=float).copy(), [])
+
+    def extend_to(self, pulls, should_stop=None):
+        while len(self.records) < pulls and self.terminal_reason is None:
+            points = []
+            reason = None
+            for _ in range(self.chunk_steps):
+                if should_stop is not None and should_stop():
+                    raise TimeoutError("allocation stopped by interactive time limit")
+                z, failure = optimizers.checked_step(self.state, self.gradient)
+                if failure is not None:
+                    reason = failure
+                    break
+                points.append(z.copy())
+            raw_loss = _raw_loss(self.loss, self.state.z)
+            observation = transformed_loss(raw_loss)
+            if reason is None and not np.isfinite(raw_loss):
+                reason = "nonfinite_loss"
+            elif reason is None and observation >= 1.0:
+                reason = "loss_transform_saturated"
+            self.records.append(ChunkRecord(points, raw_loss, reason))
+            # Zero is observed by the policy before it stops globally; it is
+            # not a numerical failure and must not be fed to deactivate().
+            self.terminal_reason = ("zero_loss" if reason is None
+                                    and observation == 0.0 else reason)
+
+    def pull(self, ordinal, should_stop=None):
+        self.extend_to(ordinal + 1, should_stop=should_stop)
+        return self.records[ordinal]
+
+
+class TrajectoryCache:
+    def __init__(self, states, gradients, loss, chunk_steps):
+        self.arms = [ArmTape.create(state, gradient, loss, chunk_steps)
+                     for state, gradient in zip(states, gradients)]
+
+    def pull(self, arm, ordinal, should_stop=None):
+        return self.arms[arm].pull(ordinal, should_stop=should_stop)
+
+
 def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
-             should_stop=None):
+             should_stop=None, cache=None):
     """Allocate ``rounds`` short continuations using posterior loss draws.
 
     Each arm receives one forced continuation before Thompson allocation,
@@ -77,6 +138,10 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
     obsolete losses encountered earlier on the same trajectory.  A simple
     test posterior may omit ``set_observation`` and retain the historical
     ``update`` protocol.
+
+    ``cache`` optionally supplies recorded chunks from independent arm tapes.
+    Both policies can then consume identical optimizer evidence, with a tape
+    extending its state only when a policy requests a new chunk.
 
     ``should_stop`` is an optional cooperative interruption hook for
     interactive consumers.  A stopped comparison is discarded rather than
@@ -91,8 +156,9 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
     if chunk_steps <= 0:
         raise ValueError("chunk_steps must be positive")
 
-    trajectories = [[np.asarray(state.z, dtype=float).copy()]
-                    for state in states]
+    trajectories = [[(cache.arms[i].start if cache is not None
+                      else np.asarray(state.z, dtype=float)).copy()]
+                    for i, state in enumerate(states)]
     observations = [[] for _ in states]
     allocations = np.zeros(n_arms, dtype=np.int64)
     choices = np.empty(rounds, dtype=np.int64)
@@ -115,24 +181,32 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
                 [reason is not None for reason in termination_reasons])
             draws[terminal_mask] = np.inf
             arm = int(np.argmin(draws))
-        state = states[arm]
         steps_before = int(executed_steps[arm])
         if termination_reasons[arm] is None:
-            for _ in range(chunk_steps):
-                if should_stop is not None and should_stop():
-                    raise TimeoutError(
-                        "allocation stopped by interactive time limit")
-                z, failure = optimizers.checked_step(
-                    state, gradients[arm])
-                if failure is not None:
-                    termination_reasons[arm] = failure
-                    break
-                trajectories[arm].append(z.copy())
-                executed_steps[arm] += 1
+            if cache is not None:
+                record = cache.pull(arm, int(allocations[arm]),
+                                    should_stop=should_stop)
+                trajectories[arm].extend(record.points)
+                executed_steps[arm] += len(record.points)
+                termination_reasons[arm] = record.reason
+            else:
+                state = states[arm]
+                for _ in range(chunk_steps):
+                    if should_stop is not None and should_stop():
+                        raise TimeoutError(
+                            "allocation stopped by interactive time limit")
+                    z, failure = optimizers.checked_step(
+                        state, gradients[arm])
+                    if failure is not None:
+                        termination_reasons[arm] = failure
+                        break
+                    trajectories[arm].append(z.copy())
+                    executed_steps[arm] += 1
         # Once numerical divergence occurs, preserve the last finite point
         # and remove the arm from future selection.  The sentinel observation
         # remains in the result for diagnosis; it is not fed to the sampler.
-        raw_loss = _raw_loss(loss, state.z)
+        raw_loss = (record.raw_loss if cache is not None
+                    else _raw_loss(loss, state.z))
         observation = transformed_loss(raw_loss)
         if termination_reasons[arm] is None and not np.isfinite(raw_loss):
             termination_reasons[arm] = "nonfinite_loss"

@@ -595,7 +595,7 @@
         </div>
         <div>
           <label for="allocLimit">time limit (s)</label>
-          <input id="allocLimit" type="number" value="20" min="1" max="300" step="1">
+          <input id="allocLimit" type="number" value="60" min="1" max="300" step="1">
         </div>
         <div class="wide row">
           <button id="runAllocator">run allocator</button>
@@ -2723,9 +2723,15 @@ async function runAllocator(){
     S.allocator = data;
     st.className = "status"; st.textContent = `done · ${data.elapsed_sec.toFixed(1)}s`;
     const eq = data.equal || {}, th = data.thompson || {};
+    const cfg = data.configuration || {};
     let summary =
       `equal — final loss range [${fmtRange(eq.final_observations)}]<br>`
       + `thompson — final loss range [${fmtRange(th.final_observations)}]`;
+    if (Number.isFinite(cfg.replayed_bandit_chunks)){
+      summary += `<br>bandit playback — ${cfg.replayed_bandit_chunks.toLocaleString()} cached chunks, `
+              + `${cfg.extended_bandit_chunks.toLocaleString()} extended; `
+              + `uniform workers ${cfg.uniform_workers}`;
+    }
     const hist = data.work_loss_histogram;
     if (hist){
       const off = p => `zero-loss ${p.zero_steps.toLocaleString()} · `
