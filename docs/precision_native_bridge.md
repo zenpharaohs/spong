@@ -114,9 +114,56 @@ cases deselected. Focused tests: 41 passed. All 14 standalone C tests passed,
 and new solver tests passed ASan/UBSan. CMake was unavailable, so C tests
 were built directly with clang and GMP.
 
-**111 remain unresolved.** All reach the default 512-step construction
-budget. Their last candidates fail analytic independent checks in 101 cases
-and matching in ten. A budget sweep should distinguish insufficient
-continuation from chart truncation/fast-coupling limitations. This result
-does not qualify the optional larger budgets. Task evidence is in
+**111 remained unresolved at this milestone.** All reached the default
+512-step construction budget. Their last candidates failed analytic
+independent checks in 101 cases and matching in ten. This result alone did
+not qualify the optional larger budgets. Task evidence is in
 `outputs/precision-bridge/`, including saved complete paths and recheck hashes.
+
+## Controlled budget and chart-order continuation — 2026-10-09
+
+The replay driver now accepts explicit `--max-steps`, `--order`, and
+`--retry-order` options, plus `--save-all` when complete representations of
+direct analytic arrivals are needed. The backend's opt-in `retry_order`
+returns an existing admitted path first and tries the second chart order
+only after an explicit `precision_bridge_no_checked_entry` refusal. Its
+default is `None`, so previous behavior and ordinary portrait policy are
+unchanged.
+
+```python
+from spong.precision_bridge import checked_precision_path
+points, pieces, checks = checked_precision_path(
+    model, minimum, original_entry, target,
+    max_steps=2048, retry_order=12, sample_budget=50000,
+)
+```
+
+On the frozen 111 refusals, order 8 recovers six at 1,024 steps and twelve
+at 2,048 steps. The order-8-then-12 policy at 2,048 steps recovers **73**:
+twelve at the first order and 61 at the second. It leaves **38**. A complete
+1,400-entry replay confirms **1,362/1,400** admissions against the original
+1,289 baseline, with zero regressions and all 399 jobs complete. Each frontier
+sweep completed all 109 jobs; the second-order policy lost no first-order
+admissions. Frontier and full replay numerical source/binary hashes match.
+Forty new paths are direct analytic arrivals and 33
+retain a precision-bridge prefix. All 73 saved representations pass fresh
+240- and 320-digit checks (**146/146**). All 33 retained native prefixes
+also pass exact-rational checks against the original global model at nine
+points per step. These are sampled admissions, never certificates.
+The current default Python suite passes 1,008 tests.
+
+At order 8 and 2,048 steps, 95 of 99 last candidates failed the independent
+tail-angle limit, including 71 with reversed flow; four inverse matches did
+not converge. Order 12 recovered some of the reversed-flow cases, so the
+order-8 orientation alone does not justify skipping the second order. Of the
+38 final refusals, last-candidate reasons are 29 analytic checks, five
+native prefix checks and four inverse matches. They need individual
+obligation diagnostics and further chart/fast-coupling work. The 2,048-step
+limit and existing admission thresholds were not widened.
+
+See task `outputs/precision-bridge-budget-sweep/report.md` for complete
+frontier and full replay inputs, manifests, saved paths, independent rechecks
+and the entry-by-entry comparison. The compact repo checkpoints are
+`docs/evidence/precision_bridge_order_ladder_2026-10-09.json` and
+`docs/evidence/precision_bridge_remaining_2026-10-09.json`; the latter is a
+replay-compatible list of all 38 still-refused original entries.

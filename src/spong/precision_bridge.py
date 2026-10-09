@@ -31,8 +31,32 @@ def propose_bridge(m,minimum,start,*,digits=80,max_steps=512):
     return np.array(points),evidence
 
 
-def checked_precision_path(m,minimum,start,target,*,order=8,precision=80,check_precision=90,sample_budget=10000,max_steps=512):
-    """Preserve existing admitted paths; try precision bridge only on refusal."""
+def checked_precision_path(m,minimum,start,target,*,order=8,precision=80,check_precision=90,
+                           sample_budget=10000,max_steps=512,retry_order=None):
+    """Preserve existing admissions; optionally retry a refused path at another chart order."""
+    if retry_order is not None:
+        if type(retry_order) is not int or not 2<=retry_order<=12 or retry_order==order:
+            raise ValueError('precision_bridge_retry_order')
+        options=dict(precision=precision,check_precision=check_precision,
+                     sample_budget=sample_budget,max_steps=max_steps)
+        try:
+            return checked_precision_path(m,minimum,start,target,order=order,**options)
+        except ValueError as first:
+            if str(first)!='precision_bridge_no_checked_entry':raise
+            prior=first
+        try:
+            points,pieces,checks=checked_precision_path(m,minimum,start,target,
+                                                        order=retry_order,**options)
+        except ValueError as second:
+            if str(second)!='precision_bridge_no_checked_entry':raise
+            error=ValueError('precision_bridge_no_checked_entry')
+            error.handoff={'policy':'precision-bridge-order-retry-v1','orders':(order,retry_order),
+                           'first':getattr(prior,'handoff',None),
+                           'second':getattr(second,'handoff',None)}
+            raise error from second
+        return points,pieces,{**checks,'order_retry':{'first_order':order,
+                                                     'second_order':retry_order,
+                                                     'first_reason':str(prior)}}
     from .precision_bridge_check import endpoint,measure_precision_bridge,measure_precision_join
     kwargs=dict(order=order,precision=precision,check_precision=check_precision,sample_budget=sample_budget)
     try:return checked_path(m,minimum,start,target,**kwargs)

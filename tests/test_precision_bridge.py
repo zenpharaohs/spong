@@ -87,3 +87,25 @@ def test_precision_bridge_recovery_preserves_input_and_independent_evidence():
     assert pre['status']=='measured' and pre['max_sin_squared']<1e-6 and pre['opposed_flow']==0
     join=measure_precision_join(points,*pieces)
     assert join['same_orientation'] and join['sin_squared']<1e-6 and join['join_eps']<64
+
+
+def test_optional_order_retry_recovers_refused_frozen_entry():
+    import importlib.util,random
+    from pathlib import Path
+    from spong import sturm
+    from spong.precision_bridge import checked_precision_path
+    from spong.trajectory_check import inventory
+    spec=importlib.util.spec_from_file_location('precision_bridge_qualify',Path(__file__).resolve().parents[1]/'scripts/qualify.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    m,_=module.directed_model(random.Random(1215694974),5)
+    start=(-2.8018489865451165e-10,3071.232253694594)
+    target=(-2.7990491133113615e-10,3072.0)
+    en=sturm.materialize_stubs(m,sturm.enumerate_critical_points(m))
+    q=next(q for q in en.minima if (q.a,q.b)==target)
+    points,pieces,checks=checked_precision_path(
+        m,q,start,target,sample_budget=50000,max_steps=2048,retry_order=12)
+    assert checks['order_retry']=={'first_order':8,'second_order':12,
+                                   'first_reason':'precision_bridge_no_checked_entry'}
+    assert len(pieces)==1 and pieces[0].kind=='minimum_arrival'
+    assert not checks['certified'] and inventory(points,pieces)['status']=='complete'
+    assert np.array_equal(points[0],start) and np.array_equal(points[-1],target)

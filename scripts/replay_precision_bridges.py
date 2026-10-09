@@ -20,7 +20,7 @@ def emit(row):
     print(json.dumps(row, allow_nan=False), flush=True)
 
 
-def worker(source, job, evidence_dir, check_precision):
+def worker(source, job, evidence_dir, check_precision, max_steps, order, retry_order, save_all):
     os.environ['SPONG_ENGINE'] = 'native'
     os.environ['SPONG_WORKERS'] = '1'
     os.environ['SPONG_STUB_MODE'] = 'jet'
@@ -49,14 +49,15 @@ def worker(source, job, evidence_dir, check_precision):
             with deadline(240):
                 q = next(q for q in en.minima if [q.a, q.b] == e['target'])
                 points, pieces, checks = checked_path(m, q, e['start'], e['target'],
-                    sample_budget=50000, check_precision=check_precision)
+                    sample_budget=50000, check_precision=check_precision, order=order,
+                    max_steps=max_steps, retry_order=retry_order)
                 coverage = inventory(points, pieces)
                 assert coverage['status'] == 'complete'
                 assert np.array_equal(points[0], e['start']) and np.array_equal(points[-1], e['target'])
                 row.update(status='measured', **{'pass': True}, checks=checks,
                            coverage=coverage, pieces=[p.summary() for p in pieces],
                            handoff=len(pieces)>1, matching=pieces[-1].evidence.get('matching'))
-                if len(pieces)>1 and evidence_dir:
+                if evidence_dir and (len(pieces)>1 or save_all):
                     packed = []
                     for p in pieces:
                         ev = dict(p.evidence)
@@ -79,7 +80,10 @@ def run_one(args, job):
     with (args.output/f'{job:04d}.jsonl').open('w') as log, (args.output/f'{job:04d}.stderr').open('w') as err:
         try:
             p = subprocess.run([sys.executable, __file__, str(args.source), '--worker', str(job),
-                '--output', str(args.output), '--check-precision', str(args.check_precision)],
+                '--output', str(args.output), '--check-precision', str(args.check_precision),
+                '--max-steps', str(args.max_steps), '--order', str(args.order),
+                *(['--retry-order', str(args.retry_order)] if args.retry_order is not None else []),
+                *(['--save-all'] if args.save_all else [])],
                 cwd=REPO, stdout=log, stderr=err, timeout=900,
                 env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
             return {'job': job, 'returncode': p.returncode}
@@ -94,10 +98,19 @@ def main():
     ap.add_argument('--workers', type=int, default=3)
     ap.add_argument('--worker', type=int)
     ap.add_argument('--check-precision', type=int, default=90)
+    ap.add_argument('--max-steps', type=int, default=512,
+                    choices=(512, 1024, 2048), help='native bridge step budget')
+    ap.add_argument('--order', type=int, default=8, choices=range(2, 13),
+                    help='analytic arrival chart order')
+    ap.add_argument('--retry-order', type=int, choices=range(2, 13),
+                    help='opt-in second chart order after an explicit refusal')
+    ap.add_argument('--save-all', action='store_true',
+                    help='save complete evidence for direct arrivals as well as hybrids')
     args = ap.parse_args()
     args.source=args.source.resolve();args.output=args.output.resolve()
     if args.worker is not None:
-        worker(args.source, args.worker, args.output/'evidence', args.check_precision)
+        worker(args.source, args.worker, args.output/'evidence', args.check_precision,
+               args.max_steps, args.order, args.retry_order, args.save_all)
         return
     args.output.mkdir(parents=True, exist_ok=False)
     (args.output/'evidence').mkdir()
@@ -107,7 +120,9 @@ def main():
              *sorted((REPO/'src/c').glob('*.c')), *sorted((REPO/'src/spong').glob('_native*.inc')),
              *sorted((REPO/'include/spong').glob('*.h')), Path(__file__).resolve()]
     manifest = {'source': str(args.source), 'source_sha256': hashlib.sha256(args.source.read_bytes()).hexdigest(),
-        'entries': len(entries), 'jobs': jobs, 'workers': args.workers, 'check_precision': args.check_precision,
+        'entries': len(entries), 'jobs': jobs, 'workers': args.workers,
+        'check_precision': args.check_precision, 'max_steps': args.max_steps,
+        'order': args.order, 'retry_order': args.retry_order, 'save_all': args.save_all,
         'sha256': {str(p.relative_to(REPO)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
     (args.output/'manifest.json').write_text(json.dumps(manifest, indent=2))
     with (args.output/'completion.jsonl').open('w') as log, ThreadPoolExecutor(max_workers=args.workers) as pool:

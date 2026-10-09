@@ -1,0 +1,610 @@
+[
+  {
+    "job": 209,
+    "entry": 6,
+    "cohort": "directed",
+    "seed": 302134315,
+    "spectral_ratio": 9.056253322570584e+45,
+    "start": [
+      -1.9672261612411396e-16,
+      1278.5119685188993
+    ],
+    "target": [
+      -1.9558179725336418e-16,
+      1280.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 214,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 1629467061,
+    "spectral_ratio": 3.7707863404877942e+68,
+    "start": [
+      -2.2829059256483945e-24,
+      -65519.617239554595
+    ],
+    "target": [
+      -2.2800539345455915e-24,
+      -65536.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 223,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 262138163,
+    "spectral_ratio": 2.8797933047020964e+40,
+    "start": [
+      -2.503000866746684e-14,
+      -639.8400525013446
+    ],
+    "target": [
+      -2.4998748768369753e-14,
+      -640.0
+    ],
+    "last_reason": "precision_bridge_prefix_rejected"
+  },
+  {
+    "job": 227,
+    "entry": 5,
+    "cohort": "directed",
+    "seed": 557073518,
+    "spectral_ratio": 2.3251285173569428e+39,
+    "start": [
+      -8.380366298649219e-14,
+      -511.6130430490207
+    ],
+    "target": [
+      -8.348745768773507e-14,
+      -512.0
+    ],
+    "last_reason": "precision_bridge_prefix_rejected"
+  },
+  {
+    "job": 229,
+    "entry": 2,
+    "cohort": "directed",
+    "seed": 1495018765,
+    "spectral_ratio": 2.1247093588931646e+64,
+    "start": [
+      1.7198468970974843e-21,
+      196362.24961081895
+    ],
+    "target": [
+      1.7112641213966842e-21,
+      196608.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 232,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 263091577,
+    "spectral_ratio": 5.821404370164633e+57,
+    "start": [
+      4.740006795476358e-19,
+      -49139.71377196974
+    ],
+    "target": [
+      4.735269278421304e-19,
+      -49152.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 233,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 468822672,
+    "spectral_ratio": 3.637159239901556e+16,
+    "start": [
+      -3.621743898492245e-05,
+      42.575459839117684
+    ],
+    "target": [
+      -5.7759439620341324e-05,
+      36.440569984670084
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 235,
+    "entry": 18,
+    "cohort": "directed",
+    "seed": 1490875572,
+    "spectral_ratio": 2.629169042844778e+43,
+    "start": [
+      2.402490698831894e-15,
+      1023.7463416752037
+    ],
+    "target": [
+      2.3995160724177134e-15,
+      1024.0
+    ],
+    "last_reason": "precision_bridge_prefix_rejected"
+  },
+  {
+    "job": 244,
+    "entry": 11,
+    "cohort": "directed",
+    "seed": 1099534963,
+    "spectral_ratio": 1.8028312692401758e+19,
+    "start": [
+      -9.09905006135214e-06,
+      65.97471511263575
+    ],
+    "target": [
+      -9.529491640056363e-06,
+      64.96695694952896
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 245,
+    "entry": 14,
+    "cohort": "directed",
+    "seed": 178281140,
+    "spectral_ratio": 1.1824805467889163e+61,
+    "start": [
+      2.4800218187466906e-21,
+      12284.928518522407
+    ],
+    "target": [
+      2.4769238638296846e-21,
+      12288.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 246,
+    "entry": 3,
+    "cohort": "directed",
+    "seed": 468705348,
+    "spectral_ratio": 5.346642236417865e+41,
+    "start": [
+      -9.031245675566898e-11,
+      -130908.1851206106
+    ],
+    "target": [
+      -9.008685193108636e-11,
+      -131072.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 251,
+    "entry": 5,
+    "cohort": "directed",
+    "seed": 607257691,
+    "spectral_ratio": 2.6293511844940394e+55,
+    "start": [
+      1.441509251925495e-19,
+      -8189.952014903949
+    ],
+    "target": [
+      1.439708317894978e-19,
+      -8192.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 252,
+    "entry": 3,
+    "cohort": "directed",
+    "seed": 1826187052,
+    "spectral_ratio": 1.91627781558622e+64,
+    "start": [
+      -2.618332727034517e-21,
+      -196362.25022380205
+    ],
+    "target": [
+      -2.6052661380803895e-21,
+      -196608.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 255,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 1504497988,
+    "spectral_ratio": 7.506721001202202e+29,
+    "start": [
+      -6.820454128387302e-11,
+      109.0961755155804
+    ],
+    "target": [
+      -1.2350081977429862e-10,
+      96.88084836719496
+    ],
+    "last_reason": "arrival_matching_not_converged"
+  },
+  {
+    "job": 278,
+    "entry": 11,
+    "cohort": "directed",
+    "seed": 664332776,
+    "spectral_ratio": 289860029308894.75,
+    "start": [
+      8.675334462714712e-06,
+      24.66070945710817
+    ],
+    "target": [
+      7.591666681567571e-05,
+      14.424325774949784
+    ],
+    "last_reason": "arrival_matching_not_converged"
+  },
+  {
+    "job": 285,
+    "entry": 5,
+    "cohort": "directed",
+    "seed": 1870596237,
+    "spectral_ratio": 4.33802327202855e+53,
+    "start": [
+      -7.622395632656451e-20,
+      -8189.952584748093
+    ],
+    "target": [
+      -7.612875118706628e-20,
+      -8192.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 288,
+    "entry": 6,
+    "cohort": "directed",
+    "seed": 1562374282,
+    "spectral_ratio": 5.597212994250854e+56,
+    "start": [
+      3.75261601873555e-17,
+      524156.93134030496
+    ],
+    "target": [
+      3.749802329803843e-17,
+      524288.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 301,
+    "entry": 18,
+    "cohort": "directed",
+    "seed": 1334921112,
+    "spectral_ratio": 5.680794580700935e+63,
+    "start": [
+      9.097789075616079e-23,
+      32759.809913509227
+    ],
+    "target": [
+      9.086425265235656e-23,
+      32768.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 302,
+    "entry": 2,
+    "cohort": "directed",
+    "seed": 928347154,
+    "spectral_ratio": 5.854132353886565e+64,
+    "start": [
+      1.986725857543816e-21,
+      196362.24994989124
+    ],
+    "target": [
+      1.9768112363651252e-21,
+      196608.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 317,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 2024520151,
+    "spectral_ratio": 3.1278340002036595e+73,
+    "start": [
+      -8.190211298293987e-26,
+      -131039.24747681053
+    ],
+    "target": [
+      -8.179983478921817e-26,
+      -131072.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 321,
+    "entry": 3,
+    "cohort": "directed",
+    "seed": 762793229,
+    "spectral_ratio": 4.1015964338551896e+51,
+    "start": [
+      4.1296791989368486e-17,
+      -20454.40494814687
+    ],
+    "target": [
+      4.10907368152253e-17,
+      -20480.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 324,
+    "entry": 2,
+    "cohort": "directed",
+    "seed": 1912687152,
+    "spectral_ratio": 3.2940670972627553e+37,
+    "start": [
+      1.9955711760980855e-09,
+      49090.57421104397
+    ],
+    "target": [
+      1.990586550684843e-09,
+      49152.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 328,
+    "entry": 10,
+    "cohort": "directed",
+    "seed": 252440666,
+    "spectral_ratio": 8.045335742808264e+61,
+    "start": [
+      1.1917612924104363e-22,
+      24569.857637010744
+    ],
+    "target": [
+      1.190272731979837e-22,
+      24576.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 333,
+    "entry": 2,
+    "cohort": "directed",
+    "seed": 1603298635,
+    "spectral_ratio": 1.408064809319991e+39,
+    "start": [
+      -7.540004236765961e-10,
+      81817.61722731908
+    ],
+    "target": [
+      -7.521169075500171e-10,
+      81920.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 337,
+    "entry": 14,
+    "cohort": "directed",
+    "seed": 590723474,
+    "spectral_ratio": 4.5075286661011707e+67,
+    "start": [
+      2.522493394216161e-24,
+      49139.71340442026
+    ],
+    "target": [
+      2.519342213653451e-24,
+      49152.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 350,
+    "entry": 9,
+    "cohort": "directed",
+    "seed": 38538737,
+    "spectral_ratio": 3.6277701469014146e+43,
+    "start": [
+      -2.7686023972259987e-15,
+      -1023.7441915075233
+    ],
+    "target": [
+      -2.7651455987569406e-15,
+      -1024.0
+    ],
+    "last_reason": "precision_bridge_prefix_rejected"
+  },
+  {
+    "job": 351,
+    "entry": 5,
+    "cohort": "directed",
+    "seed": 2060396588,
+    "spectral_ratio": 4.47142465343229e+74,
+    "start": [
+      -4.085921120453054e-27,
+      -196558.84954118764
+    ],
+    "target": [
+      -4.0808164321001155e-27,
+      -196608.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 357,
+    "entry": 8,
+    "cohort": "directed",
+    "seed": 1487602360,
+    "spectral_ratio": 3.8366979283629146e+26,
+    "start": [
+      1.2143414712585085e-08,
+      -124.71431338377806
+    ],
+    "target": [
+      1.4853013285327632e-08,
+      -118.59996949050077
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 372,
+    "entry": 14,
+    "cohort": "directed",
+    "seed": 1046799769,
+    "spectral_ratio": 2.23988704891302e+56,
+    "start": [
+      -2.1959611872515354e-20,
+      8189.952357083811
+    ],
+    "target": [
+      -2.1932180860218563e-20,
+      8192.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 376,
+    "entry": 10,
+    "cohort": "directed",
+    "seed": 188664230,
+    "spectral_ratio": 3.134497613061973e+38,
+    "start": [
+      1.1011563480879539e-13,
+      511.8744936026879
+    ],
+    "target": [
+      1.0998078501587613e-13,
+      512.0
+    ],
+    "last_reason": "precision_bridge_prefix_rejected"
+  },
+  {
+    "job": 381,
+    "entry": 7,
+    "cohort": "directed",
+    "seed": 1289854542,
+    "spectral_ratio": 5.743406647252989e+64,
+    "start": [
+      2.8352380934598132e-21,
+      -196558.86859943037
+    ],
+    "target": [
+      2.832405103697603e-21,
+      -196608.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 391,
+    "entry": 18,
+    "cohort": "directed",
+    "seed": 294601471,
+    "spectral_ratio": 5.190014707340288e+67,
+    "start": [
+      6.25894075513883e-25,
+      98279.42653428338
+    ],
+    "target": [
+      6.251121796028837e-25,
+      98304.0
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 409,
+    "entry": 2,
+    "cohort": "corpus",
+    "name": "linear-target-d17-thrash",
+    "spectral_ratio": 113079552060.31725,
+    "start": [
+      -4.6261186278600786e-11,
+      -5.342978726071841
+    ],
+    "target": [
+      -1.6688355375000793e-05,
+      2.132407885425662
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 410,
+    "entry": 3,
+    "cohort": "corpus",
+    "name": "linear-target-d17-thrash",
+    "spectral_ratio": 1.2989446280575253e+17,
+    "start": [
+      -4.6261186278600786e-11,
+      -5.342978726071841
+    ],
+    "target": [
+      -9.63020614311374e-10,
+      -5.055566239284454
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 413,
+    "entry": 6,
+    "cohort": "corpus",
+    "name": "linear-target-d17-thrash",
+    "spectral_ratio": 1.2989446280575253e+17,
+    "start": [
+      -2.587720952910145e-05,
+      -2.2003395400305203
+    ],
+    "target": [
+      -9.63020614311374e-10,
+      -5.055566239284454
+    ],
+    "last_reason": "arrival_matching_not_converged"
+  },
+  {
+    "job": 414,
+    "entry": 7,
+    "cohort": "corpus",
+    "name": "linear-target-d17-thrash",
+    "spectral_ratio": 1.2989446280575253e+17,
+    "start": [
+      -2.587720952910145e-05,
+      -2.2003395400305203
+    ],
+    "target": [
+      -9.63020614311374e-10,
+      -5.055566239284454
+    ],
+    "last_reason": "arrival_matching_not_converged"
+  },
+  {
+    "job": 425,
+    "entry": 18,
+    "cohort": "corpus",
+    "name": "tricky-d11",
+    "spectral_ratio": 3.1979044380245404e+27,
+    "start": [
+      -7.770017135571918e-06,
+      3.4744530753210565
+    ],
+    "target": [
+      -5.476843345529124e-12,
+      12.605244100172555
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  },
+  {
+    "job": 426,
+    "entry": 19,
+    "cohort": "corpus",
+    "name": "tricky-d11",
+    "spectral_ratio": 3.1979044380245404e+27,
+    "start": [
+      -7.770017135571918e-06,
+      3.4744530753210565
+    ],
+    "target": [
+      -5.476843345529124e-12,
+      12.605244100172555
+    ],
+    "last_reason": "arrival_independent_check_failed"
+  }
+]

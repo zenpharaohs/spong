@@ -1,0 +1,42 @@
+{
+  "frozen_entries": 1400,
+  "completed_jobs": 399,
+  "baseline_admitted": 1289,
+  "final_admitted": 1362,
+  "recoveries": 73,
+  "regressions": 0,
+  "remaining": 38,
+  "frontier_first_order_admitted": 12,
+  "frontier_second_order_admitted": 61,
+  "frontier_piece_kinds": {
+    "precision_bridge": 33,
+    "minimum_arrival": 40
+  },
+  "remaining_cohorts": {
+    "directed": 32,
+    "corpus": 6
+  },
+  "remaining_last_candidate_reasons": {
+    "arrival_independent_check_failed": 29,
+    "arrival_matching_not_converged": 4,
+    "precision_bridge_prefix_rejected": 5
+  },
+  "source_and_binary_hashes_equal_between_frontier_and_full": true,
+  "saved_paths": 73,
+  "independent_rechecks": 146,
+  "independent_rechecks_passed": 146,
+  "exact_rational_prefixes_passed": 33,
+  "max_prefix_sin_squared": 3.6217535825021513e-08,
+  "max_tail_sin_squared": 9.95572006571483e-07,
+  "max_join_sin_squared": 9.404186506203498e-07,
+  "max_attachment_sin_squared": 3.5462891952030895e-98,
+  "policy": {
+    "max_steps": 2048,
+    "first_order": 8,
+    "retry_order": 12,
+    "experimental": true,
+    "certified": false
+  },
+  "frozen_source_sha256": "ebf8518764401ecdd657d1139b0d48f5c638532a1e999effb989ea0033ecfaec",
+  "remaining_entries_sha256": "109dfa99fa011767f42a59c4144bb969aa8114ec9799360fa262e52e9a27f3f6"
+}

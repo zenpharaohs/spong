@@ -1,7 +1,38 @@
 # Handoff — spong
 
-Current checkpoint: `trajectory-checker`, 2026-10-06. Milestone sections
+Current checkpoint: `trajectory-checker`, 2026-10-09. Milestone sections
 below retain their original dates and status.
+
+## Opt-in order-aware precision bridge — 2026-10-09
+
+The experimental `checked_precision_path` accepts `max_steps=2048` and
+`retry_order=12`. It returns any admitted order-8 path first, then retries a
+refusal at order 12. The ordinary portrait and checked-native defaults remain
+unchanged; all results still say `certified=False`.
+
+On the frozen 111 refusals from the 512-step replay, a 1,024-step order-8
+budget recovers six, a 2,048-step order-8 budget recovers twelve, and the
+2,048-step order-8/order-12 ladder recovers **73**, leaving **38**. Combined
+with the preserved 1,289 admissions, this gives **1,362/1,400**. The final
+full-corpus replay confirmed this directly: all 399 jobs complete, 73
+recoveries, zero regressions. All 109 frontier jobs completed at each
+budget, with no lost order-8 admissions.
+Forty of the 73 new paths are direct analytic arrivals; 33 retain native
+precision prefixes. All 73 saved paths pass 240- and 320-digit independent
+rechecks (**146/146**), and all 33 native prefixes pass exact-rational checks
+against the original model. Frontier and full replay source/binary hashes
+match. The current default Python suite passes **1,008 tests**.
+
+Among the 38 frontier refusals, the last candidate has 29 analytic-check
+failures, five prefix refusals, and four inverse matching failures. These
+are unresolved, not evidence of impossible connections. Next investigate
+the separate failed obligations on those fixed cases; do not widen the
+acceptance limits. See `docs/precision_native_bridge.md` and task
+`outputs/precision-bridge-budget-sweep/report.md` for replay inputs,
+manifests, saved paths, and rechecks. The repo also retains the compact
+machine-readable summary and all 38 replayable remaining inputs in
+`docs/evidence/precision_bridge_order_ladder_2026-10-09.json` and
+`docs/evidence/precision_bridge_remaining_2026-10-09.json`.
 
 ## Precision-aware native bridge — 2026-10-04
 
