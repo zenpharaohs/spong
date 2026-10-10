@@ -171,7 +171,7 @@ def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
 
 
 def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None,
-           cache=None):
+           cache=None, observe=thompson.transformed_loss):
     class RoundRobin:
         def __init__(self, n):
             self.n = n
@@ -190,7 +190,7 @@ def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None,
     bank = RoundRobin(len(states))
     return thompson.allocate(
         states, gradients, loss, bank, rounds, chunk_steps,
-        should_stop=should_stop, cache=cache)
+        should_stop=should_stop, cache=cache, observe=observe)
 
 
 def _precompute_arm(task):
@@ -202,9 +202,11 @@ def _precompute_arm(task):
 
 
 def _uniform_cache(states, gradients, loss, rounds, chunk_steps,
-                   should_stop=None, deadline=None, workers=None):
+                   should_stop=None, deadline=None, workers=None,
+                   observe=thompson.transformed_loss):
     """Compute independent uniform prefixes, then retain live arm states."""
-    cache = thompson.TrajectoryCache(states, gradients, loss, chunk_steps)
+    cache = thompson.TrajectoryCache(states, gradients, loss, chunk_steps,
+                                     observe=observe)
     n_arms = len(states)
     pulls = [len(range(i, rounds, n_arms)) for i in range(n_arms)]
     if workers is None:
@@ -323,7 +325,8 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
                        seed=1729, distribution="uniform01", samples=None,
                        learning_rate=None, cb_library=None,
                        should_stop=None, warmup_steps=100, deadline=None,
-                       workers=None, progress=None):
+                       workers=None, progress=None,
+                       observation="renormalized"):
     """Run equal and exact Thompson allocation on an arbitrary portrait.
 
     ``m`` supplies only the exact loss used for the posterior observation.
@@ -331,6 +334,10 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     input law that supplied the portrait moments.  Uniform arm prefixes are
     recorded once; Thompson replays those exact iterates and losses, extending
     a live arm state only when its selections exceed the uniform prefix.
+    The default observation uses a conditioned L/(a+L), with a initially at
+    the median initial loss and reset when it leaves the recent loss IQR.
+    Every active held-loss posterior is then expressed under the new divisor.
+    Pass ``observation="L/(1+L)"`` to reproduce the historical policy.
     """
     starts = int(starts)
     rounds = int(rounds)
@@ -350,12 +357,20 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         raise ValueError(f"unsupported schedule {schedule!r}")
     if design not in gallery.DESIGNS:
         raise ValueError(f"unsupported initialization design {design!r}")
+    if observation not in {"renormalized", "L/(1+L)"}:
+        raise ValueError(f"unsupported observation {observation!r}")
 
     if progress is not None:
         progress("initializations")
     points = (initializers.low_discrepancy(starts, view)
               if design == "low-discrepancy"
               else initializers.blue_noise(starts, view, seed=seed))
+    if observation == "renormalized":
+        initial_losses = [thompson._raw_loss(m.L, start) for start in points]
+        observe = thompson.calibrate_divisor(initial_losses)
+        initial_divisor = observe.scale
+    else:
+        observe = thompson.transformed_loss
     # learning_rate="auto" calibrates each arm from its own exact gradient
     # at its own start; see auto_base_lr.  A numeric rate is used verbatim,
     # and an unusable calibration falls back to the method's default.
@@ -386,12 +401,13 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         progress("uniform trajectory computation")
     cache, workers_used = _uniform_cache(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
-        should_stop=should_stop, deadline=deadline, workers=workers)
+        should_stop=should_stop, deadline=deadline, workers=workers,
+        observe=observe)
     if progress is not None:
         progress("uniform playback")
     equal = _equal(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
-        should_stop=should_stop, cache=cache)
+        should_stop=should_stop, cache=cache, observe=observe)
 
     uniform_lengths = [len(arm.records) for arm in cache.arms]
     if progress is not None:
@@ -400,7 +416,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
             starts, seed=seed, library=cb_library) as bank:
         adaptive = thompson.allocate(
             equal_states, equal_gradients, m.L, bank, rounds, chunk_steps,
-            should_stop=should_stop, cache=cache)
+            should_stop=should_stop, cache=cache, observe=observe)
         library_path = str(bank.library_path)
 
     return {
@@ -414,6 +430,13 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
             gallery.DEFAULT_LR[method] if learning_rate is None
             else float(learning_rate)),
         "library_path": library_path,
+        "observation": observation,
+        "observation_calibration": (
+            {"initial_divisor": initial_divisor,
+             "final_divisor": observe.scale,
+             "renormalizations": observe.changes,
+             "window_rounds": starts}
+            if observation == "renormalized" else None),
         "optimizer_backend": optimizer_backend,
         "uniform_workers": workers_used,
         "replayed_chunks": int(sum(min(int(pulls), cached)
@@ -505,7 +528,7 @@ def main(argv=None):
         "zoo": case.name,
         "method": args.method,
         "design": args.design,
-        "observation": "L/(1+L)",
+        "observation": comparison["observation"],
         "selection": "minimum exact continuous-Bernoulli posterior draw",
         "capture_used_for_allocation": False,
         "configuration": {
@@ -518,6 +541,7 @@ def main(argv=None):
             "warmup_steps": comparison["warmup_steps"],
             "learning_rate": comparison["learning_rate"],
             "seed": args.seed,
+            "observation_calibration": comparison["observation_calibration"],
             "cb_library": comparison["library_path"],
             "optimizer_backend": comparison["optimizer_backend"],
             "uniform_workers": comparison["uniform_workers"],
@@ -547,7 +571,8 @@ object {{ width:100%; aspect-ratio:4/3; }}
 </style>
 <h1>Equal versus Thompson allocation on {html.escape(case.name)}</h1>
 <p>Both panels spend exactly {args.rounds*args.chunk_steps:,} optimizer
-steps. The Thompson scheduler sees only L/(1+L) after each short continuation;
+steps. The Thompson scheduler sees a calibrated, bounded monotone transform
+of each post-chunk loss after every short continuation;
 capture and the certified geometry are used only to interpret the result.</p>
 <main>{''.join(panels)}</main>
 """)

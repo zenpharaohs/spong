@@ -300,6 +300,30 @@ def test_thompson_replaces_sample_and_hold_stats_when_supported():
         (0, 1), (1, 1), (1, 2), (0, 2)]
 
 
+def test_renormalization_resets_every_active_held_posterior():
+    class HoldingPosterior:
+        def __init__(self):
+            self.held = []
+
+        def set_observation(self, arm, observation, selections):
+            self.held.append((arm, observation, selections))
+
+    states = [opt.SGDState(np.array([value, 0.0]), lr=0.1)
+              for value in (1.0, 2.0)]
+    gradients = [lambda a, b: np.array([a, b])] * 2
+    posterior = HoldingPosterior()
+    observe = thompson.RenormalizedLoss(100.0)
+    result = thompson.allocate(
+        states, gradients, lambda a, b: a*a+b*b,
+        posterior, rounds=2, chunk_steps=1, observe=observe)
+    assert observe.scale == pytest.approx(np.median([0.81, 3.24]))
+    assert [(arm, count) for arm, _, count in posterior.held] == [
+        (0, 1), (1, 1), (0, 1), (1, 1)]
+    assert posterior.held[-2][1] == observe(0.81)
+    assert posterior.held[-1][1] == observe(3.24)
+    assert result.observations[0][-1] == observe(0.81)
+
+
 def test_inverse_sqrt_allocator_schedule_is_budget_prefix_consistent():
     short = thompson_moustaches._schedule(
         "inverse-sqrt", 0.01, horizon=1000, warmup_steps=80)
@@ -610,6 +634,23 @@ def test_transformed_loss_uses_closed_family_boundaries():
     assert observations[:2] == [0.0, 0.0]
     assert observations[-2:] == [1.0, 1.0]
     assert all(0.0 <= observation <= 1.0 for observation in observations)
+
+
+def test_renormalized_loss_tracks_recent_interquartile_scale():
+    observe = thompson.calibrate_divisor([1e2, 1e6, 1e10, 1e14])
+    assert observe.scale == pytest.approx(np.median([1e2, 1e6, 1e10, 1e14]))
+    assert observe(observe.scale) == 0.5
+    values = [observe(loss) for loss in (1e2, 1e6, 1e10, 1e14)]
+    assert all(left < right for left, right in zip(values, values[1:]))
+    assert observe.recalibrate([2.0, 3.0, 4.0, np.inf])
+    assert observe.scale == 3.0
+    assert observe.changes == 1
+    assert observe(3.0) == 0.5
+    assert not observe.recalibrate([2.0, 3.0, 4.0])
+    assert observe.changes == 1
+    assert observe(0.0) == 0.0
+    assert observe(float("inf")) == 1.0
+    assert thompson.calibrate_divisor([1e308, 1e308])(1e308) == 0.5
 
 
 def test_empirical_adam_innovation_matches_empirical_loss_gradient():

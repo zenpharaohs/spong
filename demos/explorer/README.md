@@ -89,8 +89,9 @@ used automatically when the kernel cannot be built.  Set
 `SPONG_DEMO_ADAM_NATIVE=0` to force that reference path for comparison.
 Equal allocation is round-robin; Thompson gives every arm one forced
 continuation and thereafter selects the smallest exact continuous-Bernoulli
-posterior draw after observing
-`L/(1+L)`.  The posterior state is sample-and-hold `(N Z,N)` at the arm's
+posterior draw after observing a bounded monotone transform of its loss.
+Its log scale is calibrated from the shared initial losses, and finite
+positive losses map into `[0.1, 0.9]`.  The posterior state is sample-and-hold `(N Z,N)` at the arm's
 current loss, not a historical average of its trajectory.  Capture balls,
 critical-point labels, and portrait topology do not
 enter either allocation.  Equal is a broad neutral-grey, half-transparent
@@ -107,8 +108,7 @@ ball gets fewer segments.  Triangle area still favors bends and excursions
 within each bucket.  Each drawn segment may span several optimizer steps;
 line length is not the optimizer's step size.
 
-A non-finite minibatch gradient, optimizer update, loss, or numerically
-saturated upper-endpoint transform terminates that arm at its last finite
+A non-finite minibatch gradient, optimizer update, or loss terminates that arm at its last finite
 iterate and removes it from later posterior draws.  The viewer reports
 terminated-arm counts and actual executed steps, so numerical divergence is
 visible without producing a stream of NumPy overflow warnings, repeatedly
@@ -116,7 +116,9 @@ sampling a failed arm, or drawing non-finite points.
 Posterior observations use the sampler's closed family.  Exact zero loss maps
 to the point mass at zero and is a resolved success that ends that policy run.
 Upper-endpoint failure sentinels are recorded for the result but are not
-passed to the sampler, so neither endpoint enters rejection sampling.
+passed to the sampler.  For finite positive losses, the default observation
+uses `0.01 + 0.98 L/(a+L)`, with `a` periodically recalibrated to the median recent
+allocated loss; all active held-loss posteriors are reset under the new `a`.
 Interactive allocation also has a configurable wall-clock limit (60 seconds
 by default, at most 300 seconds).  The status shows elapsed time while the
 request runs, and Cancel releases the viewer immediately.  The HTTP endpoint

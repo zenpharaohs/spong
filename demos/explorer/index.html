@@ -2726,14 +2726,21 @@ async function runAllocator(){
     const eq = data.equal || {}, th = data.thompson || {};
     const cfg = data.configuration || {};
     let summary =
-      `equal — final loss range [${fmtRange(eq.final_observations)}]<br>`
-      + `thompson — final loss range [${fmtRange(th.final_observations)}]`;
+      `equal — final observation range [${fmtRange(eq.final_observations)}]<br>`
+      + `thompson — final observation range [${fmtRange(th.final_observations)}]`;
     if (Number.isFinite(cfg.replayed_bandit_chunks)){
       summary += `<br>bandit playback — ${cfg.replayed_bandit_chunks.toLocaleString()} cached chunks, `
               + `${cfg.extended_bandit_chunks.toLocaleString()} extended; `
               + `uniform workers ${cfg.uniform_workers}; `
+              + `observation ${data.observation}; `
               + `learning rate ${cfg.learning_rate_mode}; `
               + `optimizer ${cfg.optimizer_backend}`;
+      const calibration = cfg.observation_calibration;
+      if (calibration && Number.isFinite(calibration.final_divisor)) {
+        summary += `<br>divisor a ${Number(calibration.initial_divisor).toPrecision(4)}`
+                + ` → ${Number(calibration.final_divisor).toPrecision(4)}`
+                + ` (${calibration.renormalizations} recalibrations)`;
+      }
     }
     const hist = data.work_loss_histogram;
     if (hist){

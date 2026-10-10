@@ -38,8 +38,18 @@ Here now:
   Every initialization first receives one short optimizer continuation.
   Thereafter the arm with the smallest exact continuous-Bernoulli posterior
   draw receives the next continuation and its posterior is immediately
-  replaced by `(N Z, N)`, where `Z=L/(1+L)` is the arm's current held
-  observation and `N` its pull count.  Earlier losses on that same trajectory
+  replaced by `(N Z, N)`, where `Z` is a bounded monotone transform of the
+  arm's current held loss and `N` its pull count.  The default transform is
+  `Z = 0.01 + 0.98 L/(a+L)` for positive finite loss, with `a` initially the
+  median positive finite starting loss.  The small interior margin avoids
+  known exact-sampler stalls near the closed-family endpoints.
+  Every `starts` allocation rounds, the recent loss interquartile range is
+  checked.  Only when `a` leaves that range does it move to the median
+  positive finite loss in the last `starts` allocated chunks.  The current
+  held-loss statistics `(N Z, N)` of all active arms are then reset under
+  the new divisor.  This preserves the loss ordering while
+  bringing competitive losses away from a floating-point endpoint.
+  Earlier losses on that same trajectory
   are not accumulated.  Capture balls and portrait topology never enter
   allocation; they are interpretation equipment after the run.  The exact
   posterior implementation remains in the separate `continuous-bernoulli`

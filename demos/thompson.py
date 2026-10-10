@@ -28,6 +28,59 @@ def transformed_loss(loss):
 
 
 @dataclass
+class RenormalizedLoss:
+    """Map L through L/(scale+L), with scale fitted to recent raw losses.
+
+    The divisor may drift inside the recent-loss interquartile range.  In
+    rested allocation all posterior sufficient statistics can be re-expressed
+    under a new scale
+    from the current held losses and pull counts, without replaying history.
+    Positive finite ratios are kept in [0.01, 0.99] to avoid known stalls
+    in the external exact sampler near its closed-family endpoints.
+    """
+    scale: float
+    changes: int = 0
+
+    def __post_init__(self):
+        if not np.isfinite(self.scale) or self.scale <= 0.0:
+            raise ValueError("loss divisor must be finite and positive")
+
+    def __call__(self, loss):
+        value = float(loss)
+        if not np.isfinite(value):
+            return 1.0
+        if value <= 0.0:
+            return 0.0
+        if value <= self.scale:
+            relative = value/self.scale
+            ratio = relative/(1.0+relative)
+        else:
+            relative = self.scale/value
+            ratio = 1.0/(1.0+relative)
+        return 0.01 + 0.98*ratio
+
+    def recalibrate(self, losses):
+        values = [float(x) for x in losses
+                  if np.isfinite(x) and float(x) > 0.0]
+        if not values:
+            return False
+        q25, scale, q75 = map(float, np.quantile(values, [0.25, 0.5, 0.75]))
+        if q25 <= self.scale <= q75:
+            return False
+        self.scale = scale
+        self.changes += 1
+        return True
+
+
+def calibrate_divisor(losses):
+    """Place the initial divisor at the median positive finite loss."""
+    values = [float(x) for x in losses
+              if np.isfinite(x) and float(x) > 0.0]
+    return RenormalizedLoss(
+        float(np.quantile(values, 0.5)) if values else 1.0)
+
+
+@dataclass
 class AllocationResult:
     trajectories: list
     allocations: np.ndarray
@@ -80,11 +133,14 @@ class ArmTape:
     start: np.ndarray
     records: list
     terminal_reason: str | None = None
+    observe: object = transformed_loss
 
     @classmethod
-    def create(cls, state, gradient, loss, chunk_steps):
+    def create(cls, state, gradient, loss, chunk_steps,
+               observe=transformed_loss):
         return cls(state, gradient, loss, chunk_steps,
-                   np.asarray(state.z, dtype=float).copy(), [])
+                   np.asarray(state.z, dtype=float).copy(), [],
+                   observe=observe)
 
     def extend_to(self, pulls, should_stop=None):
         while len(self.records) < pulls and self.terminal_reason is None:
@@ -109,7 +165,7 @@ class ArmTape:
                         break
                     points.append(z.copy())
             raw_loss = _raw_loss(self.loss, self.state.z)
-            observation = transformed_loss(raw_loss)
+            observation = self.observe(raw_loss)
             if reason is None and not np.isfinite(raw_loss):
                 reason = "nonfinite_loss"
             elif reason is None and observation >= 1.0:
@@ -126,8 +182,10 @@ class ArmTape:
 
 
 class TrajectoryCache:
-    def __init__(self, states, gradients, loss, chunk_steps):
-        self.arms = [ArmTape.create(state, gradient, loss, chunk_steps)
+    def __init__(self, states, gradients, loss, chunk_steps,
+                 observe=transformed_loss):
+        self.arms = [ArmTape.create(state, gradient, loss, chunk_steps,
+                                   observe=observe)
                      for state, gradient in zip(states, gradients)]
 
     def pull(self, arm, ordinal, should_stop=None):
@@ -135,7 +193,7 @@ class TrajectoryCache:
 
 
 def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
-             should_stop=None, cache=None):
+             should_stop=None, cache=None, observe=transformed_loss):
     """Allocate ``rounds`` short continuations using posterior loss draws.
 
     Each arm receives one forced continuation before Thompson allocation,
@@ -177,6 +235,8 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
     allocation_losses = np.empty(rounds, dtype=float)
     allocation_steps = np.zeros(rounds, dtype=np.int64)
     completed_rounds = 0
+    held_losses = np.full(n_arms, np.inf)
+    recent_losses = []
 
     for round_index in range(rounds):
         if should_stop is not None and should_stop():
@@ -217,7 +277,7 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
         # remains in the result for diagnosis; it is not fed to the sampler.
         raw_loss = (record.raw_loss if cache is not None
                     else _raw_loss(loss, state.z))
-        observation = transformed_loss(raw_loss)
+        observation = observe(raw_loss)
         if termination_reasons[arm] is None and not np.isfinite(raw_loss):
             termination_reasons[arm] = "nonfinite_loss"
         elif termination_reasons[arm] is None and observation >= 1.0:
@@ -237,11 +297,27 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
             else:
                 set_observation(arm, observation, selections)
         observations[arm].append(observation)
+        held_losses[arm] = raw_loss
+        if isinstance(observe, RenormalizedLoss):
+            recent_losses.append(raw_loss)
+            if len(recent_losses) > n_arms:
+                recent_losses.pop(0)
         allocations[arm] += 1
         choices[round_index] = arm
         allocation_losses[round_index] = raw_loss
         allocation_steps[round_index] = int(executed_steps[arm])-steps_before
         completed_rounds = round_index + 1
+
+        set_observation = getattr(posterior, "set_observation", None)
+        if (isinstance(observe, RenormalizedLoss)
+                and set_observation is not None
+                and completed_rounds % n_arms == 0
+                and observe.recalibrate(recent_losses)):
+            for index, count in enumerate(allocations):
+                if count and termination_reasons[index] is None:
+                    current = observe(held_losses[index])
+                    set_observation(index, current, int(count))
+                    observations[index][-1] = current
 
         # Zero is the resolved lower endpoint of the closed family.  Once an
         # optimizer has attained it, spending more allocation rounds cannot

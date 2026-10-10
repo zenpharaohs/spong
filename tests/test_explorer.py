@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 import pytest
 
-from demos import native_adam, thompson_moustaches
+from demos import cb_sampler, native_adam, thompson_moustaches
 from demos.explorer import serve
 from spong import zoo
 
@@ -309,6 +309,28 @@ def test_isolated_allocator_kills_worker_stuck_past_deadline(monkeypatch):
             "hard interactive time limit.*uniform trajectory computation")):
         serve.isolated_allocator({"time_limit_sec": 1})
     assert worker.killed
+
+
+@pytest.mark.parametrize("design", ["blue-noise", "low-discrepancy"])
+def test_wide_allocator_avoids_posterior_endpoint_stall(design):
+    try:
+        cb_sampler.resolve_library(auto_build=True)
+    except ValueError:
+        pytest.skip("continuous-Bernoulli core unavailable")
+    view = [-52.14, 51.09, -17.39, 46.48]
+    result = serve.isolated_allocator({
+        "f": [1, -4, 4, 1], "g": [-3, 1, 0, -2],
+        "moments": {"kind": "uniform01"},
+        "view": view, "allocation_view": view,
+        "method": "adam", "schedule": "inverse-sqrt",
+        "learning_rate": "auto", "design": design,
+        "starts": 128, "rounds": 3200, "chunk_steps": 10,
+        "batch_size": 32, "seed": 1729, "time_limit_sec": 5,
+    })
+    assert result["observation"] == "renormalized"
+    assert result["thompson"]["pulls"] == 3200
+    assert result["thompson"]["most_allocated_arms"][0] != 0
+    assert result["configuration"]["observation_calibration"]["renormalizations"] > 0
 
 
 def test_two_connection_candidate_exact_model_and_independent_shots():

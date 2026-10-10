@@ -1101,7 +1101,7 @@ def allocator(payload: dict) -> dict:
 
     return {
         "format": "spong-equal-thompson-traces-v1",
-        "observation": "L/(1+L)",
+        "observation": comparison["observation"],
         "selection": "minimum exact continuous-Bernoulli posterior draw",
         "capture_used_for_allocation": False,
         "allocation_view": list(view),
@@ -1125,6 +1125,7 @@ def allocator(payload: dict) -> dict:
             "design": design,
             "seed": seed,
             "distribution": distribution,
+            "observation_calibration": comparison["observation_calibration"],
             "cb_library": comparison["library_path"],
             "optimizer_backend": comparison["optimizer_backend"],
             "uniform_workers": comparison["uniform_workers"],
