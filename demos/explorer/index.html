@@ -551,8 +551,8 @@
             <option value="sgd">sgd</option>
             <option value="sgd-momentum">sgd-momentum</option>
             <option value="adam" selected>adam</option>
-            <option value="fisher-gn">Fisher/Gauss–Newton + line search</option>
-            <option value="fisher-gn-exact">exact Fisher/Gauss–Newton + line search</option>
+            <option value="fisher-gn-exact">population Fisher/Gauss–Newton · strict descent</option>
+            <option value="fisher-gn">minibatch Fisher/Gauss–Newton · batch descent</option>
             <option value="muon-adamw">muon-adamw</option>
             <option value="vector-muon">vector-muon</option>
           </select>
@@ -2736,7 +2736,7 @@ async function runAllocator(){
               + `${cfg.extended_bandit_chunks.toLocaleString()} extended; `
               + `uniform workers ${cfg.uniform_workers}; `
               + `observation ${data.observation}; `
-              + `${cfg.learning_rate_mode === "line-search" ? "line search" : `learning rate ${cfg.learning_rate_mode}`}; `
+              + `${cfg.learning_rate_mode === "line-search" ? `${cfg.line_search_scope} line search` : `learning rate ${cfg.learning_rate_mode}`}; `
               + `optimizer ${cfg.optimizer_backend}`;
       if (Number.isFinite(cfg.fisher_damping)) {
         summary += ` (relative damping ${cfg.fisher_damping})`;

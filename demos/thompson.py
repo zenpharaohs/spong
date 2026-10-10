@@ -116,6 +116,17 @@ def _raw_loss(loss, z):
     return value if np.isfinite(value) else float("inf")
 
 
+def _state_loss(state, loss):
+    """Use the same exact polynomial value that accepts exact-GN steps."""
+    if isinstance(state, optimizers.ExactFisherGNState):
+        try:
+            value = float(state._exact_values(*state.z))
+        except (ArithmeticError, OverflowError, ValueError):
+            return float("inf")
+        return value if np.isfinite(value) else float("inf")
+    return _raw_loss(loss, state.z)
+
+
 def _observe(loss, z):
     """Evaluate the posterior statistic without leaking overflow warnings."""
     return transformed_loss(_raw_loss(loss, z))
@@ -179,7 +190,7 @@ class ArmTape:
                         reason = failure
                         break
                     points.append(z.copy())
-            raw_loss = _raw_loss(self.loss, self.state.z)
+            raw_loss = _state_loss(self.state, self.loss)
             observation = self.observe(raw_loss)
             if reason is None and not np.isfinite(raw_loss):
                 reason = "nonfinite_loss"
@@ -317,7 +328,7 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
         # and remove the arm from future selection.  The sentinel observation
         # remains in the result for diagnosis; it is not fed to the sampler.
         raw_loss = (record.raw_loss if cache is not None
-                    else _raw_loss(loss, state.z))
+                    else _state_loss(state, loss))
         if cache is None:
             objective_evaluations[arm] += 1
         observation = observe(raw_loss)

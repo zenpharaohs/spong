@@ -153,12 +153,18 @@ on that same batch.  The schedule and learning-rate controls are disabled for
 this method.  The summary reports batch passes as well as optimizer steps:
 one derivative pass plus each trial loss pass counts once.  The exact portrait
 loss remains the allocator observation, not an input to the optimizer step.
+Consequently its population loss can rise even when the sampled batch loss
+falls; the selector labels that scope explicitly.
 The **exact Fisher/Gauss–Newton** variant forms the population 2×2 metric
 and gradient from the model's moments, and backtracks on the exact population
 loss. It draws no minibatches; the summary counts exact loss evaluations.
-Its line search starts near the previous accepted step and expands cautiously,
-so refinement near a minimum does not repeat a long sequence of rejected
-unit steps.
+Its accepted steps strictly decrease the rational polynomial loss at the
+actual binary64 coordinates. A step that cannot make representable progress
+terminates with a precision-limit reason instead of being counted as descent.
+Its line search starts near the previous accepted step and compares adjacent
+dyadic trial scales. This retains useful basin-crossing steps on a nonconvex
+ray while avoiding a nearly loss-neutral full step when a half step is much
+better.
 This is a full-information comparator with different objective access from
 the stochastic methods.
 This is demo-layer evidence, not part of portrait certification.

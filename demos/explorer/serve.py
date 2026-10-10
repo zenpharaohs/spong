@@ -1134,6 +1134,9 @@ def allocator(payload: dict) -> dict:
             "fisher_damping": (
                 allocator_demo.opt.DEFAULT_FISHER_DAMPING
                 if method in {"fisher-gn", "fisher-gn-exact"} else None),
+            "line_search_scope": (
+                "minibatch" if method == "fisher-gn" else
+                "population" if method == "fisher-gn-exact" else None),
             "uniform_workers": comparison["uniform_workers"],
             "replayed_bandit_chunks": comparison["replayed_chunks"],
             "extended_bandit_chunks": comparison["extended_chunks"],

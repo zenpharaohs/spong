@@ -16,6 +16,7 @@ model's ∇L (Ljung's mean-field ODE is the portrait itself).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 
 import numpy as np
 
@@ -169,8 +170,11 @@ class ExactFisherGNState:
     """Population Fisher/Gauss--Newton step from the model's exact moments.
 
     This is deliberately a full-information comparator: unlike the minibatch
-    variant, neither its direction nor its Armijo test consumes sampled data.
-    ``objective_evaluations`` counts every model.L call made by line search.
+    variant, neither its direction nor its line search consumes sampled data.
+    The line search evaluates the rational polynomial at the actual binary64
+    candidate coordinates.  This prevents rounded-equal losses or no-op
+    coordinates from passing Armijo near a numerical minimum.
+    ``objective_evaluations`` counts these exact loss evaluations.
     """
 
     z: np.ndarray
@@ -189,6 +193,8 @@ class ExactFisherGNState:
             raise ValueError("exact Fisher-GN damping must be positive and finite")
         if not np.isfinite(self.trial_step) or not 0 < self.trial_step <= 1:
             raise ValueError("exact Fisher-GN trial step must lie in (0, 1]")
+        if not np.isfinite(self.armijo) or not 0 < self.armijo < 1:
+            raise ValueError("exact Fisher-GN Armijo factor must lie in (0, 1)")
         # E[(X g'(bX))²] = Σ_kl kl g_k g_l mu_{k+l} b^{k+l-2}.
         g = self.model.g
         coefficients = np.zeros(max(1, 2*len(g)-3), dtype=float)
@@ -197,20 +203,45 @@ class ExactFisherGNState:
                 coefficients[k+l-2] += (
                     k*l*float(g[k])*float(g[l])*float(self.model.mu[k+l]))
         self._fisher_bb = coefficients
+        self._exact_A = tuple(self.model.alpha)
+        self._exact_B = tuple(self.model.beta)
+        self._exact_Ap = tuple(k*c for k, c in enumerate(self._exact_A[1:], 1))
+        self._exact_Bp = tuple(k*c for k, c in enumerate(self._exact_B[1:], 1))
+
+    @staticmethod
+    def _exact_polyval(coefficients, value):
+        result = Fraction(0)
+        for coefficient in reversed(coefficients):
+            result = result*value+coefficient
+        return result
+
+    def _exact_values(self, a, b, *, gradient=False):
+        a = Fraction.from_float(float(a))
+        b = Fraction.from_float(float(b))
+        A = self._exact_polyval(self._exact_A, b)
+        B = self._exact_polyval(self._exact_B, b)
+        loss = self.model.C-2*a*B+a*a*A
+        if not gradient:
+            return loss
+        Ap = self._exact_polyval(self._exact_Ap, b)
+        Bp = self._exact_polyval(self._exact_Bp, b)
+        return loss, (2*(a*A-B), a*a*Ap-2*a*Bp)
 
     def step_batch(self, _oracle=None):
         before = self.z.copy()
         a, b = before
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-            loss = float(self.model.L(a, b))
-            grad = np.asarray(self.model.gradL(a, b), dtype=float)
             metric = np.array([
                 [self.model.A(b), 0.5*a*self.model.Ap(b)],
                 [0.5*a*self.model.Ap(b),
                  a*a*np.polynomial.polynomial.polyval(b, self._fisher_bb)]])
         self.objective_evaluations += 1
-        if not (np.isfinite(loss) and np.all(np.isfinite(grad))
-                and np.all(np.isfinite(metric))):
+        loss, exact_grad = self._exact_values(a, b, gradient=True)
+        try:
+            grad = np.asarray([float(value) for value in exact_grad])
+        except OverflowError:
+            return before, "nonfinite_fisher"
+        if not (np.all(np.isfinite(grad)) and np.all(np.isfinite(metric))):
             return before, "nonfinite_fisher"
         scale = np.sqrt(np.maximum(np.diag(metric), np.finfo(float).tiny))
         correlation = metric/np.outer(scale, scale)
@@ -219,27 +250,61 @@ class ExactFisherGNState:
                 correlation+self.damping*np.eye(2), -grad/scale)/scale
         except np.linalg.LinAlgError:
             return before, "singular_fisher"
-        slope = float(grad@direction)
-        if not np.all(np.isfinite(direction)) or not np.isfinite(slope):
+        if not np.all(np.isfinite(direction)):
             return before, "nonfinite_direction"
-        if slope >= 0:
+        exact_directional_slope = sum(
+            g*Fraction.from_float(float(d))
+            for g, d in zip(exact_grad, direction))
+        if exact_directional_slope >= 0:
             return before, "non_descent_direction"
-        # Reuse the previous accepted scale, with cautious growth.  Near a
-        # minimum the admissible step may be tiny; restarting at one would
-        # spend dozens of exact loss evaluations rediscovering it each time.
+        best = None
+        armijo_factor = Fraction.from_float(self.armijo)
+
+        def evaluate(step):
+            candidate = before+step*direction
+            if not np.all(np.isfinite(candidate)) or np.array_equal(candidate, before):
+                return None
+            candidate_loss = self._exact_values(*candidate)
+            self.objective_evaluations += 1
+            displacement = tuple(
+                Fraction.from_float(float(new))-Fraction.from_float(float(old))
+                for old, new in zip(before, candidate))
+            actual_slope = sum(g*d for g, d in zip(exact_grad, displacement))
+            armijo = (candidate_loss < loss and actual_slope < 0
+                      and candidate_loss <= loss+armijo_factor*actual_slope)
+            return candidate_loss, candidate, armijo
+
+        def accept(record, step):
+            self.z = record[1]
+            self.trial_step = min(1.0, 2.0*step)
+            return self.z, None
+
+        # A nonconvex ray can have several stationary points.  First find a
+        # decreasing dyadic step, then compare its immediate neighbours.  In
+        # particular, do not interpolate between zero and an overshooting
+        # unit step: that can select a shallow local minimum while the half
+        # step crosses into a much better basin.
+        checked = {}
         step = self.trial_step
         for _ in range(self.max_halvings):
-            candidate = before+step*direction
-            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-                candidate_loss = float(self.model.L(*candidate))
-            self.objective_evaluations += 1
-            if (np.all(np.isfinite(candidate)) and np.isfinite(candidate_loss)
-                    and candidate_loss <= loss+self.armijo*step*slope):
-                self.z = candidate
-                self.trial_step = min(1.0, 2.0*step)
-                return self.z, None
+            record = evaluate(step)
+            checked[step] = record
+            if record is not None and record[2]:
+                break
             step *= 0.5
-        return before, "line_search_failure"
+        else:
+            return before, "line_search_precision_limit"
+        for neighbour in (step*0.5, min(1.0, step*2.0)):
+            if neighbour not in checked:
+                checked[neighbour] = evaluate(neighbour)
+        for trial, record in checked.items():
+            if (record is not None and record[2]
+                    and (best is None or record[0] < best[0][0])):
+                best = (record, trial)
+
+        if best is not None:
+            return accept(*best)
+        return before, "line_search_precision_limit"
 
 
 def cosine_schedule(base_lr, total_steps, warmup_fraction=0.05,

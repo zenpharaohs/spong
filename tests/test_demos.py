@@ -122,13 +122,31 @@ def test_exact_fisher_gn_uses_population_metric_and_loss():
             -39306.903837165286, 20468.486229066093]
     state = opt.ExactFisherGNState(
         initializers.low_discrepancy(32, view)[26], case.model)
-    for _ in range(15):
-        before = case.model.L(*state.z)
+    accepted = 0
+    for _ in range(200):
+        before = state._exact_values(*state.z)
+        previous = state.z.copy()
         _, failure = state.step_batch()
-        assert failure is None
-        assert case.model.L(*state.z) <= before
+        if failure is not None:
+            assert failure == "line_search_precision_limit"
+            assert np.array_equal(state.z, previous)
+            break
+        assert state._exact_values(*state.z) < before
+        assert not np.array_equal(state.z, previous)
+        accepted += 1
+    else:
+        pytest.fail("exact line search never reached a precision limit")
+    assert 10 < accepted < 100
     assert case.model.L(*state.z) < 1e-4
-    assert state.objective_evaluations > 15
+    assert state.objective_evaluations > accepted
+
+    stalled = opt.ExactFisherGNState(
+        initializers.low_discrepancy(32, view)[26], case.model,
+        trial_step=np.nextafter(0.0, 1.0))
+    before = stalled.z.copy()
+    _, failure = stalled.step_batch()
+    assert failure == "line_search_precision_limit"
+    assert np.array_equal(stalled.z, before)
 
 
 def test_cb_library_resolver_honors_explicit_override(tmp_path):

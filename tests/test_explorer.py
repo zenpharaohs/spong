@@ -239,6 +239,7 @@ def test_allocator_exposes_exact_fisher_gn_costs(monkeypatch):
     })
     assert result["configuration"]["optimizer_backend"] == "python-fisher-gn-exact"
     assert result["configuration"]["learning_rate_mode"] == "line-search"
+    assert result["configuration"]["line_search_scope"] == "population"
     assert result["equal"]["batch_evaluations"] == 0
     assert result["equal"]["objective_evaluations"] > 0
 
