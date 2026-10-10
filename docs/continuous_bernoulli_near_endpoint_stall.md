@@ -1,5 +1,12 @@
 # Continuous-Bernoulli interior near-endpoint draw stalls
 
+**Status: resolved in the sibling sampler repository.** With
+`continuous-bernoulli` commit `c959353` and SPONG's auto-built
+`libcb_core-9286ba8beed2a3ec.dylib`, the minimal draw below returns in
+about 40 µs. The original 3,200-round Fisher/Gauss–Newton allocator
+comparison now completes in about 2.35 s, including CB playback and
+extensions. The details below preserve the original regression case.
+
 SPONG's Fisher/Gauss–Newton allocator exposes a sampler stall at a valid,
 strictly interior posterior state. Please investigate in the
 `continuous-bernoulli` repository. This is a performance/termination bug;

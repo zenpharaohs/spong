@@ -164,6 +164,84 @@ class FisherGNState:
         return before, "line_search_failure"
 
 
+@dataclass
+class ExactFisherGNState:
+    """Population Fisher/Gauss--Newton step from the model's exact moments.
+
+    This is deliberately a full-information comparator: unlike the minibatch
+    variant, neither its direction nor its Armijo test consumes sampled data.
+    ``objective_evaluations`` counts every model.L call made by line search.
+    """
+
+    z: np.ndarray
+    model: object
+    damping: float = DEFAULT_FISHER_DAMPING
+    armijo: float = 1e-4
+    max_halvings: int = 60
+    objective_evaluations: int = 0
+    trial_step: float = 1.0
+
+    def __post_init__(self):
+        self.z = np.asarray(self.z, dtype=float).copy()
+        if self.z.shape != (2,):
+            raise ValueError("exact Fisher-GN needs two parameters")
+        if not np.isfinite(self.damping) or self.damping <= 0:
+            raise ValueError("exact Fisher-GN damping must be positive and finite")
+        if not np.isfinite(self.trial_step) or not 0 < self.trial_step <= 1:
+            raise ValueError("exact Fisher-GN trial step must lie in (0, 1]")
+        # E[(X g'(bX))²] = Σ_kl kl g_k g_l mu_{k+l} b^{k+l-2}.
+        g = self.model.g
+        coefficients = np.zeros(max(1, 2*len(g)-3), dtype=float)
+        for k in range(1, len(g)):
+            for l in range(1, len(g)):
+                coefficients[k+l-2] += (
+                    k*l*float(g[k])*float(g[l])*float(self.model.mu[k+l]))
+        self._fisher_bb = coefficients
+
+    def step_batch(self, _oracle=None):
+        before = self.z.copy()
+        a, b = before
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            loss = float(self.model.L(a, b))
+            grad = np.asarray(self.model.gradL(a, b), dtype=float)
+            metric = np.array([
+                [self.model.A(b), 0.5*a*self.model.Ap(b)],
+                [0.5*a*self.model.Ap(b),
+                 a*a*np.polynomial.polynomial.polyval(b, self._fisher_bb)]])
+        self.objective_evaluations += 1
+        if not (np.isfinite(loss) and np.all(np.isfinite(grad))
+                and np.all(np.isfinite(metric))):
+            return before, "nonfinite_fisher"
+        scale = np.sqrt(np.maximum(np.diag(metric), np.finfo(float).tiny))
+        correlation = metric/np.outer(scale, scale)
+        try:
+            direction = np.linalg.solve(
+                correlation+self.damping*np.eye(2), -grad/scale)/scale
+        except np.linalg.LinAlgError:
+            return before, "singular_fisher"
+        slope = float(grad@direction)
+        if not np.all(np.isfinite(direction)) or not np.isfinite(slope):
+            return before, "nonfinite_direction"
+        if slope >= 0:
+            return before, "non_descent_direction"
+        # Reuse the previous accepted scale, with cautious growth.  Near a
+        # minimum the admissible step may be tiny; restarting at one would
+        # spend dozens of exact loss evaluations rediscovering it each time.
+        step = self.trial_step
+        for _ in range(self.max_halvings):
+            candidate = before+step*direction
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                candidate_loss = float(self.model.L(*candidate))
+            self.objective_evaluations += 1
+            if (np.all(np.isfinite(candidate)) and np.isfinite(candidate_loss)
+                    and candidate_loss <= loss+self.armijo*step*slope):
+                self.z = candidate
+                self.trial_step = min(1.0, 2.0*step)
+                return self.z, None
+            step *= 0.5
+        return before, "line_search_failure"
+
+
 def cosine_schedule(base_lr, total_steps, warmup_fraction=0.05,
                     final_fraction=0.01):
     """Linear warmup followed by cosine decay."""

@@ -1072,7 +1072,7 @@ def allocator(payload: dict) -> dict:
     # jump.  A numeric rate is still honoured verbatim.
     raw_lr = payload.get(
         "learning_rate", optimizer_gallery.DEFAULT_LR.get(method, 1e-3))
-    if method == "fisher-gn":
+    if method in {"fisher-gn", "fisher-gn-exact"}:
         learning_rate = None
     elif isinstance(raw_lr, str) and raw_lr.strip().lower() == "auto":
         learning_rate = "auto"
@@ -1122,7 +1122,7 @@ def allocator(payload: dict) -> dict:
             # A list when calibrated per arm; a scalar when fixed.
             "learning_rate": comparison["learning_rate"],
             "learning_rate_mode": (
-                "line-search" if method == "fisher-gn" else
+                "line-search" if method in {"fisher-gn", "fisher-gn-exact"} else
                 "auto" if learning_rate == "auto" else "fixed"),
             "time_limit_sec": time_limit_sec,
             "design": design,
@@ -1133,7 +1133,7 @@ def allocator(payload: dict) -> dict:
             "optimizer_backend": comparison["optimizer_backend"],
             "fisher_damping": (
                 allocator_demo.opt.DEFAULT_FISHER_DAMPING
-                if method == "fisher-gn" else None),
+                if method in {"fisher-gn", "fisher-gn-exact"} else None),
             "uniform_workers": comparison["uniform_workers"],
             "replayed_bandit_chunks": comparison["replayed_chunks"],
             "extended_bandit_chunks": comparison["extended_chunks"],

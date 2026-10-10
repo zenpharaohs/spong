@@ -98,6 +98,37 @@ def test_fisher_gn_cached_playback_counts_batch_passes():
     assert result.batch_evaluations.sum() > result.executed_steps.sum()
     assert result.batch_evaluations[0] == sum(
         record.batch_evaluations for record in cache.arms[0].records[:3])
+    assert result.objective_evaluations[0] == sum(
+        record.objective_evaluations for record in cache.arms[0].records[:3])
+
+
+def test_exact_fisher_gn_uses_population_metric_and_loss():
+    m = model.build([1, 1], [1, 2, -0.5], model.moments_uniform01(5))
+    state = opt.ExactFisherGNState(np.array([1.2, 0.4]), m)
+    nodes, weights = np.polynomial.legendre.leggauss(12)
+    x, weights = (nodes+1)/2, weights/2
+    a, b = state.z
+    gx = 1+2*b*x-0.5*(b*x)**2
+    jac = np.column_stack((gx, a*x*(2-b*x)))
+    quadrature = jac.T@(weights[:, None]*jac)
+    metric = np.array([
+        [m.A(b), a*m.Ap(b)/2],
+        [a*m.Ap(b)/2,
+         a*a*np.polynomial.polynomial.polyval(b, state._fisher_bb)]])
+    assert np.allclose(metric, quadrature, rtol=1e-14, atol=1e-14)
+
+    case = inverse.separated_linear_case(4, 30)
+    view = [-0.3500000009477955, 0.35000000282441074,
+            -39306.903837165286, 20468.486229066093]
+    state = opt.ExactFisherGNState(
+        initializers.low_discrepancy(32, view)[26], case.model)
+    for _ in range(15):
+        before = case.model.L(*state.z)
+        _, failure = state.step_batch()
+        assert failure is None
+        assert case.model.L(*state.z) <= before
+    assert case.model.L(*state.z) < 1e-4
+    assert state.objective_evaluations > 15
 
 
 def test_cb_library_resolver_honors_explicit_override(tmp_path):

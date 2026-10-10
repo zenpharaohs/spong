@@ -552,6 +552,7 @@
             <option value="sgd-momentum">sgd-momentum</option>
             <option value="adam" selected>adam</option>
             <option value="fisher-gn">Fisher/Gauss–Newton + line search</option>
+            <option value="fisher-gn-exact">exact Fisher/Gauss–Newton + line search</option>
             <option value="muon-adamw">muon-adamw</option>
             <option value="vector-muon">vector-muon</option>
           </select>
@@ -2705,7 +2706,7 @@ async function runAllocator(){
     time_limit_sec: +els("allocLimit").value
   };
   const lr = els("allocLR").value;
-  body.learning_rate = body.method === "fisher-gn" ? null
+  body.learning_rate = body.method.startsWith("fisher-gn") ? null
     : lr === "" ? "auto" : +lr;
 
   const st = els("allocStatus"), sum = els("allocSummary");
@@ -2744,6 +2745,10 @@ async function runAllocator(){
         summary += `<br>batch passes — equal ${eq.batch_evaluations.toLocaleString()}, `
                 + `bandit ${th.batch_evaluations.toLocaleString()}`;
       }
+      if (Number.isFinite(eq.objective_evaluations)) {
+        summary += `<br>exact objective evaluations — equal ${eq.objective_evaluations.toLocaleString()}, `
+                + `bandit ${th.objective_evaluations.toLocaleString()}`;
+      }
       const calibration = cfg.observation_calibration;
       if (calibration && Number.isFinite(calibration.final_divisor)) {
         summary += `<br>divisor a ${Number(calibration.initial_divisor).toPrecision(4)}`
@@ -2768,7 +2773,7 @@ async function runAllocator(){
   }
 }
 function updateAllocatorMethodControls(){
-  const fisher = els("allocMethod").value === "fisher-gn";
+  const fisher = els("allocMethod").value.startsWith("fisher-gn");
   els("allocSchedule").disabled = fisher;
   els("allocLR").disabled = fisher;
   els("allocSchedule").title = fisher ? "Fisher/Gauss–Newton chooses steps by line search" : "";

@@ -221,6 +221,28 @@ def test_allocator_endpoint_uses_active_empirical_portrait_and_visible_view(
         < max(trace["opacity"] for trace in result["thompson"]["traces"])
 
 
+def test_allocator_exposes_exact_fisher_gn_costs(monkeypatch):
+    monkeypatch.setattr(
+        thompson_moustaches.cb_sampler, "ContinuousBernoulliBank",
+        _FakeContinuousBernoulliBank)
+    monkeypatch.setattr(
+        thompson_moustaches.cb_sampler, "resolve_library",
+        lambda library=None, auto_build=False: "/fake/libcb_core")
+    serve._MODELS.clear()
+    result = serve.allocator({
+        "f": [1.0, -0.5], "g": [0.25, 1.0],
+        "moments": {"kind": "empirical", "samples": [-1.0, 0.25, 1.5]},
+        "view": [-1.0, 1.0, -1.0, 1.0], "starts": 3,
+        "rounds": 6, "chunk_steps": 1, "batch_size": 4,
+        "method": "fisher-gn-exact", "learning_rate": None,
+        "time_limit_sec": 7, "seed": 43,
+    })
+    assert result["configuration"]["optimizer_backend"] == "python-fisher-gn-exact"
+    assert result["configuration"]["learning_rate_mode"] == "line-search"
+    assert result["equal"]["batch_evaluations"] == 0
+    assert result["equal"]["objective_evaluations"] > 0
+
+
 def test_allocator_endpoint_reports_numerical_terminations_without_warnings(
         monkeypatch):
     monkeypatch.setattr(

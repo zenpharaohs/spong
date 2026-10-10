@@ -141,10 +141,12 @@ def auto_base_lr(m, start, method, lr0, max_halvings=FIRST_STEP_HALVINGS,
 
 def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
              design, distribution="uniform01", samples=None,
-             learning_rate=None, warmup_steps=100, auto_lr=None):
+             learning_rate=None, warmup_steps=100, auto_lr=None, model=None):
     states = []
     gradients = []
-    if method == "fisher-gn":
+    if method == "fisher-gn-exact" and model is None:
+        raise ValueError("exact Fisher-GN needs the portrait model")
+    if method in {"fisher-gn", "fisher-gn-exact"}:
         lr = None
         per_arm = None
     elif auto_lr is None:
@@ -165,6 +167,8 @@ def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
     for index, start in enumerate(starts):
         states.append(
             opt.FisherGNState(start) if method == "fisher-gn" else
+            opt.ExactFisherGNState(start, model)
+            if method == "fisher-gn-exact" else
             _state(method, start,
                    lr if per_arm is None else per_arm[index]))
         rng = np.random.default_rng(
@@ -261,6 +265,7 @@ def _allocation_summary(result):
         "pulls": total,
         "executed_optimizer_steps": int(np.sum(result.executed_steps)),
         "batch_evaluations": int(np.sum(result.batch_evaluations)),
+        "objective_evaluations": int(np.sum(result.objective_evaluations)),
         "terminated_arms": int(np.count_nonzero(result.terminated)),
         "zero_loss_arms": int(successes),
         "allocation_quantiles": dict(zip(
@@ -357,7 +362,8 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     if warmup_steps <= 0:
         raise ValueError("warmup_steps must be positive")
     if method not in {"sgd", "sgd-momentum", "adam",
-                      "vector-muon", "muon-adamw", "fisher-gn"}:
+                      "vector-muon", "muon-adamw", "fisher-gn",
+                      "fisher-gn-exact"}:
         raise ValueError(f"unsupported optimizer {method!r}")
     if schedule not in {"constant", "cosine", "inverse-sqrt"}:
         raise ValueError(f"unsupported schedule {schedule!r}")
@@ -381,7 +387,8 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     # at its own start; see auto_base_lr.  A numeric rate is used verbatim,
     # and an unusable calibration falls back to the method's default.
     auto_lr = None
-    if (method != "fisher-gn" and isinstance(learning_rate, str)
+    if (method not in {"fisher-gn", "fisher-gn-exact"}
+            and isinstance(learning_rate, str)
             and learning_rate == "auto"):
         if progress is not None:
             progress("learning-rate calibration")
@@ -399,9 +406,10 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         schedule=schedule, horizon=horizon, seed=seed, design=design,
         distribution=distribution, samples=samples,
         learning_rate=learning_rate, warmup_steps=warmup_steps,
-        auto_lr=auto_lr)
+        auto_lr=auto_lr, model=m)
     optimizer_backend = (
         "python-fisher-gn" if method == "fisher-gn" else
+        "python-fisher-gn-exact" if method == "fisher-gn-exact" else
         "native-adam" if method in {"adam", "muon-adamw"}
         and native_adam.available() else "python")
     equal_states, equal_gradients = _problem(**common)
@@ -434,7 +442,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         "horizon": horizon,
         "warmup_steps": warmup_steps,
         "learning_rate": (
-            None if method == "fisher-gn" else
+            None if method in {"fisher-gn", "fisher-gn-exact"} else
             [float(x) for x in auto_lr] if auto_lr is not None else
             gallery.DEFAULT_LR[method] if learning_rate is None
             else float(learning_rate)),
@@ -462,7 +470,8 @@ def main(argv=None):
         description="Exact continuous-Bernoulli Thompson moustaches")
     parser.add_argument("--zoo", choices=zoo.names(), default="quadratic-stiff")
     parser.add_argument("--method",
-                        choices=("sgd", "sgd-momentum", "adam", "fisher-gn"),
+                        choices=("sgd", "sgd-momentum", "adam", "fisher-gn",
+                                 "fisher-gn-exact"),
                         default="adam")
     parser.add_argument("--design",
                         choices=gallery.DESIGNS, default="low-discrepancy")
