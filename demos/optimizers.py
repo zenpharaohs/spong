@@ -19,6 +19,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+DEFAULT_FISHER_DAMPING = 1e-3
+
 
 def _polyval(coeffs, x):
     acc = np.zeros_like(x, dtype=float)
@@ -93,6 +95,73 @@ class BatchGradient:
             db = -2.0 * np.mean(
                 res * a * _polyval(self.gp, bx) * x)
         return np.array([da, db])
+
+
+@dataclass
+class FisherGNState:
+    """Damped two-coordinate empirical Fisher/Gauss--Newton descent.
+
+    Each step draws one batch, forms J=[g(bx), a*x*g'(bx)], and backtracks
+    against that same batch.  The relative diagonal damping makes the 2x2
+    solve meaningful when the two parameter sensitivities differ greatly.
+    A batch evaluation counts one pass over the drawn samples, whether it
+    computes derivatives or only the candidate loss.
+    """
+
+    z: np.ndarray
+    damping: float = DEFAULT_FISHER_DAMPING
+    armijo: float = 1e-4
+    max_halvings: int = 60
+    batch_evaluations: int = 0
+
+    def __post_init__(self):
+        self.z = np.asarray(self.z, dtype=float).copy()
+        if self.z.shape != (2,):
+            raise ValueError("Fisher-GN needs two parameters")
+        if not np.isfinite(self.damping) or self.damping <= 0:
+            raise ValueError("Fisher-GN damping must be positive and finite")
+
+    def step_batch(self, oracle):
+        before = self.z.copy()
+        x = oracle._draw()
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            bx = before[1]*x
+            gv = _polyval(oracle.g, bx)
+            residual = _polyval(oracle.f, x)-before[0]*gv
+            jac = np.column_stack((gv, before[0]*x*_polyval(oracle.gp, bx)))
+            loss = float(np.mean(residual*residual))
+            grad = -2.0*np.mean(residual[:, None]*jac, axis=0)
+            metric = jac.T@jac/len(x)
+        self.batch_evaluations += 1
+        if not (np.isfinite(loss) and np.all(np.isfinite(grad))
+                and np.all(np.isfinite(metric))):
+            return before, "nonfinite_fisher"
+        scale = np.sqrt(np.maximum(np.diag(metric), np.finfo(float).tiny))
+        correlation = metric/np.outer(scale, scale)
+        try:
+            direction = np.linalg.solve(
+                correlation+self.damping*np.eye(2), -grad/scale)/scale
+        except np.linalg.LinAlgError:
+            return before, "singular_fisher"
+        slope = float(grad@direction)
+        if not np.all(np.isfinite(direction)) or not np.isfinite(slope):
+            return before, "nonfinite_direction"
+        if slope >= 0:
+            return before, "non_descent_direction"
+        step = 1.0
+        for _ in range(self.max_halvings):
+            candidate = before+step*direction
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                value = _polyval(oracle.f, x)-candidate[0]*_polyval(
+                    oracle.g, candidate[1]*x)
+                candidate_loss = float(np.mean(value*value))
+            self.batch_evaluations += 1
+            if (np.all(np.isfinite(candidate)) and np.isfinite(candidate_loss)
+                    and candidate_loss <= loss+self.armijo*step*slope):
+                self.z = candidate
+                return self.z, None
+            step *= 0.5
+        return before, "line_search_failure"
 
 
 def cosine_schedule(base_lr, total_steps, warmup_fraction=0.05,

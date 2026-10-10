@@ -93,6 +93,7 @@ class AllocationResult:
     termination_reasons: tuple
     allocation_losses: np.ndarray
     allocation_steps: np.ndarray
+    batch_evaluations: np.ndarray
 
     @property
     def terminated(self):
@@ -124,6 +125,7 @@ class ChunkRecord:
     points: list
     raw_loss: float
     reason: str | None
+    batch_evaluations: int = 0
 
 
 @dataclass
@@ -149,9 +151,11 @@ class ArmTape:
         while len(self.records) < pulls and self.terminal_reason is None:
             if should_stop is not None and should_stop():
                 raise TimeoutError("allocation stopped by interactive time limit")
-            native = native_adam.run_chunk(
-                self.state, self.gradient, self.chunk_steps,
-                should_stop=should_stop)
+            batch_before = getattr(self.state, "batch_evaluations", 0)
+            native = (None if isinstance(self.state, optimizers.FisherGNState)
+                      else native_adam.run_chunk(
+                          self.state, self.gradient, self.chunk_steps,
+                          should_stop=should_stop))
             if native is not None:
                 points, reason = native
             else:
@@ -161,8 +165,11 @@ class ArmTape:
                     if should_stop is not None and should_stop():
                         raise TimeoutError(
                             "allocation stopped by interactive time limit")
-                    z, failure = optimizers.checked_step(
-                        self.state, self.gradient)
+                    z, failure = (
+                        self.state.step_batch(self.gradient)
+                        if isinstance(self.state, optimizers.FisherGNState)
+                        else optimizers.checked_step(
+                            self.state, self.gradient))
                     if failure is not None:
                         reason = failure
                         break
@@ -173,7 +180,11 @@ class ArmTape:
                 reason = "nonfinite_loss"
             elif reason is None and observation >= 1.0:
                 reason = "loss_transform_saturated"
-            self.records.append(ChunkRecord(points, raw_loss, reason))
+            evaluations = (self.state.batch_evaluations-batch_before
+                           if isinstance(self.state, optimizers.FisherGNState)
+                           else len(points))
+            self.records.append(ChunkRecord(
+                points, raw_loss, reason, evaluations))
             # Zero is observed by the policy before it stops globally; it is
             # not a numerical failure and must not be fed to deactivate().
             self.terminal_reason = ("zero_loss" if reason is None
@@ -234,6 +245,7 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
     allocations = np.zeros(n_arms, dtype=np.int64)
     choices = np.empty(rounds, dtype=np.int64)
     executed_steps = np.zeros(n_arms, dtype=np.int64)
+    batch_evaluations = np.zeros(n_arms, dtype=np.int64)
     termination_reasons = [None] * n_arms
     allocation_losses = np.empty(rounds, dtype=float)
     allocation_steps = np.zeros(rounds, dtype=np.int64)
@@ -261,6 +273,7 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
                                     should_stop=should_stop)
                 trajectories[arm].extend(record.points)
                 executed_steps[arm] += len(record.points)
+                batch_evaluations[arm] += record.batch_evaluations
                 termination_reasons[arm] = record.reason
             else:
                 state = states[arm]
@@ -268,8 +281,14 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
                     if should_stop is not None and should_stop():
                         raise TimeoutError(
                             "allocation stopped by interactive time limit")
-                    z, failure = optimizers.checked_step(
-                        state, gradients[arm])
+                    before_evaluations = getattr(state, "batch_evaluations", 0)
+                    z, failure = (
+                        state.step_batch(gradients[arm])
+                        if isinstance(state, optimizers.FisherGNState)
+                        else optimizers.checked_step(state, gradients[arm]))
+                    batch_evaluations[arm] += (
+                        state.batch_evaluations-before_evaluations
+                        if isinstance(state, optimizers.FisherGNState) else 1)
                     if failure is not None:
                         termination_reasons[arm] = failure
                         break
@@ -337,4 +356,5 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
         executed_steps=executed_steps,
         termination_reasons=tuple(termination_reasons),
         allocation_losses=allocation_losses[:completed_rounds],
-        allocation_steps=allocation_steps[:completed_rounds])
+        allocation_steps=allocation_steps[:completed_rounds],
+        batch_evaluations=batch_evaluations)

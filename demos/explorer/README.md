@@ -146,6 +146,15 @@ If neither the source nor a prebuilt library can be found, portraits and
 ordinary traces remain usable and the allocator panel reports how to supply
 one.
 
+The allocator also offers **Fisher/Gauss–Newton + line search** for this
+two-parameter model.  Each update draws the configured minibatch, forms its
+2×2 Jacobian Gram matrix, solves a relatively damped system, and backtracks
+on that same batch.  The schedule and learning-rate controls are disabled for
+this method.  The summary reports batch passes as well as optimizer steps:
+one derivative pass plus each trial loss pass counts once.  The exact portrait
+loss remains the allocator observation, not an input to the optimizer step.
+This is demo-layer evidence, not part of portrait certification.
+
 ## Cases
 
 **Zoo presets** come from `zoo.names()`; selecting one sends the name alone,

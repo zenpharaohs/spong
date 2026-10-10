@@ -551,6 +551,7 @@
             <option value="sgd">sgd</option>
             <option value="sgd-momentum">sgd-momentum</option>
             <option value="adam" selected>adam</option>
+            <option value="fisher-gn">Fisher/Gauss–Newton + line search</option>
             <option value="muon-adamw">muon-adamw</option>
             <option value="vector-muon">vector-muon</option>
           </select>
@@ -2704,7 +2705,8 @@ async function runAllocator(){
     time_limit_sec: +els("allocLimit").value
   };
   const lr = els("allocLR").value;
-  body.learning_rate = lr === "" ? "auto" : +lr;
+  body.learning_rate = body.method === "fisher-gn" ? null
+    : lr === "" ? "auto" : +lr;
 
   const st = els("allocStatus"), sum = els("allocSummary");
   st.className = "status busy"; st.textContent = "running…";
@@ -2733,8 +2735,15 @@ async function runAllocator(){
               + `${cfg.extended_bandit_chunks.toLocaleString()} extended; `
               + `uniform workers ${cfg.uniform_workers}; `
               + `observation ${data.observation}; `
-              + `learning rate ${cfg.learning_rate_mode}; `
+              + `${cfg.learning_rate_mode === "line-search" ? "line search" : `learning rate ${cfg.learning_rate_mode}`}; `
               + `optimizer ${cfg.optimizer_backend}`;
+      if (Number.isFinite(cfg.fisher_damping)) {
+        summary += ` (relative damping ${cfg.fisher_damping})`;
+      }
+      if (Number.isFinite(eq.batch_evaluations)) {
+        summary += `<br>batch passes — equal ${eq.batch_evaluations.toLocaleString()}, `
+                + `bandit ${th.batch_evaluations.toLocaleString()}`;
+      }
       const calibration = cfg.observation_calibration;
       if (calibration && Number.isFinite(calibration.final_divisor)) {
         summary += `<br>divisor a ${Number(calibration.initial_divisor).toPrecision(4)}`
@@ -2758,6 +2767,15 @@ async function runAllocator(){
     els("runAllocator").disabled = false;
   }
 }
+function updateAllocatorMethodControls(){
+  const fisher = els("allocMethod").value === "fisher-gn";
+  els("allocSchedule").disabled = fisher;
+  els("allocLR").disabled = fisher;
+  els("allocSchedule").title = fisher ? "Fisher/Gauss–Newton chooses steps by line search" : "";
+  els("allocLR").title = fisher ? "Fisher/Gauss–Newton chooses steps by line search" : "";
+}
+els("allocMethod").addEventListener("change", updateAllocatorMethodControls);
+updateAllocatorMethodControls();
 els("runAllocator").onclick = runAllocator;
 els("clearAllocator").onclick = () => {
   S.allocator = null;

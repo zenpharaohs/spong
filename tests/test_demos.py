@@ -24,7 +24,7 @@ from demos import saddle_connection_comparison
 from demos import saddle_connection_triptych
 from demos import thompson
 from demos import thompson_moustaches
-from spong import charts, model, portrait, sturm, zoo
+from spong import charts, inverse, model, portrait, sturm, zoo
 
 
 def test_batch_gradient_matches_mean_field(d2):
@@ -55,6 +55,49 @@ def test_batch_gradient_resamples_empirical_portrait_support():
         rng=np.random.default_rng(37), distribution="empirical",
         samples=samples)
     assert set(np.unique(gradient._draw())) <= set(samples)
+
+
+def test_fisher_gn_line_search_crosses_separated_stiff_wall():
+    case = inverse.separated_linear_case(4, 30)
+    m = case.model
+    view = [-0.3500000009477955, 0.35000000282441074,
+            -39306.903837165286, 20468.486229066093]
+    start = initializers.low_discrepancy(32, view)[8]
+    state = opt.FisherGNState(start)
+    oracle = opt.BatchGradient(
+        m.f, m.g, 32,
+        np.random.default_rng(np.random.SeedSequence([1729, 8, 32, 0])))
+    initial = m.L(*start)
+    for _ in range(15):
+        _, failure = state.step_batch(oracle)
+        assert failure is None
+    assert m.L(*state.z) < 0.01
+    assert initial > 1e20
+    assert state.batch_evaluations >= 30
+
+
+def test_fisher_gn_cached_playback_counts_batch_passes():
+    m = model.build([1, 1], [1, 0.5], model.moments_uniform01(5))
+    starts = [np.array([0.7, 0.3]), np.array([1.2, -0.4])]
+    states = [opt.FisherGNState(start) for start in starts]
+    oracles = [opt.BatchGradient(
+        m.f, m.g, 8, np.random.default_rng(index))
+        for index in range(2)]
+    cache = thompson.TrajectoryCache(states, oracles, m.L, 2)
+
+    class FirstArm:
+        def draw_all(self):
+            return np.array([0.0, 1.0])
+
+        def update(self, arm, observation):
+            pass
+
+    result = thompson.allocate(
+        states, oracles, m.L, FirstArm(), 4, 2, cache=cache)
+    assert result.allocations.tolist() == [3, 1]
+    assert result.batch_evaluations.sum() > result.executed_steps.sum()
+    assert result.batch_evaluations[0] == sum(
+        record.batch_evaluations for record in cache.arms[0].records[:3])
 
 
 def test_cb_library_resolver_honors_explicit_override(tmp_path):

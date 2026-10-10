@@ -1072,7 +1072,9 @@ def allocator(payload: dict) -> dict:
     # jump.  A numeric rate is still honoured verbatim.
     raw_lr = payload.get(
         "learning_rate", optimizer_gallery.DEFAULT_LR.get(method, 1e-3))
-    if isinstance(raw_lr, str) and raw_lr.strip().lower() == "auto":
+    if method == "fisher-gn":
+        learning_rate = None
+    elif isinstance(raw_lr, str) and raw_lr.strip().lower() == "auto":
         learning_rate = "auto"
     else:
         learning_rate = float(raw_lr)
@@ -1119,8 +1121,9 @@ def allocator(payload: dict) -> dict:
             "warmup_steps": comparison["warmup_steps"],
             # A list when calibrated per arm; a scalar when fixed.
             "learning_rate": comparison["learning_rate"],
-            "learning_rate_mode": ("auto" if learning_rate == "auto"
-                                   else "fixed"),
+            "learning_rate_mode": (
+                "line-search" if method == "fisher-gn" else
+                "auto" if learning_rate == "auto" else "fixed"),
             "time_limit_sec": time_limit_sec,
             "design": design,
             "seed": seed,
@@ -1128,6 +1131,9 @@ def allocator(payload: dict) -> dict:
             "observation_calibration": comparison["observation_calibration"],
             "cb_library": comparison["library_path"],
             "optimizer_backend": comparison["optimizer_backend"],
+            "fisher_damping": (
+                allocator_demo.opt.DEFAULT_FISHER_DAMPING
+                if method == "fisher-gn" else None),
             "uniform_workers": comparison["uniform_workers"],
             "replayed_bandit_chunks": comparison["replayed_chunks"],
             "extended_bandit_chunks": comparison["extended_chunks"],
