@@ -205,6 +205,8 @@ def test_allocator_endpoint_uses_active_empirical_portrait_and_visible_view(
     assert result["thompson"]["terminated_arms"] == 0
     assert len(result["equal"]["traces"]) == 3
     assert all(trace["points"] for trace in result["thompson"]["traces"])
+    assert result["thompson"]["traces"][2]["plotted_points"] > (
+        result["equal"]["traces"][2]["plotted_points"])
     assert all(trace["termination"] is None
                for trace in result["thompson"]["traces"])
     assert all(not trace["mark_start"]

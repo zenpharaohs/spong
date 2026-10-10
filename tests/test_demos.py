@@ -328,6 +328,22 @@ def test_optimizer_lttb_thinning_stops_at_first_nonfinite_iterate():
                           points[:2])
 
 
+def test_extended_allocator_trace_preserves_gray_prefix_and_early_detail():
+    steps = np.arange(31501, dtype=float)
+    trajectory = np.column_stack((steps, np.sin(steps / 8.0)))
+    gray = optimizer_moustaches._thin(trajectory[:1001], 350)
+    old_purple = optimizer_moustaches._thin(trajectory, 350)
+    purple = optimizer_moustaches._thin_comparison(
+        trajectory, uniform_steps=1000)
+    np.testing.assert_array_equal(purple[:len(gray)], gray)
+    np.testing.assert_array_equal(purple[-1], trajectory[-1])
+    assert 350 < len(purple) <= 600
+    assert np.count_nonzero(purple[:, 0] <= 2000) > 10 * np.count_nonzero(
+        old_purple[:, 0] <= 2000)
+    assert np.count_nonzero(purple[:, 0] > 15000) < np.count_nonzero(
+        old_purple[:, 0] > 15000)
+
+
 def test_thompson_allocation_honors_interactive_stop_hook():
     state = opt.SGDState(np.array([1.0, 0.0]), lr=0.1)
     posterior = _DeterministicPosterior(())

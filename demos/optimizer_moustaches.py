@@ -84,19 +84,22 @@ def _run(method, gradient, start, lr, steps, box):
     raise ValueError(method)
 
 
-def _thin(trajectory, max_points=350):
+def _thin(trajectory, max_points=350, *, bucket_axis="linear"):
     """LTTB display thinning in the (a, b) plane, bucketed by step order.
 
-    Keep the first and last finite iterates.  In each equal-sized interior
-    bucket, select the point making the largest triangle with the previous
+    Keep the first and last finite iterates.  In each step-order bucket,
+    select the point making the largest triangle with the previous
     selection and the mean of the next bucket.  This preserves excursions and
-    bends that uniform index sampling can skip entirely.
+    bends that uniform index sampling can skip entirely.  Log-step buckets
+    reserve more of the same point budget for early iterates.
     """
     points = np.asarray(trajectory, dtype=float)
     if points.ndim != 2 or points.shape[1] != 2:
         raise ValueError("trajectory must have shape (steps, 2)")
     if max_points < 2:
         raise ValueError("max_points must be at least 2")
+    if bucket_axis not in {"linear", "log"}:
+        raise ValueError("bucket_axis must be linear or log")
     finite = np.all(np.isfinite(points), axis=1)
     if not np.all(finite):
         points = points[:int(np.flatnonzero(~finite)[0])]
@@ -114,13 +117,29 @@ def _thin(trajectory, max_points=350):
     interior = n - 2
     indices = np.empty(max_points, dtype=np.intp)
     indices[0], indices[-1] = 0, n - 1
+    if bucket_axis == "log":
+        log_steps = np.log1p(np.arange(n, dtype=float))
+        edges = [1]
+        for i in range(1, buckets):
+            boundary = log_steps[n-2] * i / buckets
+            target = int(np.searchsorted(log_steps, boundary, side="left"))
+            # Every bucket needs a point, including those in early decades
+            # narrower than one optimizer step.
+            edges.append(max(edges[-1] + 1,
+                             min(target, n-1-(buckets-i))))
+        edges.append(n-1)
     previous = 0
     for i in range(buckets):
-        start = 1 + i * interior // buckets
-        end = 1 + (i + 1) * interior // buckets
-        next_start = end
-        next_end = (1 + (i + 2) * interior // buckets
-                    if i + 1 < buckets else n)
+        if bucket_axis == "log":
+            start, end = edges[i:i+2]
+            next_start = end
+            next_end = edges[i+2] if i+1 < buckets else n
+        else:
+            start = 1 + i * interior // buckets
+            end = 1 + (i + 1) * interior // buckets
+            next_start = end
+            next_end = (1 + (i + 2) * interior // buckets
+                        if i + 1 < buckets else n)
         center = np.mean(xy[next_start:next_end], axis=0)
         candidates = xy[start:end]
         delta = candidates - xy[previous]
@@ -130,6 +149,33 @@ def _thin(trajectory, max_points=350):
         previous = start + int(np.argmax(areas))
         indices[i + 1] = previous
     return points[indices]
+
+
+def _thin_comparison(trajectory, uniform_steps, prefix_points=350,
+                     extension_points=250):
+    """Give an extended arm its own budget without diluting its shared prefix.
+
+    The prefix ends at the uniform arm's last iterate and uses the same LTTB
+    selection as the gray trace.  Additional bandit steps receive a separate
+    log-step budget, concentrating detail near the start of the extension
+    instead of spending most segments on a long late noise ball.
+    """
+    points = np.asarray(trajectory, dtype=float)
+    finite = np.all(np.isfinite(points), axis=1)
+    if not np.all(finite):
+        points = points[:int(np.flatnonzero(~finite)[0])]
+    if len(points) == 0:
+        return points
+    split = min(len(points), max(1, int(uniform_steps) + 1))
+    prefix = _thin(points[:split], max_points=prefix_points)
+    extra_steps = len(points) - split
+    if extra_steps == 0:
+        return prefix
+    extra_budget = max(2, min(extension_points, int(np.ceil(
+        extension_points * extra_steps / (len(points)-1)))))
+    extension = _thin(points[split-1:], max_points=extra_budget+1,
+                      bucket_axis="log")
+    return np.concatenate((prefix, extension[1:]))
 
 
 def _loss(m, point):

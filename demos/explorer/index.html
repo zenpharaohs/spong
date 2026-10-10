@@ -542,7 +542,8 @@
         under two initialization/allocation policies
         <span class="help" tabindex="0" title="Equal: every start gets the same fixed budget of steps. Thompson: budget is allocated adaptively by a continuous-Bernoulli posterior over each start's observed loss. Both use the same random design and, within each start/batch pair, the same seed.">?</span>.
         Runs against the model currently shown, in the current view.
-        Long paths use LTTB display thinning, so a drawn segment can span multiple optimizer steps.</p>
+        Long paths use LTTB display thinning; extended purple paths keep the
+        gray prefix's detail and favor early continuation over late jitter.</p>
       <div class="controls">
         <div>
           <label for="allocMethod">method</label>

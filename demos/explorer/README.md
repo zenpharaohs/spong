@@ -98,11 +98,14 @@ underlay; Thompson is a narrower saturated-violet overlay with a haloed violet
 cross at every start and a white-centred violet ring at every endpoint.  Within
 each policy line weight and opacity record the number of pulls.  Either policy
 can be hidden without discarding the result.
-For display, trajectories longer than 350 iterates are reduced with
-largest-triangle-three-buckets (LTTB) in the `(a,b)` plane.  The buckets follow
-optimizer-step order, while triangle area favors bends and excursions over
-uniformly spaced samples.  Each drawn segment may still span several optimizer
-steps; line length is not the optimizer's step size.
+For display, ordinary trajectories longer than 350 iterates are reduced with
+largest-triangle-three-buckets (LTTB) in the `(a,b)` plane.  When Thompson runs
+an arm beyond its uniform prefix, the prefix keeps the same 350-point LTTB
+selection as its gray counterpart, and the extension receives up to 250 more
+points.  Log-spaced step buckets emphasize early continuation; the late noise
+ball gets fewer segments.  Triangle area still favors bends and excursions
+within each bucket.  Each drawn segment may span several optimizer steps;
+line length is not the optimizer's step size.
 
 A non-finite minibatch gradient, optimizer update, loss, or numerically
 saturated upper-endpoint transform terminates that arm at its last finite

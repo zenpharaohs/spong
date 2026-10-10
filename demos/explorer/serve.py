@@ -975,6 +975,7 @@ def _bounded_int(payload, name, default, lower, upper):
 
 
 def _allocator_policy(result, color, max_points=350, *,
+                      uniform_steps=None,
                       width_base=0.55, width_gain=1.2,
                       opacity_base=0.08, opacity_gain=0.72,
                       mark_start=False, mark_end=False):
@@ -984,8 +985,13 @@ def _allocator_policy(result, color, max_points=350, *,
     traces = []
     for arm, (trajectory, pulls) in enumerate(
             zip(result.trajectories, counts)):
-        raw_points = optimizer_gallery._thin(
-            trajectory, max_points=max_points).tolist()
+        if uniform_steps is None:
+            selected = optimizer_gallery._thin(
+                trajectory, max_points=max_points)
+        else:
+            selected = optimizer_gallery._thin_comparison(
+                trajectory, uniform_steps[arm], prefix_points=max_points)
+        raw_points = selected.tolist()
         # json.dumps would otherwise emit non-standard NaN/Infinity tokens
         # when a deliberately ill-scaled optimizer escapes.  Stop a drawn
         # trajectory at its last finite point, as the standalone gallery does
@@ -1004,6 +1010,7 @@ def _allocator_policy(result, color, max_points=350, *,
             "executed_steps": int(result.executed_steps[arm]),
             "termination": result.termination_reasons[arm],
             "points": points,
+            "plotted_points": len(points),
             "color": color,
             "width": width_base + width_gain * share,
             "opacity": opacity_base + opacity_gain * math.sqrt(share),
@@ -1125,6 +1132,7 @@ def allocator(payload: dict) -> dict:
             opacity_base=0.14, opacity_gain=0.28),
         "thompson": _allocator_policy(
             comparison["thompson"], "#5b21b6",
+            uniform_steps=comparison["equal"].executed_steps,
             opacity_base=0.10, opacity_gain=0.80,
             mark_start=True, mark_end=True),
     }

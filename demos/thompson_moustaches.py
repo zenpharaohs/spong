@@ -226,12 +226,15 @@ def _uniform_cache(states, gradients, loss, rounds, chunk_steps,
     return cache, workers
 
 
-def _overlays(result, color):
+def _overlays(result, color, uniform=None):
     largest = max(int(np.max(result.allocations)), 1)
     overlays = []
-    for trajectory, pulls in zip(result.trajectories, result.allocations):
+    for arm, (trajectory, pulls) in enumerate(
+            zip(result.trajectories, result.allocations)):
         overlays.append({
-            "Y": gallery._thin(trajectory),
+            "Y": (gallery._thin(trajectory) if uniform is None else
+                  gallery._thin_comparison(
+                      trajectory, uniform.executed_steps[arm])),
             "color": color,
             "width": 0.55+1.2*pulls/largest,
             "opacity": 0.08+0.72*np.sqrt(pulls/largest),
@@ -468,7 +471,8 @@ def main(argv=None):
         filename = f"{stem}_{name}.svg"
         render.save(render.plane_view(
             p, view=p.view, width=800, height=600, n_levels=32, n_grid=801,
-            overlays=_overlays(result, color),
+            overlays=_overlays(result, color,
+                               equal if name == "thompson" else None),
             title=f"{case.name}: {args.method}, {name} allocation"),
             str(args.output_dir/filename))
         summary = _allocation_summary(result)
