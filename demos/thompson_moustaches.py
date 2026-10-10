@@ -323,7 +323,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
                        seed=1729, distribution="uniform01", samples=None,
                        learning_rate=None, cb_library=None,
                        should_stop=None, warmup_steps=100, deadline=None,
-                       workers=None):
+                       workers=None, progress=None):
     """Run equal and exact Thompson allocation on an arbitrary portrait.
 
     ``m`` supplies only the exact loss used for the posterior observation.
@@ -351,6 +351,8 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     if design not in gallery.DESIGNS:
         raise ValueError(f"unsupported initialization design {design!r}")
 
+    if progress is not None:
+        progress("initializations")
     points = (initializers.low_discrepancy(starts, view)
               if design == "low-discrepancy"
               else initializers.blue_noise(starts, view, seed=seed))
@@ -359,6 +361,8 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     # and an unusable calibration falls back to the method's default.
     auto_lr = None
     if isinstance(learning_rate, str) and learning_rate == "auto":
+        if progress is not None:
+            progress("learning-rate calibration")
         start_lr = gallery.DEFAULT_LR.get(method, 1e-3)
         auto_lr = [auto_base_lr(m, start, method, start_lr)
                    for start in points]
@@ -378,14 +382,20 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         "native-adam" if method in {"adam", "muon-adamw"}
         and native_adam.available() else "python")
     equal_states, equal_gradients = _problem(**common)
+    if progress is not None:
+        progress("uniform trajectory computation")
     cache, workers_used = _uniform_cache(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
         should_stop=should_stop, deadline=deadline, workers=workers)
+    if progress is not None:
+        progress("uniform playback")
     equal = _equal(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
         should_stop=should_stop, cache=cache)
 
     uniform_lengths = [len(arm.records) for arm in cache.arms]
+    if progress is not None:
+        progress("bandit allocation")
     with cb_sampler.ContinuousBernoulliBank(
             starts, seed=seed, library=cb_library) as bank:
         adaptive = thompson.allocate(

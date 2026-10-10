@@ -1035,6 +1035,12 @@ def allocator(payload: dict) -> dict:
     from which the browser asks us to place the common initialization design,
     not a request to rebuild or recertify the portrait.
     """
+    def progress(phase):
+        if os.environ.get("SPONG_ALLOCATOR_PROGRESS") == "1":
+            print(f"SPONG_ALLOCATOR_PHASE={phase}", file=sys.stderr,
+                  flush=True)
+
+    progress("model construction")
     f, g, resolved_view, spec, key = _resolve(payload)
     m = _model_for(key, f, g, spec)
 
@@ -1078,6 +1084,7 @@ def allocator(payload: dict) -> dict:
 
     distribution = spec.get("kind", "uniform01")
     samples = spec.get("samples") if distribution == "empirical" else None
+    progress("sampler library")
     cb_library = allocator_demo.cb_sampler.resolve_library(auto_build=True)
     t0 = time.perf_counter()
     deadline = t0 + time_limit_sec
@@ -1088,8 +1095,9 @@ def allocator(payload: dict) -> dict:
         distribution=distribution, samples=samples,
         learning_rate=learning_rate, cb_library=cb_library,
         should_stop=lambda: time.perf_counter() >= deadline,
-        deadline=deadline)
+        deadline=deadline, progress=progress)
     elapsed = time.perf_counter() - t0
+    progress("response preparation")
 
     return {
         "format": "spong-equal-thompson-traces-v1",
@@ -1158,10 +1166,11 @@ def isolated_allocator(payload: dict) -> dict:
 
     command = [sys.executable, str(Path(__file__).resolve()),
                "--allocator-worker"]
+    worker_env = dict(os.environ, SPONG_ALLOCATOR_PROGRESS="1")
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True,
-        start_new_session=(os.name == "posix"))
+        start_new_session=(os.name == "posix"), env=worker_env)
     try:
         stdout, stderr = process.communicate(
             json.dumps(payload), timeout=hard_limit)
@@ -1172,9 +1181,13 @@ def isolated_allocator(payload: dict) -> dict:
             os.killpg(process.pid, signal.SIGKILL)
         else:
             process.kill()
-        process.communicate()
+        _, stderr = process.communicate()
+        phases = [line.partition("=")[2] for line in stderr.splitlines()
+                  if line.startswith("SPONG_ALLOCATOR_PHASE=")]
+        phase = phases[-1] if phases else "worker startup"
         raise TimeoutError(
-            "allocation stopped by hard interactive time limit") from None
+            "allocation stopped by hard interactive time limit "
+            f"(last phase: {phase})") from None
 
     try:
         envelope = json.loads(stdout)

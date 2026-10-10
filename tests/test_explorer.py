@@ -297,14 +297,16 @@ def test_isolated_allocator_kills_worker_stuck_past_deadline(monkeypatch):
         def communicate(self, payload=None, timeout=None):
             if not self.killed:
                 raise subprocess.TimeoutExpired("allocator", timeout)
-            return "", ""
+            return "", ("SPONG_ALLOCATOR_PHASE=uniform trajectory computation\n"
+                        "unrelated diagnostic\n")
 
         def kill(self):
             self.killed = True
 
     worker = StuckWorker()
     monkeypatch.setattr(serve.subprocess, "Popen", lambda *a, **k: worker)
-    with pytest.raises(TimeoutError, match="hard interactive time limit"):
+    with pytest.raises(TimeoutError, match=(
+            "hard interactive time limit.*uniform trajectory computation")):
         serve.isolated_allocator({"time_limit_sec": 1})
     assert worker.killed
 
