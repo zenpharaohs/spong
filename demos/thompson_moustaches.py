@@ -334,7 +334,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     input law that supplied the portrait moments.  Uniform arm prefixes are
     recorded once; Thompson replays those exact iterates and losses, extending
     a live arm state only when its selections exceed the uniform prefix.
-    The default observation uses a conditioned L/(a+L), with a initially at
+    The default observation uses L/(a+L), with a initially at
     the median initial loss and reset when it leaves the recent loss IQR.
     Every active held-loss posterior is then expressed under the new divisor.
     Pass ``observation="L/(1+L)"`` to reproduce the historical policy.

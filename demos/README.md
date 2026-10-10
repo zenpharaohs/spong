@@ -40,9 +40,9 @@ Here now:
   draw receives the next continuation and its posterior is immediately
   replaced by `(N Z, N)`, where `Z` is a bounded monotone transform of the
   arm's current held loss and `N` its pull count.  The default transform is
-  `Z = 0.01 + 0.98 L/(a+L)` for positive finite loss, with `a` initially the
-  median positive finite starting loss.  The small interior margin avoids
-  known exact-sampler stalls near the closed-family endpoints.
+  `Z = L/(a+L)` for positive finite loss, with `a` initially the median
+  positive finite starting loss.  Only binary64 endpoint rounding is corrected
+  to the nearest interior value; there is no fixed observation margin.
   Every `starts` allocation rounds, the recent loss interquartile range is
   checked.  Only when `a` leaves that range does it move to the median
   positive finite loss in the last `starts` allocated chunks.  The current

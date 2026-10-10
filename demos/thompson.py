@@ -33,10 +33,9 @@ class RenormalizedLoss:
 
     The divisor may drift inside the recent-loss interquartile range.  In
     rested allocation all posterior sufficient statistics can be re-expressed
-    under a new scale
-    from the current held losses and pull counts, without replaying history.
-    Positive finite ratios are kept in [0.01, 0.99] to avoid known stalls
-    in the external exact sampler near its closed-family endpoints.
+    under a new scale from the current held losses and pull counts, without
+    replaying history.  Positive finite losses retain interior observations
+    even when their ratio rounds to an endpoint in binary64.
     """
     scale: float
     changes: int = 0
@@ -57,7 +56,11 @@ class RenormalizedLoss:
         else:
             relative = self.scale/value
             ratio = 1.0/(1.0+relative)
-        return 0.01 + 0.98*ratio
+        if ratio <= 0.0:
+            return float(np.nextafter(0.0, 1.0))
+        if ratio >= 1.0:
+            return float(np.nextafter(1.0, 0.0))
+        return ratio
 
     def recalibrate(self, losses):
         values = [float(x) for x in losses

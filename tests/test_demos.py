@@ -640,6 +640,8 @@ def test_renormalized_loss_tracks_recent_interquartile_scale():
     observe = thompson.calibrate_divisor([1e2, 1e6, 1e10, 1e14])
     assert observe.scale == pytest.approx(np.median([1e2, 1e6, 1e10, 1e14]))
     assert observe(observe.scale) == 0.5
+    assert thompson.RenormalizedLoss(2.0)(1.0) == pytest.approx(1.0/3.0)
+    assert thompson.RenormalizedLoss(2.0)(3.0) == pytest.approx(3.0/5.0)
     values = [observe(loss) for loss in (1e2, 1e6, 1e10, 1e14)]
     assert all(left < right for left, right in zip(values, values[1:]))
     assert observe.recalibrate([2.0, 3.0, 4.0, np.inf])
@@ -651,6 +653,8 @@ def test_renormalized_loss_tracks_recent_interquartile_scale():
     assert observe(0.0) == 0.0
     assert observe(float("inf")) == 1.0
     assert thompson.calibrate_divisor([1e308, 1e308])(1e308) == 0.5
+    assert 0.0 < thompson.RenormalizedLoss(1e308)(5e-324) < 1.0
+    assert 0.0 < thompson.RenormalizedLoss(5e-324)(1e308) < 1.0
 
 
 def test_empirical_adam_innovation_matches_empirical_loss_gradient():
