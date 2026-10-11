@@ -7,6 +7,7 @@ fixtures that make specific mathematical or numerical points.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 
 from . import model
 
@@ -14,8 +15,8 @@ from . import model
 @dataclass(frozen=True)
 class ZooCase:
     name: str
-    f: tuple[float, ...]
-    g: tuple[float, ...]
+    f: tuple[int | float | Fraction, ...]
+    g: tuple[int | float | Fraction, ...]
     moment_dist: str
     description: str
     seed: int | None = None
@@ -438,6 +439,22 @@ NORMAL_SYMMETRIC_FLAT_D5 = ZooCase(
 )
 
 
+NORMAL_SYMMETRIC_FLAT_D7 = ZooCase(
+    name="normal-symmetric-flat-d7",
+    f=(0, 1, 0, 1, 0, 1, 0, 1),
+    g=(-3, -1, -3, 4, -3, -2, -3, Fraction(1, 5)),
+    moment_dist="normal01",
+    default_view=None,
+    description=(
+        "Degree-7 continuation of normal-symmetric-flat-d5 with a "
+        "small rational leading g coefficient. Seven a=0 saddles "
+        "have loss C=159232; six alternating off-axis minima are within "
+        "0.062% of C. The loss infimum at either b infinity is 101968/429. "
+        "The full portrait certifies."
+    ),
+)
+
+
 NORMAL_LINEAR_RIPPLE_D5 = ZooCase(
     name="normal-linear-ripple-d5",
     f=(0, 1),
@@ -616,6 +633,7 @@ CASES = {
     NORMAL_SYMMETRIC_SMALL_INTEGER_D7.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D7,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D9.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D9,
     NORMAL_SYMMETRIC_FLAT_D5.name: NORMAL_SYMMETRIC_FLAT_D5,
+    NORMAL_SYMMETRIC_FLAT_D7.name: NORMAL_SYMMETRIC_FLAT_D7,
     NORMAL_LINEAR_RIPPLE_D5.name: NORMAL_LINEAR_RIPPLE_D5,
     RADEMACHER_CHEBYSHEV_D5.name: RADEMACHER_CHEBYSHEV_D5,
 }

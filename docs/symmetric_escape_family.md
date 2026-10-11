@@ -43,6 +43,34 @@ exhaustive search only within the stated coefficient box and fixed even
 coefficients, not a claim about all rational degree-5 instances. Reproduce
 the ranking with `python scripts/search_normal_flat_d5.py --height 4`.
 
+## Degree-seven continuation with a rational leading coefficient
+
+Keep the degree-5 `g` prefix and set
+
+\[
+ f(x)=x+x^3+x^5+x^7,\qquad
+ g(x)=-3-x-3x^2+4x^3-3x^4-2x^5-3x^6+kx^7.
+\]
+
+Standard-normal moments give the exact cross term
+`B(b)=-124b+4272b^3-22920b^5+146580k b^7` and `C=159232`.
+For seven `B`-saddles, the cubic `B(b)/b` in `t=b^2` needs three
+distinct positive roots. No integer `k` works: for `k<=0` its value at
+`t=0` and its leading sign are both negative, while for integer `k>=1`
+its derivative is positive for all real `t`. The simple fractions
+`k=1/2, 1/3, 1/4` leave only three `B` roots; `k=1/5` gives seven.
+
+The named `normal-symmetric-flat-d7` case takes `k=1/5` exactly. Its
+seven saddles lie at `a=0`, with `b` approximately `0`, `±0.188335`,
+`±0.481365`, and `±0.717386`. The six intervening minima alternate
+across the axis. Their loss gaps below `C`, from the outer pair toward
+the center, are `0.020101%`, `0.061718%`, and `0.004773%` (then reflected).
+The exact loss infimum at either `b` infinity is `101968/429`, well below
+all six finite minima. Exact Sturm enumeration verifies the critical-point
+counts and Morse classification; the full portrait's topology certifies.
+The rational coefficient matters: approximating `1/5` as a binary float
+would not preserve these exact polynomial coefficients.
+
 ## Curated odd-degree sequence
 
 The small-integer continuation in

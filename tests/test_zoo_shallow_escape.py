@@ -114,6 +114,28 @@ def test_normal_symmetric_flat_degree5_certifies():
     assert summary["representation_attested"]
 
 
+def test_normal_symmetric_flat_degree7_certifies():
+    case = zoo.get("normal-symmetric-flat-d7")
+    assert case.f == (0, 1, 0, 1, 0, 1, 0, 1)
+    assert case.g == (-3, -1, -3, 4, -3, -2, -3, Fraction(1, 5))
+    m = build_case(case)
+    e = sturm.enumerate_critical_points(m)
+    assert e.morse and e.psi_positive
+    assert (len(e.minima), len(e.saddles)) == (6, 7)
+    assert m.C == 159232
+    assert tuple(m.beta) == (0, -124, 0, 4272, 0, -22920, 0, 29316)
+    tail = Fraction(101968, 429)
+    assert merge_tree.backbone_level_at_infinity(m) == tail
+    assert all(abs(q.a) < 1e-30 and m.u(q.b) == pytest.approx(m.C)
+               for q in e.saddles)
+    assert all(tail < m.u(q.b) < m.C for q in e.minima)
+    assert max((m.C - m.u(q.b)) / float(m.C) for q in e.minima) < 0.000618
+    assert [1 if q.a > 0 else -1 for q in e.minima] == [1, -1, 1, -1, 1, -1]
+    summary = portrait.compute(m).ledger["summary"]
+    assert summary["topology_status"] == "certified"
+    assert summary["representation_attested"]
+
+
 @pytest.mark.heavy
 def test_degree9_stable_retrace_uses_its_actual_box():
     case = zoo.get("normal-symmetric-small-integer-d9")
