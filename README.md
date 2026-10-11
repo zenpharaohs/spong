@@ -209,7 +209,10 @@ two-point `X=±1` measure, it realizes the backbone loss
 `u(b)=1/(1+T_d(b)^2)` and has `d` equal-height saddles alternating with
 `d-1` equal-depth finite minima.  The same construction accepts odd/even
 rational pairs for elliptic-inspired response experiments; see
-[docs/filter_response_family.md](docs/filter_response_family.md).
+[docs/filter_response_family.md](docs/filter_response_family.md).  The
+two-point moments themselves exclude a continuous representing density
+already at degree 4, but nearby two-Gaussian mixtures retain the
+degree-5 portrait's certified branch attachments.
 
 `quadratic-stiff` is the degree-2 `f=g` case discovered at random seed
 `2735729614`: three minima, three saddles, and a bounded unstable branch from

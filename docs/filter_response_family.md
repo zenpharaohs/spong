@@ -69,6 +69,56 @@ zero-loss minima if `P` is nonzero there, a new feature compared with
 `Q=1`.  Coefficient conditioning and the resulting manifold attachments
 must be checked independently for each proposed high-degree member.
 
+## Smooth densities near the two-point measure
+
+The exact Rademacher moments **cannot** be represented by a continuous
+probability density, even though SPONG uses only finitely many moments.
+Already `mu_0=mu_2=mu_4=1` gives
+
+\[
+\mathbb E[(X^2-1)^2]=\mu_4-2\mu_2+\mu_0=0.
+\]
+
+Since the integrand is nonnegative, every representing probability measure
+must be supported on `{-1,+1}`.  `mu_1=0` then fixes the two weights at
+one half each.  The moment vector is on the boundary of the positive
+moment cone; a polynomial–Gaussian density cannot satisfy these equalities
+exactly.  A numerical fit with small moment error may nevertheless be
+useful, provided that error is reported rather than called exact matching.
+Matching only orders `0..3` is different: `N(0,1)` shares those four raw
+moments.  The degree-5 SPONG model uses moments through order 10, so it
+necessarily includes the obstructing order-4 equality.
+
+There are smooth **nearby** moment vectors that keep the portrait.  Let
+`S` be Rademacher, `Z` standard normal and independent, and take
+`X=S+sqrt(v) Z`.  For every rational `v>0`, the law is an equal mixture of
+two Gaussians and has a strictly positive smooth density.  Its moments are
+computed exactly by `filter_family.gaussian_smoothed_moments`; build the
+corresponding model with `filter_family.smoothed_chebyshev_model(d,v)`.
+For example, `v=1/10000` gives `mu_2=1.0001` and
+`mu_4=1.00060003`.  The degree-5 model still has five saddles and four
+minima, with a certified portrait and the same ordered unstable-branch
+destinations as the discrete model.  The same was observed at `v=1/100`.
+These perturbed moment vectors are natural inputs for a continuous-density
+moment fitter, including a polynomial–Gaussian method; the explicit
+two-Gaussian mixture already proves that a continuous representative exists.
+The finite minima are no longer exactly equiripple: at `v=1/100`, their
+losses are approximately `0.63766, 0.51612, 0.51612, 0.63766`.
+These are checked examples, not a proven maximal interval of `v` for which
+the topology persists.
+
+The degree-5 connectivity also persists at `v=1/10`.  On that moment
+vector, the independent [moment-density implementation](https://github.com/zenpharaohs/moment-density)
+accepts moments through order 10 at bandwidth `0.5`: a degree-10
+polynomial–Gaussian fit has maximum scaled moment residual about `5e-16`
+and passes its numerical positivity audit at tolerance `1e-14`.  At
+bandwidth `0.8`, its higher-order correction returns degree 22 with
+residual about `1.6e-15`, but the audit permits a tiny negative density
+minimum (about `-8e-15`) under a `1e-12` tolerance.  Neither numerical
+audit is a formal nonnegativity certificate.  The exact `v=0` moment
+vector is rejected by that implementation's singular-Hankel check, as
+the fourth-moment identity requires.
+
 This family uses a rank-two moment measure, whereas the previously
 studied `normal-symmetric-small-integer-d3/5/7/9` sequence uses a
 full-support Gaussian measure.  The exact Chebyshev recurrence explains

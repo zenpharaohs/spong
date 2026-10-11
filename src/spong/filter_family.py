@@ -14,6 +14,7 @@ construction of SPONG instances, not a filter-design algorithm.
 from __future__ import annotations
 
 from fractions import Fraction
+from math import comb
 
 from . import _poly as poly, model
 
@@ -56,3 +57,45 @@ def chebyshev_response_model(degree: int, gain=1) -> model.Model:
             or degree < 1 or degree % 2 == 0:
         raise ValueError("degree must be a positive odd integer")
     return rational_response_model(chebyshev_coefficients(degree), gain=gain)
+
+
+def gaussian_smoothed_moments(count: int, variance) -> tuple[Fraction, ...]:
+    """Moments of 1/2 N(-1,v) + 1/2 N(+1,v), exactly for rational v.
+
+    At v=0 this is the Rademacher measure.  Every v>0 gives a smooth,
+    strictly positive density.  Only the moments needed by a finite-degree
+    SPONG model are materialized.
+    """
+    v = poly.as_fraction(variance)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("count must be a nonnegative integer")
+    if v < 0:
+        raise ValueError("variance must be nonnegative")
+    out = []
+    for k in range(count):
+        if k % 2:
+            out.append(Fraction(0))
+            continue
+        moment = Fraction(0)
+        double_factorial = 1
+        for j in range(k // 2 + 1):
+            if j:
+                double_factorial *= 2 * j - 1
+            moment += comb(k, 2 * j) * double_factorial * v**j
+        out.append(moment)
+    return tuple(out)
+
+
+def smoothed_chebyshev_model(degree: int, variance, gain=1) -> model.Model:
+    """Chebyshev coefficients under a continuous Gaussian-mixture input law.
+
+    Positive variance perturbs the exact equiripple backbone; it does not
+    preserve the Rademacher moments or assert an unchanged global portrait.
+    """
+    # Validate the degree and gain using the discrete construction first.
+    discrete = chebyshev_response_model(degree, gain)
+    v = poly.as_fraction(variance)
+    if v <= 0:
+        raise ValueError("variance must be positive")
+    moments = gaussian_smoothed_moments(2 * len(discrete.g) - 1, v)
+    return model.build(discrete.f, discrete.g, moments)
