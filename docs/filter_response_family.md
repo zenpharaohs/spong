@@ -107,6 +107,17 @@ losses are approximately `0.63766, 0.51612, 0.51612, 0.63766`.
 These are checked examples, not a proven maximal interval of `v` for which
 the topology persists.
 
+The persistence has a structural explanation.  The `v=0` degree-5 portrait
+is certified Morse–Smale, and the moment perturbation changes the polynomial
+loss and its derivatives smoothly on compact sets.  Thus its hyperbolic
+critical points and transverse manifold attachments have a local stability
+margin.  Escape makes the plane noncompact, so this argument alone does not
+exclude new critical points arriving from infinity or a change in escape
+fates.  Exact Sturm enumeration and portrait audits check those global
+obligations for the displayed positive variances.  The loss limit at either
+infinity moves continuously from `0` to about `0.001596` at `v=1/10000`
+and remains below all finite minima in the checked examples.
+
 The degree-5 connectivity also persists at `v=1/10`.  On that moment
 vector, the independent [moment-density implementation](https://github.com/zenpharaohs/moment-density)
 accepts moments through order 10 at bandwidth `0.5`: a degree-10
