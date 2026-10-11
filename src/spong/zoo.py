@@ -355,8 +355,8 @@ NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7 = symmetric_shallow_escape_case(7)
 # Curated odd coefficients of g for a second, visibly off-axis sequence.
 # The degree-3 row is the user's original case.  All rows have exact real
 # B roots and alternating off-axis minima; this table records discoveries,
-# not a claimed all-degree formula.  The degree-9 and degree-11 members are
-# available for study but are not promoted to the ordinary zoo registry.
+# not a claimed all-degree formula.  The degree-11 member is available for
+# study but is not promoted to the ordinary zoo registry.
 _SMALL_INTEGER_SYMMETRIC_ODD = {
     3: (-1, 4),
     5: (-1, 4, -1),
@@ -377,7 +377,7 @@ def small_integer_symmetric_escape_case(degree: int) -> ZooCase:
     while the loss limit at either b infinity is much lower.
 
     This is a finite verified sequence, not an assertion that similarly
-    bounded coefficients exist at every odd degree.  Only the d=3,5,7
+    bounded coefficients exist at every odd degree.  Only the d=3,5,7,9
     members have been promoted to ordinary named zoo portraits.
     """
     if isinstance(degree, bool) or not isinstance(degree, int) \
@@ -399,13 +399,14 @@ def small_integer_symmetric_escape_case(degree: int) -> ZooCase:
             "Normal moments make A even and B odd; the escape loss at "
             "either b infinity is below every finite minimum."
             + (" Candidate for further portrait certification."
-               if degree >= 9 else "")
+               if degree >= 11 else "")
         ),
     )
 
 
 NORMAL_SYMMETRIC_SMALL_INTEGER_D5 = small_integer_symmetric_escape_case(5)
 NORMAL_SYMMETRIC_SMALL_INTEGER_D7 = small_integer_symmetric_escape_case(7)
+NORMAL_SYMMETRIC_SMALL_INTEGER_D9 = small_integer_symmetric_escape_case(9)
 
 
 NEAR_SLIDE_D2 = ZooCase(
@@ -554,6 +555,7 @@ CASES = {
     NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D5.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D5,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D7.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D7,
+    NORMAL_SYMMETRIC_SMALL_INTEGER_D9.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D9,
 }
 
 

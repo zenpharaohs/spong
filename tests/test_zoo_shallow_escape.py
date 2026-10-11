@@ -59,7 +59,7 @@ def test_prescribed_root_family_validates_parameters():
 @pytest.mark.parametrize("degree", (3, 5, 7, 9, 11))
 def test_small_integer_sequence_has_off_axis_alternating_minima(degree):
     case = zoo.small_integer_symmetric_escape_case(degree)
-    if degree in (3, 5, 7):
+    if degree in (3, 5, 7, 9):
         assert zoo.get(case.name) == case
     else:
         assert case.name not in zoo.names()
@@ -90,3 +90,16 @@ def test_named_small_integer_portraits_certify(degree):
     summary = p.ledger["summary"]
     assert summary["topology_status"] == "certified"
     assert summary["representation_attested"]
+
+
+@pytest.mark.heavy
+def test_degree9_stable_retrace_uses_its_actual_box():
+    case = zoo.get("normal-symmetric-small-integer-d9")
+    p = portrait.compute(build_case(case))
+    assert p.ledger["topology"]["status"] == "certified"
+    retraced = [b for b in p.branches
+               if b.kind == "stable" and b.diag.get("stable_box_retrace")]
+    assert retraced
+    assert all(b.diag["stable_box_retrace"]["box_a"][1] > p.box[1]
+               for b in retraced)
+    assert all(x["certified"] for x in p.ledger["topology"]["stable_tails"])

@@ -1881,8 +1881,15 @@ def audit(m, enumeration, branches, box,
                 kind = "incomplete"
             return i, "unstable", {"branch": i, "kind": kind, **certificate}
         if branch.kind == "stable":
+            # Stable branches that leave the display-derived box are retraced
+            # against the level bar's larger exact sublevel box.  Their
+            # terminal crossing must be checked against that actual box,
+            # not the original box used by the other branches.
+            retrace = branch.diag.get("stable_box_retrace")
+            stable_box = ((*retrace["box_a"], *retrace["box_b"])
+                          if retrace is not None else box)
             certificate = _stable_escape_certificate(
-                m, enumeration, branch, box, 16*predicate_tol)
+                m, enumeration, branch, stable_box, 16*predicate_tol)
             asymptote = branch.certs.get("asymptote")
             return i, "stable", {
                 "branch": i,

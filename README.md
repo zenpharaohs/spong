@@ -175,6 +175,7 @@ Named zoo portraits:
     PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-shallow-escape --pause
     PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-shallow-escape-d7 --pause
     PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-small-integer-d7 --pause
+    PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-small-integer-d9 --pause
 
 The normal-moment symmetric escape case has two finite minima near loss
 197.873, three saddles at 198, and a much lower unattained loss limit of
@@ -188,12 +189,17 @@ at infinity.  Increasing `shield` makes the finite wells shallower.
 The distinct `zoo.small_integer_symmetric_escape_case(degree)` sequence
 continues the original degree-3 example directly: `f` has coefficient -3
 on every odd power, while `g` has coefficient -3 on every even power.
-Its odd `g` coefficients are `(-1, 4, -1)` at degree 5 and
-`(-1, 4, -4, 1)` at degree 7.  These two named zoo cases have 9 and 13
-critical points, with their saddles on `a=0` and their finite minima
-visibly alternating to either side.  Degree-9 and degree-11 integer
-candidates are available through the generator and have exact critical-point
-enumerations, but are not yet ordinary certified zoo portraits.  The
+Its odd `g` coefficients are `(-1, 4, -1)` at degree 5,
+`(-1, 4, -4, 1)` at degree 7, and `(-1, 7, -13, 7, -1)` at degree 9.
+These named zoo cases have 9, 13, and 17 critical points, with their
+saddles on `a=0` and their finite minima alternating to either side.
+The degree-9 portrait certifies after stable branch boundary crossings are
+checked against the larger box actually used for their retrace.  A degree-11
+integer candidate is available through the generator with 21 exactly
+enumerated critical points, but its portrait still exceeds the audit's
+one-million-segment budget; a higher-budget diagnostic also finds two
+forbidden contacts.  The coefficient and certification investigation is in
+[docs/symmetric_escape_family.md](docs/symmetric_escape_family.md).  The
 prescribed-root degree-5 and degree-7 cases above remain in the zoo as
 separate, tightly axis-hugging allocator stress cases.
 
