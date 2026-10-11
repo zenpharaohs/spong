@@ -2019,15 +2019,27 @@ function drawEndpoints(){
                  policy:outcome.policy,fate:outcome.fate});
   }
   if (!dots.length) return;
-  const lo=Math.min(...dots.flatMap(d=>[d.x,d.y]));
-  const hi=Math.max(...dots.flatMap(d=>[d.x,d.y]));
-  const span=Math.max(1,hi-lo), xmin=lo-.05*span, xmax=hi+.05*span;
+  const extent=(lo,hi)=>{
+    const span=Math.max(.25,hi-lo), mid=(lo+hi)/2;
+    return [mid-span*.55,mid+span*.55];
+  };
+  const [xmin,xmax]=extent(Math.min(...dots.map(d=>d.x)),Math.max(...dots.map(d=>d.x)));
+  const possible=audit.ultimate_loss_range;
+  const yValues=dots.map(d=>d.y);
+  if (Array.isArray(possible) && possible.length===2)
+    for (const value of possible)
+      if (Number.isFinite(value) && value>0) yValues.push(Math.log10(value));
+  const [ymin,ymax]=extent(Math.min(...yValues),Math.max(...yValues));
   const X=x=>p.l+(x-xmin)/(xmax-xmin)*(cEndpoints.width-p.l-p.r);
-  const Y=y=>cEndpoints.height-p.b-(y-xmin)/(xmax-xmin)*(cEndpoints.height-p.t-p.b);
+  const Y=y=>cEndpoints.height-p.b-(y-ymin)/(ymax-ymin)*(cEndpoints.height-p.t-p.b);
   xEndpoints.save(); xEndpoints.beginPath();
   xEndpoints.rect(p.l,p.t,cEndpoints.width-p.l-p.r,cEndpoints.height-p.t-p.b); xEndpoints.clip();
   xEndpoints.strokeStyle=css("--rule-2");xEndpoints.setLineDash([3,3]);
-  xEndpoints.beginPath();xEndpoints.moveTo(X(xmin),Y(xmin));xEndpoints.lineTo(X(xmax),Y(xmax));xEndpoints.stroke();
+  const identityLo=Math.max(xmin,ymin), identityHi=Math.min(xmax,ymax);
+  if (identityLo<identityHi){
+    xEndpoints.beginPath();xEndpoints.moveTo(X(identityLo),Y(identityLo));
+    xEndpoints.lineTo(X(identityHi),Y(identityHi));xEndpoints.stroke();
+  }
   xEndpoints.setLineDash([]);
   for (const d of dots){
     xEndpoints.fillStyle=d.policy==="equal"?"#66727b":"#5b21b6";
@@ -2040,8 +2052,8 @@ function drawEndpoints(){
   xEndpoints.fillText(xmin.toFixed(1),p.l,cEndpoints.height-p.b+13);
   xEndpoints.textAlign="right";
   xEndpoints.fillText(xmax.toFixed(1),cEndpoints.width-p.r,cEndpoints.height-p.b+13);
-  xEndpoints.fillText(xmax.toFixed(1),p.l-5,p.t+4);
-  xEndpoints.fillText(xmin.toFixed(1),p.l-5,cEndpoints.height-p.b);
+  xEndpoints.fillText(ymax.toFixed(1),p.l-5,p.t+4);
+  xEndpoints.fillText(ymin.toFixed(1),p.l-5,cEndpoints.height-p.b);
   xEndpoints.textAlign="left";
 }
 

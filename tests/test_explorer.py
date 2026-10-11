@@ -298,6 +298,9 @@ def test_allocator_endpoint_audit_resolves_tree_then_irk():
     assert escape["fate"] == "escape"
     assert escape["method"] == "exact_merge_tree"
     assert escape["final_loss"] == pytest.approx(1.1233333333333333)
+    low, high = result["ultimate_loss_range"]
+    assert 0 < low <= direct["final_loss"] <= high
+    assert low <= escape["final_loss"] <= high
 
 
 def test_allocator_endpoint_reports_numerical_terminations_without_warnings(

@@ -1219,6 +1219,15 @@ def allocator_endpoint_audit(payload: dict) -> dict:
     if enumeration is None:
         enumeration = sturm.enumerate_critical_points(m)
     tree = merge_tree.build(m, enumeration)
+    ultimate_losses = [float(merge_tree.exact_loss(m, q.a, q.b))
+                       for q in enumeration.minima]
+    infinity_loss = merge_tree.backbone_level_at_infinity(m)
+    if infinity_loss is not None:
+        ultimate_losses.append(float(infinity_loss))
+    ultimate_losses = [value for value in ultimate_losses
+                       if math.isfinite(value) and value > 0]
+    ultimate_loss_range = ([min(ultimate_losses), max(ultimate_losses)]
+                           if ultimate_losses else None)
     kernel = getattr(m, "_native_kernel", None)
     results, memo = [], {}
 
@@ -1309,7 +1318,8 @@ def allocator_endpoint_audit(payload: dict) -> dict:
                                        "term": term}
         results.append(dict(memo[key_point], policy=policy, arm=arm))
     return {"format": "spong-allocator-endpoint-audit-v1",
-            "order": 8, "outcomes": results}
+            "order": 8, "outcomes": results,
+            "ultimate_loss_range": ultimate_loss_range}
 
 
 def isolated_allocator(payload: dict) -> dict:
