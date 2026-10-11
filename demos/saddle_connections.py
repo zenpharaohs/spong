@@ -355,8 +355,15 @@ def evaluate(f, g, moment_dist="uniform01", geometry_level=0,
              tracked=None):
     """Build and screen one exact-dyadic SPONG candidate."""
     degree = max(len(f), len(g)) - 1
-    moments_fn = (model.moments_uniform01 if moment_dist == "uniform01"
-                  else model.moments_normal01)
+    moment_laws = {
+        "uniform01": model.moments_uniform01,
+        "normal01": model.moments_normal01,
+        "rademacher": model.moments_rademacher,
+    }
+    try:
+        moments_fn = moment_laws[moment_dist]
+    except KeyError as exc:
+        raise ValueError(f"unsupported moment distribution {moment_dist!r}") from exc
     try:
         m = model.build(f, g, moments_fn(2 * degree + 1))
         e0 = sturm.enumerate_critical_points(m)

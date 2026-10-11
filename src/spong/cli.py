@@ -36,6 +36,8 @@ def _moments(name: str, n: int):
         return model.moments_uniform01(n)
     if name == "normal01":
         return model.moments_normal01(n)
+    if name == "rademacher":
+        return model.moments_rademacher(n)
     raise ValueError(f"unknown moment distribution {name!r}")
 
 
@@ -438,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="coefficient distribution for f and g")
     p.add_argument("--coeff-scale", type=float, default=1.0,
                    help="coefficient scale")
-    p.add_argument("--moment-dist", choices=("uniform01", "normal01"),
+    p.add_argument("--moment-dist", choices=("uniform01", "normal01", "rademacher"),
                    default="uniform01",
                    help="input distribution moments")
     p.add_argument("--view", nargs=4, type=float, default=None,

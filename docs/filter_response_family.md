@@ -58,7 +58,8 @@ the response pane shows its two actual support points.  The same example
 can be built in Python with
 `filter_family.chebyshev_response_model(5)`.  Exact Sturm enumeration
 confirms the degree-3, 5, 7, 9, and 11 counts and loss levels; the degree-5
-ordinary portrait certifies.
+ordinary portrait certifies. The degree-5 example is also the zoo preset
+`rademacher-chebyshev-d5`.
 
 The rational construction is a route to **Cauer/elliptic-inspired** SPONG
 instances: supply a real odd numerator `P` and even denominator `Q` from
@@ -122,7 +123,8 @@ locations move to about `+/-1.13574`, compared with the target's
 `+/-0.95106`, so this remains an approximation. Its full portrait
 certifies. This integer candidate is substantially simpler than the
 exact `B` prescriptions, but neither the fit nor the integer search
-establishes global optimality or an exact realization theorem.
+establishes global optimality or an exact realization theorem. It is
+available as the zoo preset `normal-linear-ripple-d5`.
 
 The tail gives a simple obstruction to that exact target with a linear
 `f`. If `g` has degree `d`, then

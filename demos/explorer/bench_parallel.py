@@ -45,8 +45,7 @@ def setup(name: str | None):
     if name:
         z = zoo.get(name)
         f, g = list(z.f), list(z.g)
-        mu = (model.moments_normal01 if z.moment_dist == "normal01"
-              else model.moments_uniform01)(2 * max(len(f), len(g)) - 1)
+        mu = zoo.moments_for(z, 2 * max(len(f), len(g)) - 1)
         view = z.default_view
     else:
         f, g = QUAD

@@ -14,9 +14,7 @@ from . import comparison, model, portrait, render, zoo
 
 def _zoo_model(case):
     degree = max(len(case.f)-1, len(case.g)-1)
-    moments = (model.moments_uniform01
-               if case.moment_dist == "uniform01"
-               else model.moments_normal01)(2*degree+1)
+    moments = zoo.moments_for(case, 2*degree+1)
     return model.build(case.f, case.g, moments)
 
 

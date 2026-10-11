@@ -163,10 +163,7 @@ def _targeted_case(seed, exponent, family):
 def _zoo_case(name):
     case = zoo.get(name)
     degree = max(len(case.f)-1, len(case.g)-1)
-    moments_fn = (model.moments_uniform01
-                  if case.moment_dist == "uniform01"
-                  else model.moments_normal01)
-    m = model.build(case.f, case.g, moments_fn(2*degree+1))
+    m = model.build(case.f, case.g, zoo.moments_for(case, 2*degree+1))
     seed = case.seed or 0
     return {
         "kind": "zoo", "name": name, "seed": seed,

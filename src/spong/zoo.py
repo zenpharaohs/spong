@@ -23,6 +23,19 @@ class ZooCase:
     expected_connections: tuple[tuple[float, float], ...] = ()
 
 
+def moments_for(case: ZooCase, count: int):
+    """Exact input moments for an ordinary zoo case; reject unknown laws."""
+    laws = {
+        "uniform01": model.moments_uniform01,
+        "normal01": model.moments_normal01,
+        "rademacher": model.moments_rademacher,
+    }
+    try:
+        return laws[case.moment_dist](count)
+    except KeyError as exc:
+        raise ValueError(f"unsupported zoo moment law {case.moment_dist!r}") from exc
+
+
 @dataclass(frozen=True)
 class WallFamily:
     """A parameterized non-Morse-Smale wall and two ordinary chambers.
@@ -409,6 +422,36 @@ NORMAL_SYMMETRIC_SMALL_INTEGER_D7 = small_integer_symmetric_escape_case(7)
 NORMAL_SYMMETRIC_SMALL_INTEGER_D9 = small_integer_symmetric_escape_case(9)
 
 
+NORMAL_LINEAR_RIPPLE_D5 = ZooCase(
+    name="normal-linear-ripple-d5",
+    f=(0, 1),
+    g=(3, 6, -2, -8, -1, 1),
+    moment_dist="normal01",
+    default_view=None,
+    description=(
+        "Linear target under N(0,1) with a small-integer degree-5 activation. "
+        "Its backbone approximates the feasible-tail Chebyshev ripple "
+        "16/21+(5/21)/(1+T5(b)^2): five saddles, four finite minima, "
+        "and a certified portrait. The ripple is approximate, not exact."
+    ),
+)
+
+
+RADEMACHER_CHEBYSHEV_D5 = ZooCase(
+    name="rademacher-chebyshev-d5",
+    f=(0, 1),
+    g=(1, 5, 0, -20, 0, 16),
+    moment_dist="rademacher",
+    default_view=None,
+    description=(
+        "Exact degree-5 Chebyshev backbone on X=+/-1 with equal weights: "
+        "five saddles, four equal-loss minima, and escape loss zero. "
+        "The two-point measure makes this an algebraic realization, "
+        "not a representative full-support training distribution."
+    ),
+)
+
+
 NEAR_SLIDE_D2 = ZooCase(
     name="near-slide-d2",
     f=(-0.891598, -0.077792, 0.101212),
@@ -451,9 +494,9 @@ class SignedMeasureCase:
     """A model whose moment functional is INDEFINITE: a signed measure.
 
     Deliberately outside ``CASES``, like ``WallFamily``, because ``ZooCase``
-    carries ``moment_dist`` as a two-valued string and every consumer
-    branches on it with an ``else`` meaning normal01; a third value there
-    would silently mis-build this case everywhere.
+    carries an ordinary positive-law ``moment_dist``. A signed measure
+    instead needs its literal atoms and signed weights, so routing it
+    through the positive-law consumers would silently mis-build the case.
 
     WHY THE REGIME EXISTS.  Any finite real sequence is the moment sequence
     of some signed measure, so an indefinite Hankel does not make the SPONG
@@ -556,6 +599,8 @@ CASES = {
     NORMAL_SYMMETRIC_SMALL_INTEGER_D5.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D5,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D7.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D7,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D9.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D9,
+    NORMAL_LINEAR_RIPPLE_D5.name: NORMAL_LINEAR_RIPPLE_D5,
+    RADEMACHER_CHEBYSHEV_D5.name: RADEMACHER_CHEBYSHEV_D5,
 }
 
 
