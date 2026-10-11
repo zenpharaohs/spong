@@ -93,9 +93,11 @@ posterior draw after observing `Z = L/(a+L)` for positive finite loss.
 The divisor starts at the median initial loss and is recalibrated when it
 leaves the recent loss interquartile range.  The posterior state is
 sample-and-hold `(N Z,N)` at the arm's
-current loss, not a historical average of its trajectory.  Capture balls,
-critical-point labels, and portrait topology do not
-enter either allocation.  Equal is a broad neutral-grey, half-transparent
+current loss, not a historical average of its trajectory. Capture balls and
+portrait topology do not enter selection. The optional population Fisher/Gauss–Newton
+retirement check uses enumerated minima with exact gradient and Hessian
+derivatives to stop an arm that has arrived at a local minimum; both policies
+consume the same cached stopping event. Equal is a broad neutral-grey, half-transparent
 underlay; Thompson is a narrower saturated-violet overlay with a haloed violet
 cross at every start and a white-centred violet ring at every endpoint.  Within
 each policy line weight and opacity record the number of pulls.  Either policy
@@ -108,6 +110,17 @@ points.  Log-spaced step buckets emphasize early continuation; the late noise
 ball gets fewer segments.  Triangle area still favors bends and excursions
 within each bucket.  Each drawn segment may span several optimizer steps;
 line length is not the optimizer's step size.
+
+The learning-curve panel plots log loss against log optimizer steps for each
+arm. Short runs retain every step; long runs sample steps on a logarithmic
+grid, separately from the portrait's LTTB thinning. The endpoint-audit button
+plots each arm's last observed loss against the loss of the minimum reached by
+continued gradient flow. It first asks the exact sublevel merge tree whether
+the endpoint is already in a bounded, saddle-free one-minimum component. For
+undecided endpoints it tries IRK8-GL descent and asks the tree again along the
+way. The same audit probes initializations so basin changes can be counted.
+An unresolved continuation is omitted from the scatter rather than assigned
+to a nearest minimum.
 
 A non-finite minibatch gradient, optimizer update, or loss terminates that arm at its last finite
 iterate and removes it from later posterior draws.  The viewer reports

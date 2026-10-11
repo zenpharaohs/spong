@@ -601,8 +601,13 @@
           <input id="allocLimit" type="number" value="60" min="1" max="300" step="1">
         </div>
         <div class="wide row">
+          <label><input id="allocRetire" type="checkbox"> retire at enumerated local minima</label>
+          <span class="toolhint">available for population Fisher/Gauss–Newton</span>
+        </div>
+        <div class="wide row">
           <button id="runAllocator">run allocator</button>
           <button id="clearAllocator" class="ghost">clear overlay</button>
+          <button id="auditEndpoints" class="ghost" disabled>audit IRK endpoints</button>
         </div>
         <p class="wide status" id="allocStatus" style="margin:2px 0 0"></p>
         <div class="wide" id="allocSummary" style="font-size:11px;color:var(--ink-2)"></div>
@@ -613,6 +618,14 @@
             <span><i class="swatch" style="background:#5b21b6"></i>thompson</span>
             <span>steps executed, by exact post-chunk loss (log scale)</span>
           </div>
+        </div>
+        <div class="wide">
+          <canvas id="cLearning" width="440" height="200" style="margin-top:10px"></canvas>
+          <div class="legend">learning curves · log₁₀ optimizer steps vs. log₁₀ portrait loss · gray equal, purple bandit · zero/nonfinite loss omitted</div>
+        </div>
+        <div class="wide">
+          <canvas id="cEndpoints" width="440" height="200" style="margin-top:10px"></canvas>
+          <div class="legend" id="endpointLegend">last observed loss vs. eventual minimum loss · audit endpoints to resolve basins</div>
         </div>
       </div>
       </div>
@@ -640,6 +653,8 @@ const cP = els("cPort"), xP = cP.getContext("2d");
 const cB = els("cBone"), xB = cB.getContext("2d");
 const cR = els("cResp"), xR = cR.getContext("2d");
 const cHist = els("cHist"), xH = cHist.getContext("2d");
+const cLearning = els("cLearning"), xLearning = cLearning.getContext("2d");
+const cEndpoints = els("cEndpoints"), xEndpoints = cEndpoints.getContext("2d");
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 
 const S = {
@@ -660,6 +675,7 @@ const S = {
   rubber: null,
   traces: [],
   handoffs: [],
+  allocatorModelBody: null,
   P: null,          // last certified payload
   stale: true,
   Ap: [0], Bp: [0]
@@ -774,7 +790,10 @@ async function recompute(_unused, zooName, separated){
   inflight = new AbortController();
   const signal = inflight.signal;
   const st = els("status");
-  S.stale = true; draw();
+  S.stale = true;
+  S.allocator = null; S.allocatorModelBody = null;
+  els("auditEndpoints").disabled = true;
+  draw();
 
   const dist = els("dist").value;
   const moments = dist === "empirical"
@@ -1884,7 +1903,7 @@ function drawRubber(){
   xP.restore();
 }
 
-function draw(){ drawPortrait(); drawBone(); drawResp(); drawReadout(); drawRubber(); drawHist(); }
+function draw(){ drawPortrait(); drawBone(); drawResp(); drawReadout(); drawRubber(); drawHist(); drawLearning(); drawEndpoints(); }
 
 /* ---------------- allocator histogram ---------------- */
 /* work_loss_histogram bins EXECUTED optimizer steps against the exact
@@ -1927,6 +1946,102 @@ function drawHist(){
   xH.fillText(edges[bins].toExponential(1), W - pad.r, H - 9);
   xH.textAlign = "left";
   xH.fillText(`${maxStep.toLocaleString()} steps/bin`, pad.l, 10);
+}
+
+function chartFrame(ctx, canvas, title, xlabel, ylabel){
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const p = {l:48, r:12, t:24, b:33};
+  ctx.strokeStyle = css("--rule-2"); ctx.lineWidth = 1;
+  ctx.strokeRect(p.l, p.t, W-p.l-p.r, H-p.t-p.b);
+  ctx.fillStyle = css("--ink-2"); ctx.font = "10px " + css("--mono");
+  ctx.textAlign = "left"; ctx.fillText(title, p.l, 13);
+  ctx.textAlign = "center"; ctx.fillText(xlabel, (p.l+W-p.r)/2, H-5);
+  ctx.save(); ctx.translate(11, (p.t+H-p.b)/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText(ylabel, 0, 0); ctx.restore();
+  ctx.textAlign = "left";
+  return p;
+}
+
+function drawLearning(){
+  const p = chartFrame(xLearning, cLearning, "optimizer learning curves", "log₁₀ steps", "log₁₀ loss");
+  if (!S.allocator) return;
+  const series = [];
+  for (const policy of ["equal", "thompson"]){
+    for (const trace of S.allocator[policy].traces || []){
+      const values = (trace.learning_curve || trace.loss_history || [])
+        .filter(([step, loss]) => step > 0 && Number.isFinite(loss) && loss > 0)
+        .map(([step, loss]) => [Math.log10(step), Math.log10(loss)]);
+      if (values.length) series.push({policy, values, pulls:trace.pulls});
+    }
+  }
+  if (!series.length) return;
+  let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
+  for (const s of series) for (const [x,y] of s.values){
+    xmin=Math.min(xmin,x);xmax=Math.max(xmax,x);
+    ymin=Math.min(ymin,y);ymax=Math.max(ymax,y);
+  }
+  if (xmax === xmin) xmax=xmin+1;
+  if (ymax === ymin){ ymin-=.5; ymax+=.5; }
+  const X = x => p.l+(x-xmin)/(xmax-xmin)*(cLearning.width-p.l-p.r);
+  const Y = y => cLearning.height-p.b-(y-ymin)/(ymax-ymin)*(cLearning.height-p.t-p.b);
+  xLearning.save(); xLearning.beginPath();
+  xLearning.rect(p.l,p.t,cLearning.width-p.l-p.r,cLearning.height-p.t-p.b); xLearning.clip();
+  for (const s of series){
+    xLearning.beginPath();
+    s.values.forEach(([x,y],i) => i ? xLearning.lineTo(X(x),Y(y)) : xLearning.moveTo(X(x),Y(y)));
+    xLearning.strokeStyle = s.policy === "equal" ? "#66727b" : "#5b21b6";
+    xLearning.globalAlpha = s.policy === "equal" ? .20 : .36;
+    xLearning.lineWidth = s.policy === "equal" ? 1 : 1.25;
+    xLearning.stroke();
+  }
+  xLearning.restore();
+  xLearning.fillStyle=css("--ink-2"); xLearning.font="10px "+css("--mono");
+  xLearning.fillText(xmin.toFixed(1),p.l,cLearning.height-p.b+13);
+  xLearning.textAlign="right";
+  xLearning.fillText(xmax.toFixed(1),cLearning.width-p.r,cLearning.height-p.b+13);
+  xLearning.fillText(ymax.toFixed(1),p.l-5,p.t+4);
+  xLearning.fillText(ymin.toFixed(1),p.l-5,cLearning.height-p.b);
+  xLearning.textAlign="left";
+}
+
+function drawEndpoints(){
+  const p=chartFrame(xEndpoints,cEndpoints,"optimizer endpoint → gradient-flow minimum", "log₁₀ last loss", "log₁₀ final loss");
+  const audit=S.allocator && S.allocator.endpoint_audit;
+  if (!audit) return;
+  const dots=[];
+  for (const outcome of audit.outcomes || []){
+    if (outcome.policy === "initial") continue;
+    const tr=S.allocator[outcome.policy].traces[outcome.arm];
+    if (tr && Number.isFinite(tr.last_loss) && tr.last_loss > 0
+        && Number.isFinite(outcome.final_loss) && outcome.final_loss > 0)
+      dots.push({x:Math.log10(tr.last_loss),y:Math.log10(outcome.final_loss),
+                 policy:outcome.policy});
+  }
+  if (!dots.length) return;
+  const lo=Math.min(...dots.flatMap(d=>[d.x,d.y]));
+  const hi=Math.max(...dots.flatMap(d=>[d.x,d.y]));
+  const span=Math.max(1,hi-lo), xmin=lo-.05*span, xmax=hi+.05*span;
+  const X=x=>p.l+(x-xmin)/(xmax-xmin)*(cEndpoints.width-p.l-p.r);
+  const Y=y=>cEndpoints.height-p.b-(y-xmin)/(xmax-xmin)*(cEndpoints.height-p.t-p.b);
+  xEndpoints.save(); xEndpoints.beginPath();
+  xEndpoints.rect(p.l,p.t,cEndpoints.width-p.l-p.r,cEndpoints.height-p.t-p.b); xEndpoints.clip();
+  xEndpoints.strokeStyle=css("--rule-2");xEndpoints.setLineDash([3,3]);
+  xEndpoints.beginPath();xEndpoints.moveTo(X(xmin),Y(xmin));xEndpoints.lineTo(X(xmax),Y(xmax));xEndpoints.stroke();
+  xEndpoints.setLineDash([]);
+  for (const d of dots){
+    xEndpoints.fillStyle=d.policy==="equal"?"#66727b":"#5b21b6";
+    xEndpoints.globalAlpha=.68;
+    xEndpoints.beginPath();xEndpoints.arc(X(d.x),Y(d.y),2.5,0,2*Math.PI);xEndpoints.fill();
+  }
+  xEndpoints.restore();
+  xEndpoints.fillStyle=css("--ink-2");xEndpoints.font="10px "+css("--mono");
+  xEndpoints.fillText(xmin.toFixed(1),p.l,cEndpoints.height-p.b+13);
+  xEndpoints.textAlign="right";
+  xEndpoints.fillText(xmax.toFixed(1),cEndpoints.width-p.r,cEndpoints.height-p.b+13);
+  xEndpoints.fillText(xmax.toFixed(1),p.l-5,p.t+4);
+  xEndpoints.fillText(xmin.toFixed(1),p.l-5,cEndpoints.height-p.b);
+  xEndpoints.textAlign="left";
 }
 
 /* ---------------- descent (demo layer) ---------------- */
@@ -2703,7 +2818,8 @@ async function runAllocator(){
     chunk_steps: +els("allocChunk").value,
     batch_size: +els("allocBatch").value,
     seed: +els("allocSeed").value,
-    time_limit_sec: +els("allocLimit").value
+    time_limit_sec: +els("allocLimit").value,
+    retire_local_minima: els("allocRetire").checked
   };
   const lr = els("allocLR").value;
   body.learning_rate = body.method.startsWith("fisher-gn") ? null
@@ -2725,6 +2841,9 @@ async function runAllocator(){
       return;
     }
     S.allocator = data;
+    S.allocatorModelBody = {...S.lastBody};
+    els("auditEndpoints").disabled = false;
+    els("endpointLegend").textContent = "last observed loss vs. eventual minimum loss · audit endpoints to resolve basins";
     st.className = "status"; st.textContent = `done · ${data.elapsed_sec.toFixed(1)}s`;
     const eq = data.equal || {}, th = data.thompson || {};
     const cfg = data.configuration || {};
@@ -2748,6 +2867,9 @@ async function runAllocator(){
       if (Number.isFinite(eq.objective_evaluations)) {
         summary += `<br>exact objective evaluations — equal ${eq.objective_evaluations.toLocaleString()}, `
                 + `bandit ${th.objective_evaluations.toLocaleString()}`;
+      }
+      if (cfg.retire_local_minima) {
+        summary += `<br>enumerated minima retired — equal ${eq.retired_minima_arms}, bandit ${th.retired_minima_arms}`;
       }
       const calibration = cfg.observation_calibration;
       if (calibration && Number.isFinite(calibration.final_divisor)) {
@@ -2774,16 +2896,57 @@ async function runAllocator(){
 }
 function updateAllocatorMethodControls(){
   const fisher = els("allocMethod").value.startsWith("fisher-gn");
+  const exact = els("allocMethod").value === "fisher-gn-exact";
   els("allocSchedule").disabled = fisher;
   els("allocLR").disabled = fisher;
+  els("allocRetire").disabled = !exact;
+  if (!exact) els("allocRetire").checked = false;
   els("allocSchedule").title = fisher ? "Fisher/Gauss–Newton chooses steps by line search" : "";
   els("allocLR").title = fisher ? "Fisher/Gauss–Newton chooses steps by line search" : "";
 }
 els("allocMethod").addEventListener("change", updateAllocatorMethodControls);
 updateAllocatorMethodControls();
 els("runAllocator").onclick = runAllocator;
+els("auditEndpoints").onclick = async () => {
+  if (!S.allocator || !S.allocatorModelBody) return;
+  const requestBase=S.allocatorModelBody;
+  const button=els("auditEndpoints"), st=els("allocStatus");
+  button.disabled=true;st.className="status busy";st.textContent="auditing IRK endpoints…";
+  const endpoints=[];
+  for (const policy of ["equal","thompson"])
+    for (const tr of S.allocator[policy].traces || [])
+      if (tr.endpoint) endpoints.push({policy,arm:tr.arm,point:tr.endpoint});
+  for (const tr of S.allocator.equal.traces || [])
+    if (tr.points && tr.points.length)
+      endpoints.push({policy:"initial",arm:tr.arm,point:tr.points[0]});
+  try {
+    const r=await fetch("/allocator/endpoints",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({...S.allocatorModelBody,endpoints,
+        audit_time_limit_sec:+els("allocLimit").value})});
+    const data=await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    if (!S.allocator || S.allocatorModelBody !== requestBase) return;
+    S.allocator.endpoint_audit=data;
+    const ends=data.outcomes.filter(x=>x.policy!=="initial");
+    const starts=data.outcomes.filter(x=>x.policy==="initial");
+    const resolved=ends.filter(x=>Number.isFinite(x.final_loss)).length;
+    const viaIrk=ends.filter(x=>x.method==="irk8_gl_merge_tree").length;
+    const initialResolved=starts.filter(x=>Number.isFinite(x.final_loss)).length;
+    const initialByArm=new Map(starts.map(x=>[x.arm,x]));
+    const switches=ends.filter(x=>x.minimum && initialByArm.get(x.arm)?.minimum
+      && x.minimum[1]!==initialByArm.get(x.arm).minimum[1]).length;
+    els("endpointLegend").textContent=`${resolved}/${ends.length} endpoint basins resolved · ${viaIrk} by IRK8-GL · ${initialResolved}/${starts.length} initial basins resolved · ${switches} changed basins · unresolved omitted`;
+    st.className="status";st.textContent="endpoint audit done";
+    drawEndpoints();
+  } catch(e){st.className="status err";st.textContent=e.message || "endpoint audit failed";}
+  finally{button.disabled=false;}
+};
 els("clearAllocator").onclick = () => {
   S.allocator = null;
+  S.allocatorModelBody = null;
+  els("auditEndpoints").disabled = true;
+  els("endpointLegend").textContent = "last observed loss vs. eventual minimum loss · audit endpoints to resolve basins";
   els("allocSummary").textContent = "";
   els("allocStatus").textContent = "";
   draw();

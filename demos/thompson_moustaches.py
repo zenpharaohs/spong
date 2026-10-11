@@ -141,7 +141,8 @@ def auto_base_lr(m, start, method, lr0, max_halvings=FIRST_STEP_HALVINGS,
 
 def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
              design, distribution="uniform01", samples=None,
-             learning_rate=None, warmup_steps=100, auto_lr=None, model=None):
+             learning_rate=None, warmup_steps=100, auto_lr=None, model=None,
+             known_minima=None):
     states = []
     gradients = []
     if method == "fisher-gn-exact" and model is None:
@@ -167,7 +168,7 @@ def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
     for index, start in enumerate(starts):
         states.append(
             opt.FisherGNState(start) if method == "fisher-gn" else
-            opt.ExactFisherGNState(start, model)
+            opt.ExactFisherGNState(start, model, known_minima=known_minima)
             if method == "fisher-gn-exact" else
             _state(method, start,
                    lr if per_arm is None else per_arm[index]))
@@ -180,7 +181,8 @@ def _problem(f, g, starts, method, batch_size, schedule, horizon, seed,
 
 
 def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None,
-           cache=None, observe=thompson.transformed_loss):
+           cache=None, observe=thompson.transformed_loss,
+           retire_local_minima=False):
     class RoundRobin:
         def __init__(self, n):
             self.n = n
@@ -199,7 +201,8 @@ def _equal(states, gradients, loss, rounds, chunk_steps, should_stop=None,
     bank = RoundRobin(len(states))
     return thompson.allocate(
         states, gradients, loss, bank, rounds, chunk_steps,
-        should_stop=should_stop, cache=cache, observe=observe)
+        should_stop=should_stop, cache=cache, observe=observe,
+        retire_local_minima=retire_local_minima)
 
 
 def _precompute_arm(task):
@@ -212,10 +215,12 @@ def _precompute_arm(task):
 
 def _uniform_cache(states, gradients, loss, rounds, chunk_steps,
                    should_stop=None, deadline=None, workers=None,
-                   observe=thompson.transformed_loss):
+                   observe=thompson.transformed_loss,
+                   retire_local_minima=False):
     """Compute independent uniform prefixes, then retain live arm states."""
     cache = thompson.TrajectoryCache(states, gradients, loss, chunk_steps,
-                                     observe=observe)
+                                     observe=observe,
+                                     retire_local_minima=retire_local_minima)
     n_arms = len(states)
     pulls = [len(range(i, rounds, n_arms)) for i in range(n_arms)]
     if workers is None:
@@ -261,6 +266,8 @@ def _allocation_summary(result):
     total = int(np.sum(counts))
     successes = sum(reason == "zero_loss"
                     for reason in result.termination_reasons)
+    retired = sum(reason == "local_minimum"
+                  for reason in result.termination_reasons)
     return {
         "pulls": total,
         "executed_optimizer_steps": int(np.sum(result.executed_steps)),
@@ -268,6 +275,7 @@ def _allocation_summary(result):
         "objective_evaluations": int(np.sum(result.objective_evaluations)),
         "terminated_arms": int(np.count_nonzero(result.terminated)),
         "zero_loss_arms": int(successes),
+        "retired_minima_arms": int(retired),
         "allocation_quantiles": dict(zip(
             ("0", "0.25", "0.5", "0.75", "1"),
             map(float, np.quantile(counts, [0, .25, .5, .75, 1])))),
@@ -337,7 +345,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
                        learning_rate=None, cb_library=None,
                        should_stop=None, warmup_steps=100, deadline=None,
                        workers=None, progress=None,
-                       observation="renormalized"):
+                       observation="renormalized", retire_local_minima=False):
     """Run equal and exact Thompson allocation on an arbitrary portrait.
 
     ``m`` supplies only the exact loss used for the posterior observation.
@@ -371,6 +379,13 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         raise ValueError(f"unsupported initialization design {design!r}")
     if observation not in {"renormalized", "L/(1+L)"}:
         raise ValueError(f"unsupported observation {observation!r}")
+    if retire_local_minima and method != "fisher-gn-exact":
+        raise ValueError("local-minimum retirement requires fisher-gn-exact")
+    known_minima = None
+    if retire_local_minima:
+        from spong import sturm
+        known_minima = tuple(float(q.b) for q in
+                             sturm.enumerate_critical_points(m).minima)
 
     if progress is not None:
         progress("initializations")
@@ -406,7 +421,7 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
         schedule=schedule, horizon=horizon, seed=seed, design=design,
         distribution=distribution, samples=samples,
         learning_rate=learning_rate, warmup_steps=warmup_steps,
-        auto_lr=auto_lr, model=m)
+        auto_lr=auto_lr, model=m, known_minima=known_minima)
     optimizer_backend = (
         "python-fisher-gn" if method == "fisher-gn" else
         "python-fisher-gn-exact" if method == "fisher-gn-exact" else
@@ -418,12 +433,13 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
     cache, workers_used = _uniform_cache(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
         should_stop=should_stop, deadline=deadline, workers=workers,
-        observe=observe)
+        observe=observe, retire_local_minima=retire_local_minima)
     if progress is not None:
         progress("uniform playback")
     equal = _equal(
         equal_states, equal_gradients, m.L, rounds, chunk_steps,
-        should_stop=should_stop, cache=cache, observe=observe)
+        should_stop=should_stop, cache=cache, observe=observe,
+        retire_local_minima=retire_local_minima)
 
     uniform_lengths = [len(arm.records) for arm in cache.arms]
     if progress is not None:
@@ -432,7 +448,8 @@ def compare_allocators(m, f, g, view, *, starts=100, rounds=20000,
             starts, seed=seed, library=cb_library) as bank:
         adaptive = thompson.allocate(
             equal_states, equal_gradients, m.L, bank, rounds, chunk_steps,
-            should_stop=should_stop, cache=cache, observe=observe)
+            should_stop=should_stop, cache=cache, observe=observe,
+            retire_local_minima=retire_local_minima)
         library_path = str(bank.library_path)
 
     return {

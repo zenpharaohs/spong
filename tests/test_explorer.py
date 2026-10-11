@@ -244,6 +244,57 @@ def test_allocator_exposes_exact_fisher_gn_costs(monkeypatch):
     assert result["equal"]["objective_evaluations"] > 0
 
 
+def test_allocator_retires_enumerated_minima_and_keeps_stepwise_learning_curves(
+        monkeypatch):
+    monkeypatch.setattr(
+        thompson_moustaches.cb_sampler, "ContinuousBernoulliBank",
+        _FakeContinuousBernoulliBank)
+    monkeypatch.setattr(
+        thompson_moustaches.cb_sampler, "resolve_library",
+        lambda library=None, auto_build=False: "/fake/libcb_core")
+    result = serve.allocator({
+        "f": [1.0, -0.5], "g": [0.25, 1.0],
+        "moments": {"kind": "empirical", "samples": [-1.0, 0.25, 1.5]},
+        "view": [-1.0, 1.0, -1.0, 1.0], "starts": 3,
+        "rounds": 20, "chunk_steps": 2, "batch_size": 4,
+        "method": "fisher-gn-exact", "retire_local_minima": True,
+        "time_limit_sec": 7, "seed": 43,
+    })
+    assert result["configuration"]["retire_local_minima"]
+    for policy in ("equal", "thompson"):
+        assert result[policy]["retired_minima_arms"] >= 1
+        for trace in result[policy]["traces"]:
+            curve = trace["learning_curve"]
+            assert curve
+            assert curve[0][0] == 1
+            assert curve[-1][0] == trace["executed_steps"]
+            assert all(second[0] > first[0]
+                       for first, second in zip(curve, curve[1:]))
+            assert trace["last_loss"] == pytest.approx(
+                trace["loss_history"][-1][1])
+            if trace["termination"] == "local_minimum":
+                assert result[policy]["final_observations"][trace["arm"]] < 1
+
+
+def test_allocator_endpoint_audit_resolves_tree_then_irk():
+    result = serve.allocator_endpoint_audit({
+        "separated_linear": {"degree": 4, "separation": "30"},
+        "audit_time_limit_sec": 5,
+        "endpoints": [
+            {"policy": "equal", "arm": 0,
+             "point": [2.0477800359e-9, -0.59355487461]},
+            {"policy": "thompson", "arm": 0,
+             "point": [1e-9, -0.55]},
+        ],
+    })
+    direct, continued = result["outcomes"]
+    assert direct["method"] == "exact_merge_tree"
+    assert direct["irk_steps"] == 0
+    assert continued["method"] == "irk8_gl_merge_tree"
+    assert continued["irk_steps"] > 0
+    assert continued["final_loss"] == pytest.approx(direct["final_loss"])
+
+
 def test_allocator_endpoint_reports_numerical_terminations_without_warnings(
         monkeypatch):
     monkeypatch.setattr(

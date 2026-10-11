@@ -49,10 +49,10 @@ os.environ.setdefault("SPONG_ENGINE", "native")
 os.environ.setdefault("SPONG_WORKERS", "8")
 
 try:
-    from spong import atlas, inverse, model, portrait, sturm, wall_shoot, zoo
+    from spong import atlas, inverse, merge_tree, model, portrait, sturm, wall_shoot, zoo
 except ImportError:                                  # running from a checkout
     sys.path.insert(0, str(REPO / "src"))
-    from spong import atlas, inverse, model, portrait, sturm, wall_shoot, zoo
+    from spong import atlas, inverse, merge_tree, model, portrait, sturm, wall_shoot, zoo
 
 # The allocator experiment remains demo code, but the viewer needs to run it
 # against the exact model behind the active portrait.  A script launched as
@@ -974,11 +974,30 @@ def _bounded_int(payload, name, default, lower, upper):
     return value
 
 
+def _learning_curve_samples(trajectory, m, *, exact=False, max_points=384):
+    """Sample optimizer steps on a log grid, retaining every early step."""
+    n = len(trajectory)-1
+    if n <= 0:
+        return []
+    indices = (np.arange(1, n+1) if n <= max_points else
+               np.unique(np.rint(np.geomspace(1, n, max_points)).astype(int)))
+    evaluator = (allocator_demo.opt.ExactFisherGNState(trajectory[0], m)
+                 if exact else None)
+    result = []
+    for step in indices:
+        point = trajectory[int(step)]
+        value = (float(evaluator._exact_values(*point)) if evaluator is not None
+                 else allocator_demo.thompson._raw_loss(m.L, point))
+        result.append([int(step), value if math.isfinite(value) else None])
+    return result
+
+
 def _allocator_policy(result, color, max_points=350, *,
                       uniform_steps=None,
                       width_base=0.55, width_gain=1.2,
                       opacity_base=0.08, opacity_gain=0.72,
-                      mark_start=False, mark_end=False):
+                      mark_start=False, mark_end=False, model=None,
+                      exact_learning_curve=False):
     """Serialize one allocation policy as weighted viewer traces."""
     counts = result.allocations
     largest = max(int(max(counts)), 1)
@@ -1016,6 +1035,19 @@ def _allocator_policy(result, color, max_points=350, *,
             "opacity": opacity_base + opacity_gain * math.sqrt(share),
             "mark_start": bool(mark_start),
             "mark_end": bool(mark_end),
+            "endpoint": (list(map(float, trajectory[-1]))
+                         if len(trajectory) and np.all(np.isfinite(trajectory[-1]))
+                         else None),
+            "last_loss": (float(result.loss_histories[arm][-1][1])
+                          if result.loss_histories[arm]
+                          and math.isfinite(result.loss_histories[arm][-1][1])
+                          else None),
+            "loss_history": [
+                [int(step), float(value) if math.isfinite(value) else None]
+                for step, value in result.loss_histories[arm]],
+            "learning_curve": _learning_curve_samples(
+                trajectory, model, exact=exact_learning_curve)
+                if model is not None else [],
         })
     return {
         **allocator_demo._allocation_summary(result),
@@ -1083,6 +1115,11 @@ def allocator(payload: dict) -> dict:
     time_limit_sec = float(payload.get("time_limit_sec", 60.0))
     if not math.isfinite(time_limit_sec) or not 1.0 <= time_limit_sec <= 300.0:
         raise ValueError("time_limit_sec must be finite and in [1, 300]")
+    retire_local_minima = payload.get("retire_local_minima", False)
+    if not isinstance(retire_local_minima, bool):
+        raise ValueError("retire_local_minima must be boolean")
+    if retire_local_minima and method != "fisher-gn-exact":
+        raise ValueError("local-minimum retirement requires fisher-gn-exact")
 
     distribution = spec.get("kind", "uniform01")
     samples = spec.get("samples") if distribution == "empirical" else None
@@ -1097,7 +1134,8 @@ def allocator(payload: dict) -> dict:
         distribution=distribution, samples=samples,
         learning_rate=learning_rate, cb_library=cb_library,
         should_stop=lambda: time.perf_counter() >= deadline,
-        deadline=deadline, progress=progress)
+        deadline=deadline, progress=progress,
+        retire_local_minima=retire_local_minima)
     elapsed = time.perf_counter() - t0
     progress("response preparation")
 
@@ -1137,6 +1175,7 @@ def allocator(payload: dict) -> dict:
             "line_search_scope": (
                 "minibatch" if method == "fisher-gn" else
                 "population" if method == "fisher-gn-exact" else None),
+            "retire_local_minima": retire_local_minima,
             "uniform_workers": comparison["uniform_workers"],
             "replayed_bandit_chunks": comparison["replayed_chunks"],
             "extended_bandit_chunks": comparison["extended_chunks"],
@@ -1147,13 +1186,118 @@ def allocator(payload: dict) -> dict:
         "equal": _allocator_policy(
             comparison["equal"], "#66727b",
             width_base=0.85, width_gain=1.30,
-            opacity_base=0.14, opacity_gain=0.28),
+            opacity_base=0.14, opacity_gain=0.28, model=m,
+            exact_learning_curve=(method == "fisher-gn-exact")),
         "thompson": _allocator_policy(
             comparison["thompson"], "#5b21b6",
             uniform_steps=comparison["equal"].executed_steps,
             opacity_base=0.10, opacity_gain=0.80,
-            mark_start=True, mark_end=True),
+            mark_start=True, mark_end=True, model=m,
+            exact_learning_curve=(method == "fisher-gn-exact")),
     }
+
+
+def allocator_endpoint_audit(payload: dict) -> dict:
+    """Resolve optimizer endpoints by the exact merge tree, then IRK8-GL.
+
+    A bounded saddle-free sublevel component containing one minimum already
+    proves the eventual gradient-flow destination.  Only undecided endpoints
+    need numerical continuation.  Unresolved integrations have no final loss
+    in the returned scatter data; a bounded step/time budget is not evidence
+    of convergence.
+    """
+    f, g, _view, spec, key = _resolve(payload)
+    m = _model_for(key, f, g, spec)
+    endpoints = payload.get("endpoints", [])
+    if not isinstance(endpoints, list) or len(endpoints) > 1024:
+        raise ValueError("endpoints must be a list of at most 1024 entries")
+    limit = float(payload.get("audit_time_limit_sec", 60.0))
+    if not math.isfinite(limit) or not 1 <= limit <= 300:
+        raise ValueError("audit_time_limit_sec must lie in [1, 300]")
+    deadline = time.perf_counter()+limit
+    enumeration = _ENUM.get(key)
+    if enumeration is None:
+        enumeration = sturm.enumerate_critical_points(m)
+    tree = merge_tree.build(m, enumeration)
+    kernel = getattr(m, "_native_kernel", None)
+    results, memo = [], {}
+
+    def fate(a, b):
+        found = merge_tree.fate_from_tree(m, enumeration, tree, a, b)
+        if (found is not None and found["forced"]
+                and found["fate"] == "capture"):
+            q = enumeration.points[found["minima"][0]]
+            return {"final_loss": float(merge_tree.exact_loss(m, q.a, q.b)),
+                    "minimum": [float(q.a), float(q.b)]}
+        return None
+
+    for item in endpoints:
+        policy = str(item.get("policy", ""))
+        arm = int(item.get("arm", -1))
+        point = item.get("point")
+        if policy not in {"initial", "equal", "thompson"} or arm < 0:
+            raise ValueError("endpoint policy or arm is invalid")
+        if not isinstance(point, list) or len(point) != 2:
+            raise ValueError("endpoint point must be [a, b]")
+        a, b = map(float, point)
+        if not (math.isfinite(a) and math.isfinite(b)):
+            raise ValueError("endpoint coordinates must be finite")
+        key_point = (a, b)
+        if key_point not in memo:
+            resolved = fate(a, b)
+            if resolved is not None:
+                memo[key_point] = dict(resolved, method="exact_merge_tree",
+                                       irk_steps=0, term="capture")
+            elif kernel is None or not hasattr(kernel, "normalized_step"):
+                memo[key_point] = {"final_loss": None, "minimum": None,
+                                   "method": "unavailable", "irk_steps": 0,
+                                   "term": "native_irk_unavailable"}
+            else:
+                step_size = 0.2
+                steps = 0
+                term = "step_budget"
+                current = float(m.L(a, b))
+                while steps < 3000:
+                    if time.perf_counter() >= deadline:
+                        term = "time_limit"
+                        break
+                    moved = False
+                    for _ in range(60):
+                        try:
+                            aa, bb = kernel.normalized_step(a, b, -step_size, 8)
+                            value = float(m.L(aa, bb))
+                        except (ArithmeticError, ValueError, OverflowError,
+                                ZeroDivisionError):
+                            value = float("inf")
+                        if (math.isfinite(value) and value < current
+                                and math.isfinite(aa) and math.isfinite(bb)):
+                            moved = True
+                            break
+                        step_size *= 0.5
+                    if not moved:
+                        term = "step_failure"
+                        break
+                    a, b, current = float(aa), float(bb), value
+                    steps += 1
+                    if abs(a) > 1e12 or abs(b) > 1e12:
+                        term = "escape_bound"
+                        break
+                    if steps % 8 == 0:
+                        resolved = fate(a, b)
+                        if resolved is not None:
+                            term = "capture"
+                            break
+                    step_size = min(1.0, step_size*1.25)
+                if resolved is not None:
+                    memo[key_point] = dict(resolved, method="irk8_gl_merge_tree",
+                                           irk_steps=steps, term=term)
+                else:
+                    memo[key_point] = {"final_loss": None, "minimum": None,
+                                       "method": "irk8_gl", "irk_steps": steps,
+                                       "term": term}
+        results.append(dict(memo[key_point], policy=policy, arm=arm))
+    return {"format": "spong-allocator-endpoint-audit-v1",
+            "order": 8, "outcomes": results}
 
 
 def isolated_allocator(payload: dict) -> dict:
@@ -1559,13 +1703,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "not found", "text/plain")
 
     def do_POST(self):
-        if self.path not in ("/portrait", "/trace", "/allocator"):
+        if self.path not in ("/portrait", "/trace", "/allocator",
+                             "/allocator/endpoints"):
             self._send(404, "not found", "text/plain")
             return
         n = int(self.headers.get("Content-Length", 0))
         try:
             payload = json.loads(self.rfile.read(n) or b"{}")
             result = (trace(payload) if self.path == "/trace"
+                      else allocator_endpoint_audit(payload)
+                      if self.path == "/allocator/endpoints"
                       else isolated_allocator(payload)
                       if self.path == "/allocator"
                       else compute(payload))

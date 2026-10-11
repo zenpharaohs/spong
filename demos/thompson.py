@@ -95,11 +95,12 @@ class AllocationResult:
     allocation_steps: np.ndarray
     batch_evaluations: np.ndarray
     objective_evaluations: np.ndarray
+    loss_histories: list
 
     @property
     def terminated(self):
         return np.asarray(
-            [reason is not None and reason != "zero_loss"
+            [reason is not None and reason not in {"zero_loss", "local_minimum"}
              for reason in self.termination_reasons],
             dtype=bool)
 
@@ -152,13 +153,14 @@ class ArmTape:
     records: list
     terminal_reason: str | None = None
     observe: object = transformed_loss
+    retire_local_minima: bool = False
 
     @classmethod
     def create(cls, state, gradient, loss, chunk_steps,
-               observe=transformed_loss):
+               observe=transformed_loss, retire_local_minima=False):
         return cls(state, gradient, loss, chunk_steps,
                    np.asarray(state.z, dtype=float).copy(), [],
-                   observe=observe)
+                   observe=observe, retire_local_minima=retire_local_minima)
 
     def extend_to(self, pulls, should_stop=None):
         while len(self.records) < pulls and self.terminal_reason is None:
@@ -178,6 +180,12 @@ class ArmTape:
                 points = []
                 reason = None
                 for _ in range(self.chunk_steps):
+                    if (not points and self.retire_local_minima
+                            and isinstance(
+                                self.state, optimizers.ExactFisherGNState)
+                            and self.state.at_local_minimum()):
+                        reason = "local_minimum"
+                        break
                     if should_stop is not None and should_stop():
                         raise TimeoutError(
                             "allocation stopped by interactive time limit")
@@ -187,9 +195,21 @@ class ArmTape:
                         else optimizers.checked_step(
                             self.state, self.gradient))
                     if failure is not None:
-                        reason = failure
+                        reason = ("local_minimum"
+                                  if self.retire_local_minima
+                                  and failure == "line_search_precision_limit"
+                                  and isinstance(
+                                      self.state, optimizers.ExactFisherGNState)
+                                  and self.state.at_local_minimum()
+                                  else failure)
                         break
                     points.append(z.copy())
+                    if (self.retire_local_minima
+                            and isinstance(
+                                self.state, optimizers.ExactFisherGNState)
+                            and self.state.at_local_minimum()):
+                        reason = "local_minimum"
+                        break
             raw_loss = _state_loss(self.state, self.loss)
             observation = self.observe(raw_loss)
             if reason is None and not np.isfinite(raw_loss):
@@ -217,9 +237,10 @@ class ArmTape:
 
 class TrajectoryCache:
     def __init__(self, states, gradients, loss, chunk_steps,
-                 observe=transformed_loss):
+                 observe=transformed_loss, retire_local_minima=False):
         self.arms = [ArmTape.create(state, gradient, loss, chunk_steps,
-                                   observe=observe)
+                                   observe=observe,
+                                   retire_local_minima=retire_local_minima)
                      for state, gradient in zip(states, gradients)]
 
     def pull(self, arm, ordinal, should_stop=None):
@@ -227,7 +248,8 @@ class TrajectoryCache:
 
 
 def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
-             should_stop=None, cache=None, observe=transformed_loss):
+             should_stop=None, cache=None, observe=transformed_loss,
+             retire_local_minima=False):
     """Allocate ``rounds`` short continuations using posterior loss draws.
 
     Each arm receives one forced continuation before Thompson allocation,
@@ -262,6 +284,7 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
                       else np.asarray(state.z, dtype=float)).copy()]
                     for i, state in enumerate(states)]
     observations = [[] for _ in states]
+    loss_histories = [[] for _ in states]
     allocations = np.zeros(n_arms, dtype=np.int64)
     choices = np.empty(rounds, dtype=np.int64)
     executed_steps = np.zeros(n_arms, dtype=np.int64)
@@ -300,6 +323,11 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
             else:
                 state = states[arm]
                 for _ in range(chunk_steps):
+                    if (retire_local_minima and not executed_steps[arm]
+                            and isinstance(state, optimizers.ExactFisherGNState)
+                            and state.at_local_minimum()):
+                        termination_reasons[arm] = "local_minimum"
+                        break
                     if should_stop is not None and should_stop():
                         raise TimeoutError(
                             "allocation stopped by interactive time limit")
@@ -320,10 +348,19 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
                         getattr(state, "objective_evaluations", 0)
                         - objective_before)
                     if failure is not None:
-                        termination_reasons[arm] = failure
+                        termination_reasons[arm] = (
+                            "local_minimum" if retire_local_minima
+                            and failure == "line_search_precision_limit"
+                            and isinstance(state, optimizers.ExactFisherGNState)
+                            and state.at_local_minimum() else failure)
                         break
                     trajectories[arm].append(z.copy())
                     executed_steps[arm] += 1
+                    if (retire_local_minima
+                            and isinstance(state, optimizers.ExactFisherGNState)
+                            and state.at_local_minimum()):
+                        termination_reasons[arm] = "local_minimum"
+                        break
         # Once numerical divergence occurs, preserve the last finite point
         # and remove the arm from future selection.  The sentinel observation
         # remains in the result for diagnosis; it is not fed to the sampler.
@@ -339,7 +376,8 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
 
         terminal = termination_reasons[arm] is not None
         if terminal:
-            observation = 1.0
+            if termination_reasons[arm] != "local_minimum":
+                observation = 1.0
             deactivate = getattr(posterior, "deactivate", None)
             if deactivate is not None:
                 deactivate(arm)
@@ -351,6 +389,9 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
             else:
                 set_observation(arm, observation, selections)
         observations[arm].append(observation)
+        if (not loss_histories[arm]
+                or loss_histories[arm][-1][0] != int(executed_steps[arm])):
+            loss_histories[arm].append((int(executed_steps[arm]), raw_loss))
         held_losses[arm] = raw_loss
         if isinstance(observe, RenormalizedLoss):
             recent_losses.append(raw_loss)
@@ -390,4 +431,5 @@ def allocate(states, gradients, loss, posterior, rounds, chunk_steps=10,
         allocation_losses=allocation_losses[:completed_rounds],
         allocation_steps=allocation_steps[:completed_rounds],
         batch_evaluations=batch_evaluations,
-        objective_evaluations=objective_evaluations)
+        objective_evaluations=objective_evaluations,
+        loss_histories=loss_histories)

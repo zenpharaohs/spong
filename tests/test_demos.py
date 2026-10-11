@@ -149,6 +149,25 @@ def test_exact_fisher_gn_uses_population_metric_and_loss():
     assert np.array_equal(stalled.z, before)
 
 
+def test_exact_minimum_can_retire_before_a_noop_step():
+    m = model.build([1, 1], [1, 1], model.moments_uniform01(3))
+    assert opt.ExactFisherGNState(
+        np.array([1.0, 1.0]), m, known_minima=(1.0,)).at_local_minimum()
+    for cached in (False, True):
+        state = opt.ExactFisherGNState(
+            np.array([1.0, 1.0]), m, known_minima=(1.0,))
+        gradient = lambda a, b: np.zeros(2)
+        cache = (thompson.TrajectoryCache(
+            [state], [gradient], m.L, 10, retire_local_minima=True)
+            if cached else None)
+        result = thompson.allocate(
+            [state], [gradient], m.L, _DeterministicPosterior(()),
+            rounds=2, chunk_steps=10, cache=cache, retire_local_minima=True)
+        assert result.termination_reasons == ("local_minimum",)
+        assert result.executed_steps.tolist() == [0]
+        assert not result.terminated[0]
+
+
 def test_cb_library_resolver_honors_explicit_override(tmp_path):
     library = tmp_path / "libcb_core.test"
     library.touch()

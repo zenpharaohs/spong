@@ -184,6 +184,7 @@ class ExactFisherGNState:
     max_halvings: int = 60
     objective_evaluations: int = 0
     trial_step: float = 1.0
+    known_minima: tuple[float, ...] | None = None
 
     def __post_init__(self):
         self.z = np.asarray(self.z, dtype=float).copy()
@@ -207,6 +208,8 @@ class ExactFisherGNState:
         self._exact_B = tuple(self.model.beta)
         self._exact_Ap = tuple(k*c for k, c in enumerate(self._exact_A[1:], 1))
         self._exact_Bp = tuple(k*c for k, c in enumerate(self._exact_B[1:], 1))
+        self._exact_App = tuple(k*c for k, c in enumerate(self._exact_Ap[1:], 1))
+        self._exact_Bpp = tuple(k*c for k, c in enumerate(self._exact_Bp[1:], 1))
 
     @staticmethod
     def _exact_polyval(coefficients, value):
@@ -226,6 +229,36 @@ class ExactFisherGNState:
         Ap = self._exact_polyval(self._exact_Ap, b)
         Bp = self._exact_polyval(self._exact_Bp, b)
         return loss, (2*(a*A-B), a*a*Ap-2*a*Bp)
+
+    def at_local_minimum(self, relative_radius=1e-8):
+        """Check positive curvature and a small exact Newton correction.
+
+        The test uses rational derivatives at the stored binary64 point.
+        A flat far-field arm has a large Newton correction and is not retired
+        merely because its gradient happens to be tiny.
+        """
+        a, b = map(lambda x: Fraction.from_float(float(x)), self.z)
+        _, (ga, gb) = self._exact_values(*self.z, gradient=True)
+        A = self._exact_polyval(self._exact_A, b)
+        Ap = self._exact_polyval(self._exact_Ap, b)
+        Bp = self._exact_polyval(self._exact_Bp, b)
+        App = self._exact_polyval(self._exact_App, b)
+        Bpp = self._exact_polyval(self._exact_Bpp, b)
+        h11 = 2*A
+        h12 = 2*a*Ap-2*Bp
+        h22 = a*a*App-2*a*Bpp
+        determinant = h11*h22-h12*h12
+        if h11 <= 0 or determinant <= 0:
+            return False
+        da = (h22*ga-h12*gb)/determinant
+        db = (h11*gb-h12*ga)/determinant
+        radius = Fraction.from_float(float(relative_radius))
+        close = (abs(da) <= radius*max(1, abs(a))
+                 and abs(db) <= radius*max(1, abs(b)))
+        if not close or self.known_minima is None:
+            return close
+        return any(abs(float(b)-root_b) <= 1e-6*max(1, abs(float(b)))
+                   for root_b in self.known_minima)
 
     def step_batch(self, _oracle=None):
         before = self.z.copy()
