@@ -4,7 +4,7 @@ from fractions import Fraction
 
 import pytest
 
-from spong import merge_tree, model, sturm, zoo
+from spong import merge_tree, model, portrait, sturm, zoo
 from spong import _poly as poly
 
 
@@ -54,3 +54,39 @@ def test_prescribed_root_family_validates_parameters():
         with pytest.raises(ValueError, match="shield"):
             zoo.symmetric_shallow_escape_case(3, shield)
     assert zoo.symmetric_shallow_escape_case(3, 200).name.endswith("-s200")
+
+
+@pytest.mark.parametrize("degree", (3, 5, 7, 9, 11))
+def test_small_integer_sequence_has_off_axis_alternating_minima(degree):
+    case = zoo.small_integer_symmetric_escape_case(degree)
+    if degree in (3, 5, 7):
+        assert zoo.get(case.name) == case
+    else:
+        assert case.name not in zoo.names()
+    assert max(abs(x) for x in (*case.f, *case.g)) <= 24
+    m = build_case(case)
+    e = sturm.enumerate_critical_points(m)
+    assert e.morse and e.psi_positive
+    assert (len(e.points), len(e.minima), len(e.saddles)) == (
+        2 * degree - 1, degree - 1, degree)
+    assert all(abs(q.a) < 1e-30 for q in e.saddles)
+    signs = [1 if q.a > 0 else -1 for q in e.minima]
+    assert all(left != right for left, right in zip(signs, signs[1:]))
+    assert all(abs(q.a) > 0.05 for q in e.minima if degree <= 7)
+    infinity_loss = float(merge_tree.backbone_level_at_infinity(m))
+    assert all(infinity_loss < m.u(q.b) < float(m.C) for q in e.minima)
+
+
+def test_small_integer_sequence_rejects_unverified_degrees():
+    for degree in (1, 2, 4, 13, True, 5.0):
+        with pytest.raises(ValueError, match="degree"):
+            zoo.small_integer_symmetric_escape_case(degree)
+
+
+@pytest.mark.parametrize("degree", (5, 7))
+def test_named_small_integer_portraits_certify(degree):
+    case = zoo.get(f"normal-symmetric-small-integer-d{degree}")
+    p = portrait.compute(build_case(case))
+    summary = p.ledger["summary"]
+    assert summary["topology_status"] == "certified"
+    assert summary["representation_attested"]

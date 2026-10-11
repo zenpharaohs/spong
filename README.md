@@ -174,6 +174,7 @@ Named zoo portraits:
     PYTHONPATH=src python -m spong.cli --zoo nonnearest-attachment --pause
     PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-shallow-escape --pause
     PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-shallow-escape-d7 --pause
+    PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-small-integer-d7 --pause
 
 The normal-moment symmetric escape case has two finite minima near loss
 197.873, three saddles at 198, and a much lower unattained loss limit of
@@ -183,6 +184,18 @@ prescribes `odd_degree` saddle locations and forces at least one shallow
 finite minimum between each adjacent pair.  Degree-5 and degree-7 members
 are named zoo cases with 9 and 13 critical points; their loss infimum is 0
 at infinity.  Increasing `shield` makes the finite wells shallower.
+
+The distinct `zoo.small_integer_symmetric_escape_case(degree)` sequence
+continues the original degree-3 example directly: `f` has coefficient -3
+on every odd power, while `g` has coefficient -3 on every even power.
+Its odd `g` coefficients are `(-1, 4, -1)` at degree 5 and
+`(-1, 4, -4, 1)` at degree 7.  These two named zoo cases have 9 and 13
+critical points, with their saddles on `a=0` and their finite minima
+visibly alternating to either side.  Degree-9 and degree-11 integer
+candidates are available through the generator and have exact critical-point
+enumerations, but are not yet ordinary certified zoo portraits.  The
+prescribed-root degree-5 and degree-7 cases above remain in the zoo as
+separate, tightly axis-hugging allocator stress cases.
 
 `quadratic-stiff` is the degree-2 `f=g` case discovered at random seed
 `2735729614`: three minima, three saddles, and a bounded unstable branch from

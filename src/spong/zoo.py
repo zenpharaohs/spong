@@ -352,6 +352,62 @@ NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D5 = symmetric_shallow_escape_case(5)
 NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7 = symmetric_shallow_escape_case(7)
 
 
+# Curated odd coefficients of g for a second, visibly off-axis sequence.
+# The degree-3 row is the user's original case.  All rows have exact real
+# B roots and alternating off-axis minima; this table records discoveries,
+# not a claimed all-degree formula.  The degree-9 and degree-11 members are
+# available for study but are not promoted to the ordinary zoo registry.
+_SMALL_INTEGER_SYMMETRIC_ODD = {
+    3: (-1, 4),
+    5: (-1, 4, -1),
+    7: (-1, 4, -4, 1),
+    9: (-1, 7, -13, 7, -1),
+    11: (-1, 9, -24, 24, -9, 1),
+}
+
+
+def small_integer_symmetric_escape_case(degree: int) -> ZooCase:
+    """A curated normal-moment sequence continuing the original d=3 case.
+
+    At every listed odd degree, f has coefficient -3 on odd powers and g
+    has coefficient -3 on even powers.  The small odd coefficients above
+    make B an odd polynomial with all degree-many roots real and simple.
+    Its roots are a=0 saddles; the intervening minima have alternating
+    nonzero a coordinates.  The finite minima are shallow relative to C,
+    while the loss limit at either b infinity is much lower.
+
+    This is a finite verified sequence, not an assertion that similarly
+    bounded coefficients exist at every odd degree.  Only the d=3,5,7
+    members have been promoted to ordinary named zoo portraits.
+    """
+    if isinstance(degree, bool) or not isinstance(degree, int) \
+            or degree not in _SMALL_INTEGER_SYMMETRIC_ODD:
+        raise ValueError("degree must be one of 3, 5, 7, 9, 11")
+    if degree == 3:
+        return NORMAL_SYMMETRIC_SHALLOW_ESCAPE
+    odd = _SMALL_INTEGER_SYMMETRIC_ODD[degree]
+    return ZooCase(
+        name=f"normal-symmetric-small-integer-d{degree}",
+        f=tuple(-3 if j % 2 else 0 for j in range(degree + 1)),
+        g=tuple(odd[(j - 1) // 2] if j % 2 else -3
+                for j in range(degree + 1)),
+        moment_dist="normal01", default_view=None,
+        description=(
+            f"Small-integer continuation of the original symmetric d=3 "
+            f"escape case: {degree} B-saddles on a=0 and {degree - 1} "
+            "finite minima alternating visibly across that axis.  "
+            "Normal moments make A even and B odd; the escape loss at "
+            "either b infinity is below every finite minimum."
+            + (" Candidate for further portrait certification."
+               if degree >= 9 else "")
+        ),
+    )
+
+
+NORMAL_SYMMETRIC_SMALL_INTEGER_D5 = small_integer_symmetric_escape_case(5)
+NORMAL_SYMMETRIC_SMALL_INTEGER_D7 = small_integer_symmetric_escape_case(7)
+
+
 NEAR_SLIDE_D2 = ZooCase(
     name="near-slide-d2",
     f=(-0.891598, -0.077792, 0.101212),
@@ -496,6 +552,8 @@ CASES = {
     NORMAL_SYMMETRIC_SHALLOW_ESCAPE.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE,
     NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D5.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D5,
     NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7,
+    NORMAL_SYMMETRIC_SMALL_INTEGER_D5.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D5,
+    NORMAL_SYMMETRIC_SMALL_INTEGER_D7.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D7,
 }
 
 
