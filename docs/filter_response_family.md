@@ -69,6 +69,78 @@ zero-loss minima if `P` is nonzero there, a new feature compared with
 `Q=1`.  Coefficient conditioning and the resulting manifold attachments
 must be checked independently for each proposed high-degree member.
 
+## Fixed-law backbone realization pilot
+
+The inverse question is more restrictive than prescribing the roots of
+`B`. For a desired rational backbone `U(b)` one must satisfy the
+polynomial identity `A(b)*(C-U(b))=B(b)^2`, where `A`, `B`, and `C`
+all arise from the *same* positive moment functional. Even a matched
+backbone does not fix the planar portrait: `A` and `a*=B/A` enter its
+gradient field.
+
+As a controlled first experiment, fix `X~U(0,1)` or `X~N(0,1)` and
+`f(x)=x` or `f(x)=x^5`. Prescribe `B(b)=T_5(2b-1)` for the uniform law
+and `B(b)=T_5(b)` for the normal law. Since the coefficient of `b^j`
+in `B` is `g_j*mu_(j+deg f)`, this determines every `g_j` with a
+nonzero moment weight. In the normal cases, set the otherwise free
+constant `g_0=1/100` so `A(0)>0`. The shifted uniform target places
+all five `B` zeros in `(0,1)` and also keeps `g_0` nonzero. Compare
+the resulting `u/C` against `1/(1+B^2)` on `[-1,1]` for the normal
+law and `[0,1]` for the uniform law. This is *cross-moment design*,
+not a fit of the full loss.
+
+| Law | `f` | `u(infinity)/C` | Saddles / minima | Finite minimum losses divided by `C` | RMS target error |
+|---|---|---:|---:|---|---:|
+| `U(0,1)` | `x` | 0.3265 | 5 / 5 | 0.0047, 0.1199, 0.4637, 0.7133, 0.8650 | 0.1921 |
+| `U(0,1)` | `x^5` | 0 | 5 / 4 | 0.4288, 0.5276, 0.6118, 0.7257 | 0.1056 |
+| `N(0,1)` | `x` | 0.7619 | 5 / 4 | 0.9102, 0.0011, 0.0011, 0.9102 | 0.4404 |
+| `N(0,1)` | `x^5` | 0 | 5 / 4 | 0.9405, 0.7912, 0.7912, 0.9405 | 0.2681 |
+
+All four have exact `B` coefficients, positive `A`, Morse critical
+points, and certified portraits. The uniform linear case has an extra
+minimum at negative `b`, outside the target comparison interval. The
+minimum losses are not equiripple. Thus the experiment realizes the
+requested *critical-point locations* under standard continuous laws,
+but it does not realize the specified Chebyshev backbone loss.
+
+A second pilot fits the **full** backbone loss with the normal law and
+linear target. The zero-tail template is impossible for this `f`, so use
+the feasible-tail target
+
+\[
+U_*(b)=\frac{16}{21}+\frac{5/21}{1+T_5(b)^2}.
+\]
+
+An unconstrained least-squares fit over degree-5 `g` coefficients,
+followed by a nearby small-integer search, gave
+`f(x)=x`, `g(z)=3+6z-2z^2-8z^3-z^4+z^5` under `N(0,1)`.
+It has five saddles and four minima, an exact tail loss of `16/21`,
+and RMS error `0.01955` from `U_*` on `[-1,1]`. Its four minimum
+losses are approximately `0.88117, 0.85190, 0.85190, 0.88117`;
+the target's ripple minimum is `37/42≈0.88095`. Its outer saddle
+locations move to about `+/-1.13574`, compared with the target's
+`+/-0.95106`, so this remains an approximation. Its full portrait
+certifies. This integer candidate is substantially simpler than the
+exact `B` prescriptions, but neither the fit nor the integer search
+establishes global optimality or an exact realization theorem.
+
+The tail gives a simple obstruction to that exact target with a linear
+`f`. If `g` has degree `d`, then
+
+\[
+\frac{u(\infty)}{C}
+=1-\frac{\mathbb E[f(X)X^d]^2}
+{\mathbb E[f(X)^2]\mathbb E[X^{2d}]}.
+\]
+
+For either full-support law and `d=5`, equality to zero requires
+`f` proportional to `x^5` by Cauchy–Schwarz. This is why the linear
+rows cannot match the zero-tail target, regardless of how `g` is
+tuned. The fifth-degree rows remove that obstruction but demonstrate
+that matching `B` alone does not match `A`. Reproduce the table and
+the integer fit with
+`python scripts/probe_backbone_realization.py --portrait`.
+
 ## Smooth densities near the two-point measure
 
 The exact Rademacher moments **cannot** be represented by a continuous
