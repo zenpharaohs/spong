@@ -114,11 +114,12 @@ line length is not the optimizer's step size.
 The learning-curve panel plots log loss against log optimizer steps for each
 arm. Short runs retain every step; long runs sample steps on a logarithmic
 grid, separately from the portrait's LTTB thinning. The endpoint-audit button
-plots each arm's last observed loss against the loss of the minimum reached by
-continued gradient flow. It first asks the exact sublevel merge tree whether
-the endpoint is already in a bounded, saddle-free one-minimum component. For
-undecided endpoints it tries IRK8-GL descent and asks the tree again along the
-way. The same audit probes initializations so basin changes can be counted.
+plots each arm's last observed loss against the eventual gradient-flow loss.
+It first asks the exact sublevel merge tree whether the endpoint is in a
+bounded, saddle-free one-minimum component or a forced escaping component;
+the latter uses the exact backbone loss limit at infinity. For undecided
+endpoints it tries IRK8-GL descent and asks the tree again along the way.
+The same audit probes initializations so changes of eventual fate can be counted.
 An unresolved continuation is omitted from the scatter rather than assigned
 to a nearest minimum.
 

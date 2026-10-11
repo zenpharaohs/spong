@@ -625,7 +625,7 @@
         </div>
         <div class="wide">
           <canvas id="cEndpoints" width="440" height="200" style="margin-top:10px"></canvas>
-          <div class="legend" id="endpointLegend">last observed loss vs. eventual minimum loss · audit endpoints to resolve basins</div>
+          <div class="legend" id="endpointLegend">last observed loss vs. eventual gradient-flow loss · audit endpoints to resolve fates</div>
         </div>
       </div>
       </div>
@@ -2006,7 +2006,7 @@ function drawLearning(){
 }
 
 function drawEndpoints(){
-  const p=chartFrame(xEndpoints,cEndpoints,"optimizer endpoint → gradient-flow minimum", "log₁₀ last loss", "log₁₀ final loss");
+  const p=chartFrame(xEndpoints,cEndpoints,"optimizer endpoint → gradient-flow fate", "log₁₀ last loss", "log₁₀ final loss");
   const audit=S.allocator && S.allocator.endpoint_audit;
   if (!audit) return;
   const dots=[];
@@ -2016,7 +2016,7 @@ function drawEndpoints(){
     if (tr && Number.isFinite(tr.last_loss) && tr.last_loss > 0
         && Number.isFinite(outcome.final_loss) && outcome.final_loss > 0)
       dots.push({x:Math.log10(tr.last_loss),y:Math.log10(outcome.final_loss),
-                 policy:outcome.policy});
+                 policy:outcome.policy,fate:outcome.fate});
   }
   if (!dots.length) return;
   const lo=Math.min(...dots.flatMap(d=>[d.x,d.y]));
@@ -2032,7 +2032,8 @@ function drawEndpoints(){
   for (const d of dots){
     xEndpoints.fillStyle=d.policy==="equal"?"#66727b":"#5b21b6";
     xEndpoints.globalAlpha=.68;
-    xEndpoints.beginPath();xEndpoints.arc(X(d.x),Y(d.y),2.5,0,2*Math.PI);xEndpoints.fill();
+    if (d.fate==="escape") xEndpoints.fillRect(X(d.x)-3,Y(d.y)-3,6,6);
+    else {xEndpoints.beginPath();xEndpoints.arc(X(d.x),Y(d.y),2.5,0,2*Math.PI);xEndpoints.fill();}
   }
   xEndpoints.restore();
   xEndpoints.fillStyle=css("--ink-2");xEndpoints.font="10px "+css("--mono");
@@ -2843,7 +2844,7 @@ async function runAllocator(){
     S.allocator = data;
     S.allocatorModelBody = {...S.lastBody};
     els("auditEndpoints").disabled = false;
-    els("endpointLegend").textContent = "last observed loss vs. eventual minimum loss · audit endpoints to resolve basins";
+    els("endpointLegend").textContent = "last observed loss vs. eventual gradient-flow loss · audit endpoints to resolve fates";
     st.className = "status"; st.textContent = `done · ${data.elapsed_sec.toFixed(1)}s`;
     const eq = data.equal || {}, th = data.thompson || {};
     const cfg = data.configuration || {};
@@ -2934,9 +2935,11 @@ els("auditEndpoints").onclick = async () => {
     const viaIrk=ends.filter(x=>x.method==="irk8_gl_merge_tree").length;
     const initialResolved=starts.filter(x=>Number.isFinite(x.final_loss)).length;
     const initialByArm=new Map(starts.map(x=>[x.arm,x]));
-    const switches=ends.filter(x=>x.minimum && initialByArm.get(x.arm)?.minimum
-      && x.minimum[1]!==initialByArm.get(x.arm).minimum[1]).length;
-    els("endpointLegend").textContent=`${resolved}/${ends.length} endpoint basins resolved · ${viaIrk} by IRK8-GL · ${initialResolved}/${starts.length} initial basins resolved · ${switches} changed basins · unresolved omitted`;
+    const fateKey=x=>x?.fate==="escape"?"escape":x?.minimum?`min:${x.minimum[1]}`:null;
+    const switches=ends.filter(x=>fateKey(x) && fateKey(initialByArm.get(x.arm))
+      && fateKey(x)!==fateKey(initialByArm.get(x.arm))).length;
+    const escapes=ends.filter(x=>x.fate==="escape").length;
+    els("endpointLegend").textContent=`${resolved}/${ends.length} endpoint fates resolved (${escapes} escape, squares) · ${viaIrk} by IRK8-GL · ${initialResolved}/${starts.length} initial fates resolved · ${switches} changed fates · unresolved omitted`;
     st.className="status";st.textContent="endpoint audit done";
     drawEndpoints();
   } catch(e){st.className="status err";st.textContent=e.message || "endpoint audit failed";}
@@ -2946,7 +2949,7 @@ els("clearAllocator").onclick = () => {
   S.allocator = null;
   S.allocatorModelBody = null;
   els("auditEndpoints").disabled = true;
-  els("endpointLegend").textContent = "last observed loss vs. eventual minimum loss · audit endpoints to resolve basins";
+  els("endpointLegend").textContent = "last observed loss vs. eventual gradient-flow loss · audit endpoints to resolve fates";
   els("allocSummary").textContent = "";
   els("allocStatus").textContent = "";
   draw();

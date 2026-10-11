@@ -285,14 +285,19 @@ def test_allocator_endpoint_audit_resolves_tree_then_irk():
              "point": [2.0477800359e-9, -0.59355487461]},
             {"policy": "thompson", "arm": 0,
              "point": [1e-9, -0.55]},
+            {"policy": "initial", "arm": 1,
+             "point": [4.433035996264746e-39, -4064635598.3658843]},
         ],
     })
-    direct, continued = result["outcomes"]
+    direct, continued, escape = result["outcomes"]
     assert direct["method"] == "exact_merge_tree"
     assert direct["irk_steps"] == 0
     assert continued["method"] == "irk8_gl_merge_tree"
     assert continued["irk_steps"] > 0
     assert continued["final_loss"] == pytest.approx(direct["final_loss"])
+    assert escape["fate"] == "escape"
+    assert escape["method"] == "exact_merge_tree"
+    assert escape["final_loss"] == pytest.approx(1.1233333333333333)
 
 
 def test_allocator_endpoint_reports_numerical_terminations_without_warnings(

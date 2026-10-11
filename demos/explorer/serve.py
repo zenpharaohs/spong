@@ -1228,7 +1228,13 @@ def allocator_endpoint_audit(payload: dict) -> dict:
                 and found["fate"] == "capture"):
             q = enumeration.points[found["minima"][0]]
             return {"final_loss": float(merge_tree.exact_loss(m, q.a, q.b)),
-                    "minimum": [float(q.a), float(q.b)]}
+                    "minimum": [float(q.a), float(q.b)], "fate": "minimum"}
+        if (found is not None and found["forced"]
+                and found["fate"] == "escape"):
+            limit = merge_tree.backbone_level_at_infinity(m)
+            if limit is not None:
+                return {"final_loss": float(limit), "minimum": None,
+                        "fate": "escape"}
         return None
 
     for item in endpoints:
@@ -1246,11 +1252,13 @@ def allocator_endpoint_audit(payload: dict) -> dict:
         if key_point not in memo:
             resolved = fate(a, b)
             if resolved is not None:
-                memo[key_point] = dict(resolved, method="exact_merge_tree",
-                                       irk_steps=0, term="capture")
+                memo[key_point] = dict(
+                    resolved, method="exact_merge_tree",
+                    irk_steps=0,
+                    term="capture" if resolved["fate"] == "minimum" else "escape")
             elif kernel is None or not hasattr(kernel, "normalized_step"):
                 memo[key_point] = {"final_loss": None, "minimum": None,
-                                   "method": "unavailable", "irk_steps": 0,
+                                   "fate": "unresolved", "method": "unavailable", "irk_steps": 0,
                                    "term": "native_irk_unavailable"}
             else:
                 step_size = 0.2
@@ -1289,11 +1297,15 @@ def allocator_endpoint_audit(payload: dict) -> dict:
                             break
                     step_size = min(1.0, step_size*1.25)
                 if resolved is not None:
-                    memo[key_point] = dict(resolved, method="irk8_gl_merge_tree",
-                                           irk_steps=steps, term=term)
+                    memo[key_point] = dict(
+                        resolved, method="irk8_gl_merge_tree",
+                        irk_steps=steps,
+                        term="capture" if resolved["fate"] == "minimum"
+                        else "escape")
                 else:
                     memo[key_point] = {"final_loss": None, "minimum": None,
-                                       "method": "irk8_gl", "irk_steps": steps,
+                                       "fate": "unresolved", "method": "irk8_gl",
+                                       "irk_steps": steps,
                                        "term": term}
         results.append(dict(memo[key_point], policy=policy, arm=arm))
     return {"format": "spong-allocator-endpoint-audit-v1",
