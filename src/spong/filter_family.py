@@ -99,3 +99,41 @@ def smoothed_chebyshev_model(degree: int, variance, gain=1) -> model.Model:
         raise ValueError("variance must be positive")
     moments = gaussian_smoothed_moments(2 * len(discrete.g) - 1, v)
     return model.build(discrete.f, discrete.g, moments)
+
+
+def beta_shell_moments(count: int, inner_radius, outer_radius,
+                       shape: int = 4) -> tuple[Fraction, ...]:
+    """Moments of X=S*(r0+(r1-r0)*U), U~Beta(shape,shape), S=+/-1.
+
+    With 0<r0<r1<1 the law has a continuous density on two compact
+    intervals, and mu[2k] <= r1**(2k), so the even moments decay
+    exponentially.  Integer shape gives exact rational moments for
+    rational radii and controls endpoint smoothness (C^(shape-2)).
+    """
+    r0 = poly.as_fraction(inner_radius)
+    r1 = poly.as_fraction(outer_radius)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("count must be a nonnegative integer")
+    if not 0 < r0 < r1 < 1:
+        raise ValueError("radii must satisfy 0 < inner < outer < 1")
+    if isinstance(shape, bool) or not isinstance(shape, int) or shape < 2:
+        raise ValueError("shape must be an integer at least 2")
+    u_moments = [Fraction(1)]
+    for j in range(1, count):
+        u_moments.append(u_moments[-1] * Fraction(shape + j - 1,
+                                                  2 * shape + j - 1))
+    width = r1 - r0
+    return tuple(
+        Fraction(0) if k % 2 else
+        sum((comb(k, j) * r0**(k-j) * width**j * u_moments[j]
+             for j in range(k + 1)), Fraction(0))
+        for k in range(count))
+
+
+def beta_shell_chebyshev_model(degree: int, inner_radius, outer_radius,
+                               shape: int = 4, gain=1) -> model.Model:
+    """Chebyshev coefficients under the compact continuous beta-shell law."""
+    discrete = chebyshev_response_model(degree, gain)
+    moments = beta_shell_moments(2 * len(discrete.g) - 1,
+                                 inner_radius, outer_radius, shape)
+    return model.build(discrete.f, discrete.g, moments)

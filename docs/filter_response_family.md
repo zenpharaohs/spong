@@ -130,6 +130,38 @@ audit is a formal nonnegativity certificate.  The exact `v=0` moment
 vector is rejected by that implementation's singular-Hankel check, as
 the fourth-moment identity requires.
 
+## Compact continuous approximations with decaying moments
+
+The tempting sequence `mu_(2k)=h(k)`, `mu_(2k+1)=0`, where
+`h(k)=exp(-lambda*k) sum_(j=0)^d (lambda*k)^j/j!`, is **not** a
+probability moment sequence for any `lambda>0` and finite `d>=1`.
+Indeed, `h(k)=Pr(Poisson(lambda*k)<=d)`. For independent
+`N_1,N_2 ~ Poisson(lambda)`, the event `N_1+N_2<=d` is strictly
+contained in the event `N_1<=d, N_2<=d`. Thus
+`h(2)<h(1)^2`, whereas any measure requires
+`mu_4-mu_2^2=Var(X^2)>=0`. The obstruction uses only moments through
+order four, even if a finite prefix of this sequence is extremely close
+to the two-point moments. For `d=0`, the sequence is realizable but gives
+another two-point measure at `X=+/-exp(-lambda/2)`.
+
+A valid compactly supported alternative is `X=S*R`, where `S` is an
+independent fair sign and `R=r0+(r1-r0)*U` with
+`U~Beta(shape,shape)`, `0<r0<r1<1`, and integer `shape>=2`.
+This law has a continuous density on two short intervals. Its odd
+moments vanish and `0<mu_(2k)=E[R^(2k)]<=r1^(2k)`; all its moments
+converge to the two-point moments as both radii approach one. The
+density is globally `C^(shape-2)` at the interval endpoints. Rational
+radii give exact rational moments via `beta_shell_moments` and a model
+via `beta_shell_chebyshev_model`.
+
+For `r0=99/100`, `r1=199/200`, and `shape=4`, the degree-5 model has
+`mu_2=0.9850569444444445`, `mu_4=0.9703399200662879`, and a strictly
+positive order-four Hankel gap of about `2.73627e-6`. Exact critical
+point enumeration and the portrait audit find five saddles, four
+minima, and the same ordered unstable-branch destinations as the
+two-point degree-5 model. This is a certified nearby example, not a
+proof that all choices of radii preserve the global portrait.
+
 This family uses a rank-two moment measure, whereas the previously
 studied `normal-symmetric-small-integer-d3/5/7/9` sequence uses a
 full-support Gaussian measure.  The exact Chebyshev recurrence explains

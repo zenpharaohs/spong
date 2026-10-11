@@ -65,23 +65,24 @@ def test_degree_five_portrait_certifies():
     assert p.ledger["summary"]["representation_attested"]
 
 
+def _degree_five_signature(m):
+    e = sturm.enumerate_critical_points(m)
+    p = portrait.compute(m)
+    assert e.psi_positive and e.morse and e.alternates
+    assert (len(e.saddles), len(e.minima)) == (5, 4)
+    assert p.ledger["summary"]["topology_status"] == "certified"
+    assert all(end["certified"] for end in
+               p.ledger["topology"]["unstable_ends"])
+    minima_b = [q.b for q in e.minima]
+    return tuple(
+        min(range(len(minima_b)),
+            key=lambda j: abs(minima_b[j] - end["minimum"][1]))
+        if end["kind"] == "finite_capture" else end["end"]
+        for end in p.ledger["topology"]["unstable_ends"])
+
+
 def test_smooth_density_preserves_degree_five_attachment_pattern():
     from fractions import Fraction as F
-
-    def signature(m):
-        e = sturm.enumerate_critical_points(m)
-        p = portrait.compute(m)
-        assert e.psi_positive and e.morse and e.alternates
-        assert (len(e.saddles), len(e.minima)) == (5, 4)
-        assert p.ledger["summary"]["topology_status"] == "certified"
-        assert all(end["certified"] for end in
-                   p.ledger["topology"]["unstable_ends"])
-        minima_b = [q.b for q in e.minima]
-        return tuple(
-            min(range(len(minima_b)),
-                key=lambda j: abs(minima_b[j] - end["minimum"][1]))
-            if end["kind"] == "finite_capture" else end["end"]
-            for end in p.ledger["topology"]["unstable_ends"])
 
     discrete = filter_family.chebyshev_response_model(5)
     smooth = filter_family.smoothed_chebyshev_model(5, F(1, 10000))
@@ -91,4 +92,17 @@ def test_smooth_density_preserves_degree_five_attachment_pattern():
     assert smooth.mu[4] - 2 * smooth.mu[2] + smooth.mu[0] > 0
     expected = (0, "b_minus_infinity", 1, 0, 2, 1, 3, 2,
                 "b_plus_infinity", 3)
-    assert signature(discrete) == signature(smooth) == expected
+    assert _degree_five_signature(discrete) == _degree_five_signature(smooth) == expected
+
+
+def test_compact_density_has_decaying_moments_and_same_attachments():
+    inner, outer = Fraction(99, 100), Fraction(199, 200)
+    moments = filter_family.beta_shell_moments(11, inner, outer)
+    assert moments[0] == 1
+    assert all(moments[k] == 0 for k in range(1, 11, 2))
+    assert all(0 < moments[2*k] <= outer**(2*k) for k in range(1, 6))
+    assert moments[4] > moments[2]**2
+    m = filter_family.beta_shell_chebyshev_model(5, inner, outer)
+    expected = (0, "b_minus_infinity", 1, 0, 2, 1, 3, 2,
+                "b_plus_infinity", 3)
+    assert _degree_five_signature(m) == expected
