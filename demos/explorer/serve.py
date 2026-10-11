@@ -537,9 +537,13 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
                 return {"sector": "pinned", "index": n-1, "lag": max(lag),
                         "lag_end": lag[-1]}
         # diagonal: remaining J drift after k, attested over an octave
-        J = (0.5*a*a - b*b/(2.0*d_eff) - 2.0*c1*b
-             - 2.0*np.real(np.log(b[:, None].astype(complex) - rhos[None, :])
-                           @ res))
+        # Symmetric normal cases have a real A' root at b=0.  A sampled
+        # branch may hit that trap exactly, where J is singular; the finite
+        # check below rejects diagonal licensing for that branch.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            J = (0.5*a*a - b*b/(2.0*d_eff) - 2.0*c1*b
+                 - 2.0*np.real(np.log(b[:, None].astype(complex) - rhos[None, :])
+                               @ res))
         if np.all(np.isfinite(J)):
             w = np.abs(np.polyval(Ap, b)/(2.0*np.polyval(A[::-1], b)))/r
             # The max over j > k is taken on a sampled j-set, dense enough

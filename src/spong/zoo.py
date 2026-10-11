@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import model
+
 
 @dataclass(frozen=True)
 class ZooCase:
@@ -284,6 +286,72 @@ DEAD_NEURON_FAR_SADDLE = ZooCase(
 )
 
 
+NORMAL_SYMMETRIC_SHALLOW_ESCAPE = ZooCase(
+    name="normal-symmetric-shallow-escape",
+    f=(0, -3, 0, -3),
+    g=(-3, -1, -3, 4),
+    moment_dist="normal01",
+    default_view=(-0.3, 0.3, -0.35, 0.35),
+    description=(
+        "Odd target under symmetric normal moments: A(b) is even and B(b) "
+        "is odd, so L(a,b)=L(-a,-b).  Two shallow finite minima have loss "
+        "about 197.87324, between three B-saddles at C=198; the backbone "
+        "loss tends to 18/5 at both b infinities, below every finite "
+        "minimum.  The portrait is a compact example of symmetric local "
+        "traps with much better escape outcomes."
+    ),
+)
+
+
+def symmetric_shallow_escape_case(degree: int, shield: int = 100) -> ZooCase:
+    """Odd-degree normal family with prescribed B-saddles and shallow wells.
+
+    Set f(x)=x^d and prescribe B(b)=mu[2d] b prod(b^2-r^2), r=1..(d-1)/2.
+    The odd coefficients of g follow by dividing each B coefficient by
+    E[X^(d+j)]; its positive constant ``shield*mu[2d]`` contributes to A
+    but not B.  Thus A is positive/even, B is odd with d simple real roots,
+    and every B root is a saddle.  Between successive roots, B^2/A has an
+    interior maximum, giving at least d-1 finite minima.  The highest odd
+    monomial of g matches f at infinity, so the unattained loss limit is 0.
+    Increasing shield makes the finite wells shallower without moving B's
+    roots.  Coefficients stay integral and exact.
+    """
+    if isinstance(degree, bool) or not isinstance(degree, int) \
+            or degree < 3 or degree % 2 != 1:
+        raise ValueError("degree must be an odd integer at least 3")
+    if isinstance(shield, bool) or not isinstance(shield, int) or shield <= 0:
+        raise ValueError("shield must be a positive integer")
+    p = [0, 1]
+    for r in range(1, (degree - 1) // 2 + 1):
+        next_p = [0] * (len(p) + 2)
+        for j, coefficient in enumerate(p):
+            next_p[j] -= r * r * coefficient
+            next_p[j + 2] += coefficient
+        p = next_p
+    moments = model.moments_normal01(2 * degree + 1)
+    leading = moments[2 * degree]
+    g = [shield * int(leading)]
+    g.extend(int(leading * p[j] / moments[degree + j]) if j % 2 else 0
+             for j in range(1, degree + 1))
+    return ZooCase(
+        name=(f"normal-symmetric-shallow-escape-d{degree}"
+              + (f"-s{shield}" if shield != 100 else "")),
+        f=(0,) * degree + (1,), g=tuple(g), moment_dist="normal01",
+        default_view=None,
+        description=(
+            f"Prescribed-root symmetric escape family at degree {degree}: "
+            f"{degree} B-saddles, at least {degree - 1} finite minima, "
+            "and global loss infimum 0 at b=+/-infinity.  The constant "
+            f"shield {shield} keeps finite wells shallow; A is even and "
+            "B is odd under normal moments."
+        ),
+    )
+
+
+NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D5 = symmetric_shallow_escape_case(5)
+NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7 = symmetric_shallow_escape_case(7)
+
+
 NEAR_SLIDE_D2 = ZooCase(
     name="near-slide-d2",
     f=(-0.891598, -0.077792, 0.101212),
@@ -425,6 +493,9 @@ CASES = {
     LINEAR_TARGET_D17_THRASH.name: LINEAR_TARGET_D17_THRASH,
     NONNEAREST_ATTACHMENT.name: NONNEAREST_ATTACHMENT,
     DEAD_NEURON_FAR_SADDLE.name: DEAD_NEURON_FAR_SADDLE,
+    NORMAL_SYMMETRIC_SHALLOW_ESCAPE.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE,
+    NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D5.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D5,
+    NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7.name: NORMAL_SYMMETRIC_SHALLOW_ESCAPE_D7,
 }
 
 

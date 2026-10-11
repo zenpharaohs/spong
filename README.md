@@ -172,6 +172,17 @@ Named zoo portraits:
     PYTHONPATH=src python -m spong.cli --zoo tricky-d11 --pause
     PYTHONPATH=src python -m spong.cli --zoo linear-target-d17-thrash --pause
     PYTHONPATH=src python -m spong.cli --zoo nonnearest-attachment --pause
+    PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-shallow-escape --pause
+    PYTHONPATH=src python -m spong.cli --zoo normal-symmetric-shallow-escape-d7 --pause
+
+The normal-moment symmetric escape case has two finite minima near loss
+197.873, three saddles at 198, and a much lower unattained loss limit of
+18/5 as `b` tends to either infinity.  The related
+`zoo.symmetric_shallow_escape_case(odd_degree, shield=100)` construction
+prescribes `odd_degree` saddle locations and forces at least one shallow
+finite minimum between each adjacent pair.  Degree-5 and degree-7 members
+are named zoo cases with 9 and 13 critical points; their loss infimum is 0
+at infinity.  Increasing `shield` makes the finite wells shallower.
 
 `quadratic-stiff` is the degree-2 `f=g` case discovered at random seed
 `2735729614`: three minima, three saddles, and a bounded unstable branch from
