@@ -36,6 +36,7 @@ class BatchGradient:
     ``uniform01`` remains the default for compatibility with the original
     moustache galleries.  ``normal01`` draws fresh standard-normal samples;
     ``absolute_x`` draws from density |x| on [-1,1];
+    ``rademacher`` draws either -1 or +1 with equal probability;
     ``empirical`` resamples the exact finite support used to build an
     interactive empirical portrait.
     """
@@ -52,7 +53,7 @@ class BatchGradient:
         self.distribution = str(distribution)
         self.samples = (None if samples is None
                         else np.asarray(samples, dtype=float))
-        if self.distribution not in {"uniform01", "normal01", "absolute_x", "empirical"}:
+        if self.distribution not in {"uniform01", "normal01", "absolute_x", "rademacher", "empirical"}:
             raise ValueError(
                 f"unsupported minibatch distribution {self.distribution!r}")
         if self.distribution == "empirical" and (
@@ -68,6 +69,8 @@ class BatchGradient:
             # Inverse CDF of the normalized density |x| on [-1,1].
             y = 2.0 * self.rng.random(self.n) - 1.0
             return np.copysign(np.sqrt(np.abs(y)), y)
+        if self.distribution == "rademacher":
+            return 2.0 * self.rng.integers(0, 2, size=self.n) - 1.0
         return self.rng.choice(self.samples, size=self.n, replace=True)
 
     def _draw_many(self, steps):
@@ -80,6 +83,8 @@ class BatchGradient:
         if self.distribution == "absolute_x":
             y = 2.0 * self.rng.random(shape) - 1.0
             return np.copysign(np.sqrt(np.abs(y)), y)
+        if self.distribution == "rademacher":
+            return 2.0 * self.rng.integers(0, 2, size=shape) - 1.0
         return self.rng.choice(self.samples, size=shape, replace=True)
 
     def __call__(self, a, b):

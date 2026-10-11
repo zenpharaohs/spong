@@ -359,6 +359,7 @@
           <select id="dist">
             <option value="uniform01">U(0,1)</option>
             <option value="normal01">N(0,1)</option>
+            <option value="rademacher">X = ±1 (equal)</option>
             <option value="absolute_x">|x| dx on [-1,1]</option>
             <option value="empirical">empirical batch</option>
           </select>
@@ -1827,9 +1828,10 @@ function drawResp(){
   if (!S.P) return;
   const f = S.P.f, g = S.P.g, pad = { l:44, r:12, t:12, b:26 };
   const kind = els("dist").value;
-  const x0 = kind === "normal01" ? -3 : kind === "absolute_x" ? -1 : 0;
+  const x0 = kind === "normal01" ? -3 : (kind === "absolute_x" || kind === "rademacher") ? -1 : 0;
   const x1 = kind === "normal01" ? 3 : 1;
-  const N = 220, xs=[], Fv=[], Rv=[];
+  const discrete = kind === "rademacher";
+  const N = discrete ? 1 : 220, xs=[], Fv=[], Rv=[];
   for (let i = 0; i <= N; i++){
     const x = x0 + i / N * (x1 - x0);
     xs.push(x); Fv.push(evalp(f, x)); Rv.push(S.sel.a * evalp(g, S.sel.b * x));
@@ -1840,21 +1842,32 @@ function drawResp(){
   const X = x => pad.l + (x - x0) / (x1 - x0) * (W - pad.l - pad.r);
   const Y = y => pad.t + (hi - y) / (hi - lo) * (H - pad.t - pad.b);
 
-  xR.beginPath();
-  xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Fv[i])) : xR.moveTo(X(x), Y(Fv[i])));
-  for (let i = xs.length-1; i >= 0; i--) xR.lineTo(X(xs[i]), Y(Rv[i]));
-  xR.closePath(); xR.fillStyle = "rgba(194,94,0,.13)"; xR.fill();
+  if (!discrete){
+    xR.beginPath();
+    xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Fv[i])) : xR.moveTo(X(x), Y(Fv[i])));
+    for (let i = xs.length-1; i >= 0; i--) xR.lineTo(X(xs[i]), Y(Rv[i]));
+    xR.closePath(); xR.fillStyle = "rgba(194,94,0,.13)"; xR.fill();
+  }
 
   xR.strokeStyle = css("--rule-2"); xR.lineWidth = 1;
   if (lo < 0 && hi > 0){ xR.beginPath(); xR.moveTo(pad.l, Y(0)); xR.lineTo(W-pad.r, Y(0)); xR.stroke(); }
   xR.beginPath(); xR.moveTo(pad.l, pad.t); xR.lineTo(pad.l, H - pad.b); xR.stroke();
 
-  xR.lineWidth = 2; xR.strokeStyle = css("--target"); xR.beginPath();
-  xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Fv[i])) : xR.moveTo(X(x), Y(Fv[i])));
-  xR.stroke();
-  xR.lineWidth = 1.8; xR.strokeStyle = css("--response"); xR.setLineDash([5,4]); xR.beginPath();
-  xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Rv[i])) : xR.moveTo(X(x), Y(Rv[i])));
-  xR.stroke(); xR.setLineDash([]);
+  if (discrete){
+    for (let i = 0; i < xs.length; i++){
+      for (const [value, color] of [[Fv[i], css("--target")], [Rv[i], css("--response")]]){
+        xR.beginPath(); xR.arc(X(xs[i]), Y(value), 4, 0, 2*Math.PI);
+        xR.fillStyle = color; xR.fill();
+      }
+    }
+  } else {
+    xR.lineWidth = 2; xR.strokeStyle = css("--target"); xR.beginPath();
+    xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Fv[i])) : xR.moveTo(X(x), Y(Fv[i])));
+    xR.stroke();
+    xR.lineWidth = 1.8; xR.strokeStyle = css("--response"); xR.setLineDash([5,4]); xR.beginPath();
+    xs.forEach((x,i) => i ? xR.lineTo(X(x), Y(Rv[i])) : xR.moveTo(X(x), Y(Rv[i])));
+    xR.stroke(); xR.setLineDash([]);
+  }
 
   xR.fillStyle = css("--ink-2"); xR.font = "10px " + css("--mono");
   xR.fillText(x0.toFixed(2), pad.l, H - 9);

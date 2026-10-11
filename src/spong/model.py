@@ -470,6 +470,11 @@ def moments_absolute_x(n: int) -> tuple[Fraction, ...]:
                  for k in range(n))
 
 
+def moments_rademacher(n: int) -> tuple[Fraction, ...]:
+    """Equally weighted atoms at -1 and +1: mu_even=1, mu_odd=0."""
+    return tuple(Fraction(0 if k % 2 else 1) for k in range(n))
+
+
 def moments_normal01(n: int) -> tuple[Fraction, ...]:
     """mu_k = (k-1)!! for even k, else 0 (standard normal)."""
     out = []

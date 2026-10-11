@@ -203,6 +203,14 @@ forbidden contacts.  The coefficient and certification investigation is in
 prescribed-root degree-5 and degree-7 cases above remain in the zoo as
 separate, tightly axis-hugging allocator stress cases.
 
+An exact Chebyshev equiripple family is available through
+`spong.filter_family.chebyshev_response_model(odd_degree)`.  With the
+two-point `X=±1` measure, it realizes the backbone loss
+`u(b)=1/(1+T_d(b)^2)` and has `d` equal-height saddles alternating with
+`d-1` equal-depth finite minima.  The same construction accepts odd/even
+rational pairs for elliptic-inspired response experiments; see
+[docs/filter_response_family.md](docs/filter_response_family.md).
+
 `quadratic-stiff` is the degree-2 `f=g` case discovered at random seed
 `2735729614`: three minima, three saddles, and a bounded unstable branch from
 the lowest saddle down to a far finite minimum.  It is the canonical "you

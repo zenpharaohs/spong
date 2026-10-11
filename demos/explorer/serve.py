@@ -135,6 +135,8 @@ def moment_vector(spec: dict, n: int):
         return model.moments_uniform01(n)
     if kind == "normal01":
         return model.moments_normal01(n)
+    if kind == "rademacher":
+        return model.moments_rademacher(n)
     if kind == "empirical":
         xs = [Fraction(float(x)) for x in spec.get("samples", [])]
         if not xs:
