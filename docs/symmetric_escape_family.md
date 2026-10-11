@@ -1,8 +1,52 @@
 # Symmetric normal-moment escape sequence
 
-The original case has `f=(0,-3,0,-3)` and `g=(-3,-1,-3,4)`.  The
-small-integer continuation in `spong.zoo.small_integer_symmetric_escape_case`
-uses degree `d=2m+1` and
+The original case has `f=(0,-3,0,-3)` and `g=(-3,-1,-3,4)`.
+
+## A flatter degree-5 normal example
+
+The named `normal-symmetric-flat-d5` case directly uses
+`f(x)=x+x^3+x^5` and `g=(-3,-1,-3,4,-3,-2)` under standard-normal
+moments. Its five saddles lie on `a=0` at loss `C=1207`; four finite
+minima alternate across that axis. Their losses, ordered by increasing
+`b`, are approximately `1206.191615, 1206.763131, 1206.763131,
+1206.191615`. Thus the largest depression below the saddle loss is
+`0.066975%`. The loss tends to the much lower exact infimum `142/21` as
+`b` tends to either infinity. The full portrait's topology certifies.
+
+This case differs from the earlier degree-5 row only in `g_5`: `-2`
+instead of `-1`. Rescaling that earlier row's `f=-3(x+x^3+x^5)` to the
+unit-coefficient `f` divides its `a` coordinates by `-3` and every loss by
+`9`; its largest finite depression is `1.155565%` of `C`. The new row is
+therefore substantially flatter without increasing the largest absolute
+coefficient in `g` beyond `4`.
+
+The bounded search is small enough to reproduce directly. Hold
+`g_0=g_2=g_4=-3` and enumerate nonzero integers
+`g_1,g_3,g_5` in `[-4,4]`. For this `f`, the exact cross term is
+`B(b)=19g_1 b+123g_3 b^3+1065g_5 b^5`. Five real simple B roots require
+the quadratic `19g_1+123g_3 t+1065g_5 t^2` to have two distinct positive
+roots. Among the resulting rows, exact Sturm enumeration leaves four
+coefficient triples with five saddles and four minima, up to reversing all
+odd coefficients. Ranked by the largest relative saddle-to-minimum loss
+gap, the rows are:
+
+| `(g_1,g_3,g_5)` | largest relative gap |
+|---|---:|
+| `(-1,4,-2)` | `0.066975%` |
+| `(-1,3,-1)` | `0.142945%` |
+| `(-2,4,-1)` | `0.286946%` |
+| `(-1,4,-1)` | `1.155565%` |
+
+The gap values are numerical evaluations of the Sturm-isolated minima;
+the topology and tail value above have separate certificates. This is an
+exhaustive search only within the stated coefficient box and fixed even
+coefficients, not a claim about all rational degree-5 instances. Reproduce
+the ranking with `python scripts/search_normal_flat_d5.py --height 4`.
+
+## Curated odd-degree sequence
+
+The small-integer continuation in
+`spong.zoo.small_integer_symmetric_escape_case` uses degree `d=2m+1` and
 
 \[
  f_d(x)=-3\sum_{r=0}^{m}x^{2r+1},\qquad

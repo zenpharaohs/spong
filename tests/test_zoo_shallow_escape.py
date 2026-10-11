@@ -92,6 +92,28 @@ def test_named_small_integer_portraits_certify(degree):
     assert summary["representation_attested"]
 
 
+def test_normal_symmetric_flat_degree5_certifies():
+    case = zoo.get("normal-symmetric-flat-d5")
+    assert case.f == (0, 1, 0, 1, 0, 1)
+    assert case.g == (-3, -1, -3, 4, -3, -2)
+    m = build_case(case)
+    e = sturm.enumerate_critical_points(m)
+    assert e.morse and e.psi_positive
+    assert (len(e.minima), len(e.saddles)) == (4, 5)
+    assert m.C == 1207
+    assert tuple(m.beta) == (0, -19, 0, 492, 0, -2130)
+    assert merge_tree.backbone_level_at_infinity(m) == Fraction(142, 21)
+    assert all(abs(q.a) < 1e-30 and m.u(q.b) == pytest.approx(1207)
+               for q in e.saddles)
+    assert all(0 < (m.C - m.u(q.b)) / float(m.C) < 0.00067
+               for q in e.minima)
+    assert all(m.u(q.b) > Fraction(142, 21) for q in e.minima)
+    assert [1 if q.a > 0 else -1 for q in e.minima] == [-1, 1, -1, 1]
+    summary = portrait.compute(m).ledger["summary"]
+    assert summary["topology_status"] == "certified"
+    assert summary["representation_attested"]
+
+
 @pytest.mark.heavy
 def test_degree9_stable_retrace_uses_its_actual_box():
     case = zoo.get("normal-symmetric-small-integer-d9")

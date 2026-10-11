@@ -422,6 +422,22 @@ NORMAL_SYMMETRIC_SMALL_INTEGER_D7 = small_integer_symmetric_escape_case(7)
 NORMAL_SYMMETRIC_SMALL_INTEGER_D9 = small_integer_symmetric_escape_case(9)
 
 
+NORMAL_SYMMETRIC_FLAT_D5 = ZooCase(
+    name="normal-symmetric-flat-d5",
+    f=(0, 1, 0, 1, 0, 1),
+    g=(-3, -1, -3, 4, -3, -2),
+    moment_dist="normal01",
+    default_view=None,
+    description=(
+        "Degree-5 normal-moment continuation with unit odd coefficients "
+        "in f and small integer coefficients in g. Five a=0 saddles "
+        "have loss C=1207; four alternating off-axis minima are within "
+        "0.067% of C, while the loss infimum at either b infinity is "
+        "142/21. The full portrait certifies."
+    ),
+)
+
+
 NORMAL_LINEAR_RIPPLE_D5 = ZooCase(
     name="normal-linear-ripple-d5",
     f=(0, 1),
@@ -599,6 +615,7 @@ CASES = {
     NORMAL_SYMMETRIC_SMALL_INTEGER_D5.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D5,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D7.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D7,
     NORMAL_SYMMETRIC_SMALL_INTEGER_D9.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D9,
+    NORMAL_SYMMETRIC_FLAT_D5.name: NORMAL_SYMMETRIC_FLAT_D5,
     NORMAL_LINEAR_RIPPLE_D5.name: NORMAL_LINEAR_RIPPLE_D5,
     RADEMACHER_CHEBYSHEV_D5.name: RADEMACHER_CHEBYSHEV_D5,
 }
