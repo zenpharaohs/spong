@@ -50,6 +50,7 @@ MAX_SWITCHES = 12
 # is an abort_max_steps that arrives earlier.
 STEP_CEILING = 5000000
 TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
+FIELD_ALIGNMENT_MIN = float(np.cos(np.radians(15.0)))
 # The turn test compares two chord directions; a chord is only a direction
 # if it is long against the rounding of its endpoints.  A 0.75 degree budget
 # needs the chord to be ~8/theta = 611 times the endpoint noise
@@ -2064,6 +2065,11 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
     # forever.  Seven halvings of the certified incoming chord is the finite
     # local retry budget.
     continuation_floor = cur/128.0
+    # The launch chord may ramp to a ds many orders of magnitude larger than
+    # its fixed resolution floor.  Give a failed step enough halvings to
+    # reach that floor before invoking the equivalent-chart ladder.
+    retry_limit = max(8, min(64, 1 + int(np.ceil(
+        np.log2(max(1.0, ds/continuation_floor))))))
 
     def centered_trial(a_start, b_start, chord):
         if centered_local is None or centered_local.native is None:
@@ -2183,11 +2189,7 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
         # retry — the zoom-proof guarantee enforced at trace time
         b_prev, w_prev = b, w
         retry_floor = continuation_floor
-        # Initial attempt plus seven halvings to ``continuation_floor``.
-        # Seven total attempts fell out of the loop immediately after the
-        # seventh halve, bypassing the floor fallback with the last NaN stage
-        # value still live.
-        for _retry in range(8):
+        for _retry in range(retry_limit):
             h = np.nan
             try:
                 gl4 = (CHART_IRK_ORDER == 4)
@@ -2239,6 +2241,7 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                         a_prev, a_new_test, expected, actual,
                         descent_slack))
                         or expected >= 0.0
+                        or np.hypot(da, db) > 2.0*cur
                         or actual > 1e-4*expected + descent_slack):
                     step_failed = True
             # A failed stage solve is a STEP-SIZE signal, not a fatal error.
@@ -2317,7 +2320,10 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                             m.L(a_new_test, b_new) - m.L(a_prev, b_prev))
                         descent_slack = 64.0*np.finfo(float).eps * (
                             1.0 + abs(float(m.L(a_prev, b_prev))))
-                        if (expected >= 0.0
+                        if (not np.isfinite(expected)
+                                or not np.isfinite(actual)
+                                or np.hypot(da, db) > 2.0*cur
+                                or expected >= 0.0
                                 or actual > 1e-4*expected + descent_slack):
                             continue
                         if engine_diag is not None:
@@ -2349,21 +2355,72 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                             "retry": _retry,
                         }
                     return pts, "abort_step_failure", switches, (b_prev, w_prev)
-            if len(pts) >= 2:
-                a_new = m.s_a_star(b_new) + w_new
-                p1, p0 = pts[-1], pts[-2]
-                d1a, d1b = p1[0] - p0[0], p1[1] - p0[1]
-                d2a, d2b = a_new - p1[0], b_new - p1[1]
-                n1 = (d1a * d1a + d1b * d1b) ** 0.5
-                n2 = (d2a * d2a + d2b * d2b) ** 0.5
-                res = TURN_RES_FACTOR * np.finfo(float).eps * (
-                    abs(m.s_a_star(b_new)) + abs(w_new) + abs(b_new))
-                if (n1 > res and n2 > res
-                        and (d1a * d2a + d1b * d2b) / (n1 * n2) < TURN_MAX
-                        and cur > retry_floor):
+            # A chart's independent-variable step is only a *proposed*
+            # physical chord.  Near a stiff fold the dependent variable can
+            # move hundreds of times farther while still increasing loss.
+            # Likewise a turn rejected at the resolution floor is unresolved,
+            # not a license to draw a corner.  Try the plane step before
+            # shrinking or refusing the segment.
+            def geometry_ok(b_try, w_try):
+                a_try = m.s_a_star(b_try) + w_try
+                p1 = pts[-1]
+                d2a, d2b = a_try-p1[0], b_try-p1[1]
+                n2 = float(np.hypot(d2a, d2b))
+                if not np.isfinite(n2) or n2 == 0.0 or n2 > 2.0*cur:
+                    return False
+                ga, gb = m.gradL(p1[0], p1[1])
+                ng = float(np.hypot(ga, gb))
+                scale_a = 2.0*(abs(p1[0])*m.A(p1[1])
+                               + abs(m.B(p1[1])))
+                scale_b = (2.0*abs(p1[0])*abs(m.Bp(p1[1]))
+                           + p1[0]*p1[0]*abs(m.Ap(p1[1])))
+                field_floor = 16.0*np.finfo(float).eps * float(
+                    np.hypot(scale_a, scale_b))
+                if not np.isfinite(ng):
+                    return False
+                if ng >= max(1e-12, 1e3*field_floor) and n2 > 0.0:
+                    alignment = -flow*(ga*d2a+gb*d2b)/(ng*n2)
+                    if alignment < FIELD_ALIGNMENT_MIN:
+                        return False
+                if len(pts) < 2:
+                    return True
+                p0 = pts[-2]
+                d1a, d1b = p1[0]-p0[0], p1[1]-p0[1]
+                n1 = float(np.hypot(d1a, d1b))
+                res = TURN_RES_FACTOR*np.finfo(float).eps*(
+                    abs(m.s_a_star(b_try))+abs(w_try)+abs(b_try))
+                return not (n1 > res and n2 > res and
+                    (d1a*d2a+d1b*d2b)/(n1*n2) < TURN_MAX)
+
+            if not geometry_ok(b_new, w_new):
+                plane = plane_step(b_prev, w_prev, cur)
+                if plane is not None and geometry_ok(plane[0], plane[1]):
+                    b_new, w_new, key = plane
+                    if engine_diag is not None:
+                        engine_diag[key] = engine_diag.get(key, 0) + 1
+                elif cur > retry_floor:
                     cur *= 0.5
                     continue
+                else:
+                    if engine_diag is not None:
+                        engine_diag["step_failure"] = {
+                            "b": float(b_prev), "w": float(w_prev),
+                            "cur": float(cur), "ds": float(ds),
+                            "chart": chart, "reason": "geometry_floor",
+                        }
+                    return pts, "abort_step_failure", switches, (b_prev, w_prev)
             break
+        else:
+            # An exhausted retry budget is a refusal, never an accepted
+            # candidate.  The 64-attempt cap only matters for an extreme
+            # ds/launch-scale ratio.
+            if engine_diag is not None:
+                engine_diag["step_failure"] = {
+                    "b": float(b_prev), "w": float(w_prev),
+                    "cur": float(cur), "ds": float(ds),
+                    "chart": chart, "reason": "retry_exhausted",
+                }
+            return pts, "abort_step_failure", switches, (b_prev, w_prev)
         b, w = b_new, w_new
         a = m.s_a_star(b) + w
         cur = min(ds, cur * 1.06)   # gentle ramp: the angle-energy

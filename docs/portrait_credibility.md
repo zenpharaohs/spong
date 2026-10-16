@@ -38,6 +38,31 @@ controls in the trajectory constructor support producing a good proposal;
 they are not substitutes for an independent check of the proposal. The final
 audit also uses its own turn check for representation/contact reliability.
 
+### Stiff continuation refusal in the Gaussian degree-11 example
+
+For `f = -3(x+x³+x⁵+x⁷+x⁹+x¹¹)` and
+`g = -3+x-3x²-10x³-3x⁴+31x⁵-3x⁶-35x⁷-3x⁸+11x⁹-3x¹⁰-x¹¹`
+under normal moments, an explorer trace once drew two mirrored stable branches
+through large chart jumps. One had angle energy about `2.2e8` and an
+asymptote-orientation residual about `0.99999`, despite a `box_exit` label.
+The overall portrait was already `fp64_unresolved` because other branches
+aborted; that status did not prevent the bad strokes from being exported.
+
+The continuation constructor now refuses an oversized physical chord, a turn
+that remains unresolved at its step floor, or a chord more than 15 degrees
+from the oriented gradient when that direction has at least three reliable
+binary64 digits. Exhausting the retry budget also aborts instead of emitting
+the last failed candidate. The explorer's separate display growth checks its
+own chords and oriented field, and an aborted trace or growth can never
+license an analytic tail. The two offending stable branches now stop with
+`abort_step_failure` before the jumps, with angle energy about `4.5e-9` on
+their retained prefixes. This is a construction safeguard, not certification:
+the portrait remains `fp64_unresolved` until a conditioned continuation and
+independent geometry checks can resolve the missing segments.
+Simply lowering the continuation floor to one-millionth of the launch chord
+produced a smooth-looking `box_exit` with angle energy about `133`, so more
+binary64 steps alone did not recover a credible branch.
+
 ## Independent level-normal measurements
 
 `spong.credibility.level_normal_reference` is a native GMP reference evaluator.

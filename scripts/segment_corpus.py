@@ -27,7 +27,7 @@ Three levels of pinning now exist, at increasing granularity:
 The goldens are too coarse to develop a C port of _continue_curve against.
 That loop carries a lot of policy — R_SWITCH chart switching under
 MAX_SWITCHES, the shallow handoff with its 5%-slaved test and its stall trim,
-eight halvings to continuation_floor, the descent-realization test that picks
+halving through the launch-based continuation floor, the descent-realization test that picks
 the flow-connected root of a multi-root stage system, and the
 chart×method floor-fallback ladder ending in normalized arclength.  A port
 can get one of those clauses wrong and still produce a portrait whose skeleton

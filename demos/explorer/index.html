@@ -180,7 +180,7 @@
   <p>This shows the loss landscape of fitting one polynomial neuron
     <code>a·g(bx)</code> to a target <code>f(x)</code>, over the two
     parameters <code>(a, b)</code>. The curves and the
-    <span class="help" tabindex="0" title="Contours of constant loss, the backbone a=a*(b) that minimizes loss for each b, and the certified critical points, saddles, and separatrices connecting them.">?</span>
+    <span class="help" tabindex="0" title="Contours of constant loss, the backbone a=a*(b), certified critical points, and numerically traced separatrices. The portrait status says whether their topology is certified.">?</span>
     verdict are proven, not simulated — pick a case below, or click anywhere
     in the portrait to trace a trajectory from there.</p>
   <button class="ghost" id="onboardHide">got it, hide this</button>
@@ -677,7 +677,7 @@ const S = {
   traces: [],
   handoffs: [],
   allocatorModelBody: null,
-  P: null,          // last certified payload
+  P: null,          // last portrait payload, including unresolved attempts
   stale: true,
   Ap: [0], Bp: [0]
 };
@@ -1355,7 +1355,7 @@ function drawPortrait(){
   }
   xP.stroke();
 
-  // certified separatrices: green unstable, red stable.
+  // traced separatrices: green unstable, red stable; check portrait status.
   // Drawn with pixel-scale decimation, not data decimation: vertices closer
   // together than ~0.6px are skipped, so zooming in progressively reveals the
   // full traced resolution instead of a pre-thinned copy of it.
@@ -1380,7 +1380,7 @@ function drawPortrait(){
   // branch, expressed as a displacement in b relative to r.  PINNED: the
   // b-nullcline a A'(b) = 2 B'(b) -- the slaved equilibrium the branch
   // approaches on its way to an attracting root of A', not the branch itself
-  // -- licensed by the measured lag behind it.  Where the certified terminal
+  // -- licensed by the measured lag behind it.  Where the traced terminal
   // (usually the level bar) licensed neither, the server grew the branch by
   // the tracer's own machinery until one did; the growth is drawn solid in
   // the branch colour, the closed form in the extrapolated style.

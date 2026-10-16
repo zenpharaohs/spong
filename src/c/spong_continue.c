@@ -531,6 +531,7 @@ static int plane_step(const spong_continue_field *f, const spong_field *gf,
         double a_try = out[0], b_try = out[1];
         if (!(isfinite(a_try) && isfinite(b_try))) continue;
         double da = a_try - a_prev, db = b_try - b_prev;
+        if (hypot(da, db) > 2.0 * chord) continue;
         double ga, gb;
         grad_loss(f, a_prev, b_prev, &ga, &gb);
         double Lp = loss(f, a_prev, b_prev);
@@ -542,6 +543,43 @@ static int plane_step(const spong_continue_field *f, const spong_field *gf,
         return SPONG_RESCUE_NORMALIZED_GL8 + oi;
     }
     return -1;
+}
+
+/* The chart step size bounds its independent variable, not the resulting
+ * plane chord.  At a stiff fold a converged chart root can jump far away and
+ * still pass the loss test.  Every emitted chord must also respect the
+ * physical step and turn budgets, including at the retry floor. */
+static int chord_geometry_ok(const spong_continue_field *f,
+                             double b_new, double w_new, double cur,
+                             size_t n_pts, double prev0_a, double prev0_b,
+                             double prev1_a, double prev1_b, double tmax,
+                             double field_min, int flow) {
+    SPONG_FP_EXACT
+    double a_new = a_star(f, b_new) + w_new;
+    double d2a = a_new - prev1_a, d2b = b_new - prev1_b;
+    double n2 = hypot(d2a, d2b);
+    if (!isfinite(n2) || n2 == 0.0 || n2 > 2.0 * cur) return 0;
+    double ga, gb;
+    grad_loss(f, prev1_a, prev1_b, &ga, &gb);
+    double ng = hypot(ga, gb);
+    base v;
+    eval_base_p(f, prev1_b, &v);
+    double scale_a = 2.0 * (fabs(prev1_a) * v.A + fabs(v.B));
+    double scale_b = 2.0 * fabs(prev1_a) * fabs(v.Bp)
+                     + prev1_a * prev1_a * fabs(v.Ap);
+    double field_floor = 16.0 * DBL_EPSILON * hypot(scale_a, scale_b);
+    if (!isfinite(ng)) return 0;
+    if (ng >= fmax(1e-12, 1e3 * field_floor) && n2 > 0.0) {
+        double alignment = -flow * (ga * d2a + gb * d2b) / (ng * n2);
+        if (alignment < field_min) return 0;
+    }
+    if (n_pts < 2) return 1;
+    double d1a = prev1_a - prev0_a, d1b = prev1_b - prev0_b;
+    double n1 = hypot(d1a, d1b);
+    double res = TURN_RES_FACTOR * DBL_EPSILON
+                 * (fabs(a_star(f, b_new)) + fabs(w_new) + fabs(b_new));
+    return !(n1 > res && n2 > res
+             && (d1a * d2a + d1b * d2b) / (n1 * n2) < tmax);
 }
 
 /* ------------------------------------------------------------------ *
@@ -597,6 +635,7 @@ SPONG_API int spong_continue_curve_recorded(
      * on both charts; only this first attempt follows chart_order. */
     const int primary_gl4 = (chart_order == 4);
     const double TMAX = turn_max();
+    const double FMIN = cos(15.0 * 3.14159265358979323846 / 180.0);
     const double eps = DBL_EPSILON;
     // Budget the DISTANCE TRAVELLED, not the step count.  A step budget is
     // not invariant under the halving this loop does: the turn budget and the
@@ -629,6 +668,12 @@ SPONG_API int spong_continue_curve_recorded(
     /* launch ramp: start at the incoming chord, grow into ds */
     double cur = (ds0 > 0.0) ? fmin(ds, fmax(ds0, 1e-12)) : ds;
     const double continuation_floor = cur / 128.0;
+    int retry_limit = RETRY_ATTEMPTS;
+    if (continuation_floor > 0.0 && ds > continuation_floor) {
+        double need = 1.0 + ceil(log2(ds / continuation_floor));
+        if (need > retry_limit)
+            retry_limit = (need > 64.0) ? 64 : (int)need;
+    }
 
     double recent[STALL_WINDOW + 1];
     size_t n_recent = 0;
@@ -692,7 +737,7 @@ SPONG_API int spong_continue_curve_recorded(
         double b_new = b, w_new = w, a_prev = 0.0;
         int settled = 0;
 
-        for (int retry = 0; retry < RETRY_ATTEMPTS; retry++) {
+        for (int retry = 0; retry < retry_limit; retry++) {
             double h;
             int failed = 0;
             if (slow) {
@@ -729,6 +774,7 @@ SPONG_API int spong_continue_curve_recorded(
                 if (!(isfinite(a_prev) && isfinite(a_test) && isfinite(expected)
                       && isfinite(actual) && isfinite(slack))
                     || expected >= 0.0
+                    || hypot(da, db) > 2.0 * cur
                     || actual > 1e-4 * expected + slack) failed = 1;
             }
 
@@ -784,7 +830,10 @@ SPONG_API int spong_continue_curve_recorded(
                     double expected = flow * (ga * da + gb * db);
                     double actual = flow * (loss(f, a_test, bn) - Lp);
                     double slack = 64.0 * eps * (1.0 + fabs(Lp));
-                    if (expected >= 0.0 || actual > 1e-4 * expected + slack)
+                    if (!isfinite(expected) || !isfinite(actual)
+                        || hypot(da, db) > 2.0 * cur
+                        || expected >= 0.0
+                        || actual > 1e-4 * expected + slack)
                         continue;
                     b_new = bn; w_new = wn;
                     dense.v[1] = alt_slow[alt] ? 1 : 2;
@@ -814,39 +863,42 @@ SPONG_API int spong_continue_curve_recorded(
                 failed = 0;
             }
 
-            if (n_pts >= 2) {
-                double a_new = a_star(f, b_new) + w_new;
-                double d1a = prev1_a - prev0_a, d1b = prev1_b - prev0_b;
-                double d2a = a_new - prev1_a, d2b = b_new - prev1_b;
-                double nn1 = sqrt(d1a * d1a + d1b * d1b);
-                double nn2 = sqrt(d2a * d2a + d2b * d2b);
-                /* a chord is a direction only when it is long against the
-                 * rounding of its endpoints; charts.TURN_RES_FACTOR */
-                double res = TURN_RES_FACTOR * DBL_EPSILON
-                             * (fabs(a_star(f, b_new)) + fabs(w_new) + fabs(b_new));
-                if (nn1 > res && nn2 > res
-                    && (d1a * d2a + d1b * d2b) / (nn1 * nn2) < TMAX
-                    && cur > continuation_floor) {
+            if (!chord_geometry_ok(f, b_new, w_new, cur, n_pts,
+                                   prev0_a, prev0_b, prev1_a, prev1_b,
+                                   TMAX, FMIN, flow)) {
+                double bp, wp;
+                int kind = plane_step(f, gf, flow, b_prev, w_prev, cur,
+                                      &bp, &wp, trace ? &dense : NULL);
+                if (kind >= 0 && chord_geometry_ok(f, bp, wp, cur, n_pts,
+                        prev0_a, prev0_b, prev1_a, prev1_b, TMAX,
+                        FMIN, flow)) {
+                    a_prev = a_star(f, b_prev) + w_prev;
+                    b_new = bp; w_new = wp;
+                    result->rescues[kind]++;
+                    dense.v[1] = 0; dense.v[21] = 2;
+                } else if (cur > continuation_floor) {
                     cur *= 0.5; rejected++; continue;
+                } else {
+                    b_end = b_prev; w_end = w_prev;
+                    result->fail_b = b_prev; result->fail_w = w_prev;
+                    result->fail_cur = cur; result->fail_h = h;
+                    result->fail_vb = vb; result->fail_vw = vw;
+                    result->fail_slow = slow; result->fail_retry = retry;
+                    FINISH(SPONG_CONT_ABORT_STEP_FAILURE, SPONG_DELEGATE_NONE);
                 }
             }
             settled = 1;
             break;
         }
         if (!settled) {
-            /* Retry budget exhausted with cur still above the floor (the
-             * ramped chord can sit far above the launch chord, so seven
-             * halvings of ds need not reach cur0/128).  The reference falls
-             * out of `for _retry in range(8)` and ACCEPTS the last attempt's
-             * b_new, w_new -- a point that failed the descent-realization
-             * test, or is non-finite (which then aborts as abort_nonfinite
-             * below).  Observed: directed seed 1414065525, both stable
-             * segments at the a*=0 saddle, taken=0 rejected=7.  Reproduced
-             * here for parity, not endorsed; whether the reference should
-             * instead descend the ladder is a separate decision, and this
-             * comment is where it is flagged. */
-            settled = 1;
-            dense.v[21] = 3; /* retry-exhausted, explicitly unvalidated */
+            /* Never emit the last rejected candidate, even when an extreme
+             * ds/launch-scale ratio exhausts the 64-attempt guard. */
+            b_end = b_prev; w_end = w_prev;
+            result->fail_b = b_prev; result->fail_w = w_prev;
+            result->fail_cur = cur; result->fail_vb = vb;
+            result->fail_vw = vw; result->fail_slow = slow;
+            result->fail_retry = retry_limit;
+            FINISH(SPONG_CONT_ABORT_STEP_FAILURE, SPONG_DELEGATE_NONE);
         }
 
         b = b_new; w = w_new;

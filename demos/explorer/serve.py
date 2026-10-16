@@ -439,10 +439,47 @@ def _grow_stable(m, start, ds, r_max, critical, max_steps=200000,
     # sized to the legal box (285 on d17-thrash) cannot take a step inside
     # a box of radius ten.
     ds = min(ds, 4.0*r_max/30000.0)
+    def resolved_prefix(previous, candidate):
+        # Potential-rate ascent emits at geometric_ds = 4*ds; chart
+        # continuation emits at ds.  A chord beyond twice the larger budget
+        # is an unresolved solver jump.  A short chord can still leave the
+        # integral curve at a chart seam, so compare it with the ascent field
+        # whenever the gradient direction carries three reliable digits.
+        # Evaluate in chunks to keep million-vertex display growth bounded.
+        for lo in range(0, len(candidate), 8192):
+            z1 = np.asarray(candidate[lo:lo+8192], dtype=float)
+            z0 = np.concatenate((
+                np.asarray([previous if lo == 0 else candidate[lo-1]],
+                           dtype=float), z1[:-1]), axis=0)
+            d = z1-z0
+            length = np.hypot(d[:, 0], d[:, 1])
+            bad = ~np.isfinite(length) | (length == 0.0) | (length > 8.0*ds)
+            if not np.any(bad):
+                with np.errstate(over="ignore", divide="ignore",
+                                 invalid="ignore"):
+                    a, b = z0[:, 0], z0[:, 1]
+                    grad = np.asarray(m.gradL(a, b)).T
+                    norm = np.hypot(grad[:, 0], grad[:, 1])
+                    scale_a = 2.0*(np.abs(a)*m.A(b)+np.abs(m.B(b)))
+                    scale_b = (2.0*np.abs(a)*np.abs(m.Bp(b))
+                               + a*a*np.abs(m.Ap(b)))
+                    floor = (16.0*np.finfo(float).eps
+                             * np.hypot(scale_a, scale_b))
+                    cosine = np.einsum("ij,ij->i", grad, d)/(norm*length)
+                resolved = norm >= np.maximum(1e-12, 1e3*floor)
+                bad |= ~np.isfinite(norm)
+                bad |= resolved & (cosine < math.cos(math.radians(15.0)))
+            if np.any(bad):
+                return candidate[:lo+int(np.flatnonzero(bad)[0])], False
+        return candidate, True
+
     pts, term = charts._potential_rate_box_exit(
         m, tuple(start), box, ds, {}, max_steps=min(max_steps, 50000),
         critical=critical)
-    out = [(float(q[0]), float(q[1])) for q in pts[1:]]
+    out, valid = resolved_prefix(tuple(start),
+        [(float(q[0]), float(q[1])) for q in pts[1:]])
+    if not valid:
+        return out, "growth_geometry_failure"
     if term != "box_exit":
         last = pts[-1] if len(pts) else start
         b0 = float(last[1]); w0 = float(last[0] - m.a_star(b0))
@@ -451,7 +488,11 @@ def _grow_stable(m, start, ds, r_max, critical, max_steps=200000,
                 m, b0, w0, -1, [], box, ds,
                 ds0=(ds0 if ds0 is not None else min(ds, 1e-6)),
                 engine_diag={}, max_steps=max_steps)
-            out.extend((float(q[0]), float(q[1])) for q in more[1:])
+            grown, valid = resolved_prefix(tuple(last),
+                [(float(q[0]), float(q[1])) for q in more[1:]])
+            out.extend(grown)
+            if not valid:
+                term = "growth_geometry_failure"
         except Exception:                            # display only
             term = "growth_failure"
     return out, term
@@ -571,9 +612,11 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
             continue
         curve = [(float(q[0]), float(q[1])) for q in br.Y]
         n_traced = len(curve)
-        lic = license(curve)
+        trace_failed = br.term not in ("box_exit", "level_bar")
+        lic = None if trace_failed else license(curve)
         n_grown = 0
         grow_term = None
+        growth_failed = False
         if lic is None and critical is not None \
                 and br.term in ("box_exit", "level_bar"):
             ascent = br.diag.get("potential_rate_ascent") or {}
@@ -591,19 +634,27 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
                     m, curve[-1], ds, r_max, critical,
                     ds0=(tail_chord if tail_chord > 0.0 else None))
                 if not more:
+                    growth_failed = grow_term != "box_exit"
                     break
                 curve.extend(more)
                 n_grown = len(curve) - n_traced
+                if grow_term != "box_exit":
+                    growth_failed = True
+                    break
                 lic = license(curve)
-                if lic is not None or grow_term == "growth_failure":
+                if lic is not None:
                     break
         rec = {"branch": i, "kind": br.kind, "n_traced": n_traced,
                "n_grown": n_grown, "grow_term": grow_term,
                "grown": [[float(x), float(y)] for x, y in curve[n_traced-1:]],
                "points": [], "sector": None, "tol": tol}
-        if lic is None:
-            rec["reason"] = ("neither sector licensed within the traced and "
-                             "grown branch")
+        if lic is None or trace_failed or growth_failed:
+            rec["reason"] = (
+                f"stable trace stopped at {br.term}"
+                if trace_failed else
+                f"stable growth stopped at {grow_term}"
+                if growth_failed else
+                "neither sector licensed within the traced and grown branch")
             out.append(rec)
             continue
         rec.update(lic)

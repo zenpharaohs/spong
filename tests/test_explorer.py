@@ -11,6 +11,46 @@ from demos.explorer import serve
 from spong import zoo
 
 
+def test_stable_growth_trims_an_unresolved_chord(monkeypatch):
+    from spong import charts
+
+    monkeypatch.setattr(charts, "_potential_rate_box_exit",
+                        lambda *args, **kwargs:
+                        ([(0.0, 0.0), (0.1, 0.0), (100.0, 0.0)],
+                         "step_failure"))
+    points, term = serve._grow_stable(
+        object(), (0.0, 0.0), 0.02, 1000.0, None)
+    assert points == [(0.1, 0.0)]
+    assert term == "growth_geometry_failure"
+
+
+def test_aborted_stable_growth_cannot_license_a_tail(monkeypatch):
+    from types import SimpleNamespace
+    from spong import model
+
+    z = zoo.get("minimal-quartet")
+    m = model.build(z.f, z.g, model.moments_normal01(
+        2*max(len(z.f), len(z.g))+1))
+    branch = SimpleNamespace(
+        kind="stable", term="level_bar",
+        Y=np.array([[0.0, 0.0], [0.001, 0.0]]),
+        diag={"potential_rate_ascent": {"geometric_ds": 0.004}})
+    portrait = SimpleNamespace(branches=[branch], box=(-1, 1, -1, 1))
+    enumeration = SimpleNamespace(points=[SimpleNamespace(a=0.0, b=0.0)])
+    monkeypatch.setattr(serve, "_grow_stable",
+                        lambda *args, **kwargs:
+                        ([(0.002, 0.0)], "abort_step_failure"))
+    tail = serve._j_tails(m, portrait, 1.0, enumeration=enumeration)[0]
+    assert tail["sector"] is None
+    assert tail["points"] == []
+    assert tail["reason"] == "stable growth stopped at abort_step_failure"
+    branch.term = "abort_step_failure"
+    trace_tail = serve._j_tails(
+        m, portrait, 1.0, enumeration=enumeration)[0]
+    assert trace_tail["sector"] is None
+    assert trace_tail["reason"] == "stable trace stopped at abort_step_failure"
+
+
 class _FakeContinuousBernoulliBank:
     def __init__(self, n_arms, seed=0, library=None):
         self.n_arms = n_arms
