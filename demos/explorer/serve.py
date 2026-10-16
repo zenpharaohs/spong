@@ -407,7 +407,13 @@ def _nullcline_b(a, b, Ap, App, Bp, Bpp, lo, hi):
         if not (lo < bn < hi):
             bn = b - 0.5*(b - (lo if bn <= lo else hi))
         if abs(bn - b) <= EPS*max(1.0, abs(b)):
-            return bn
+            # Stagnation at an interval endpoint is not a root.  In
+            # particular, after a finite nullcline fold, repeated bisection
+            # toward a trap can reach machine zero with a large residual.
+            residual = a*np.polyval(Ap, bn) - 2.0*np.polyval(Bp, bn)
+            error = 8.0*EPS*(abs(a)*_abs_horner(Ap, bn)
+                             + 2.0*_abs_horner(Bp, bn))
+            return bn if abs(residual) <= max(error, 1e-300) else None
         b = bn
     return None
 
@@ -560,6 +566,7 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
         return []
     traps = _traps(m)
     real_rhos = [r for r, _att in traps]
+    attracting_rhos = {r for r, att in traps if att}
     c1, rhos, res = _j_invariant(m, d_eff)
     A = np.asarray(m._fa, dtype=float)
     Ap = np.polyder(A[::-1]); App = np.polyder(Ap)
@@ -583,14 +590,34 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
         k0 = next((k for k in range(n) if r[k] >= 0.5*r[-1]), n-1)
         if k0 < n-1 and abs(a[-1]) > abs(a[k0]):
             lo, hi = interval(b[-1])
-            ks = np.unique(np.linspace(k0, n-1, min(400, n-k0)).astype(int))
-            lag = []
-            for k in ks:
-                bn = _nullcline_b(a[k], b[k], Ap, App, Bp, Bpp, lo, hi)
-                lag.append(math.inf if bn is None else abs(b[k]-bn)/r[k])
-            if max(lag) <= tol and lag[-1] <= lag[0]:
-                return {"sector": "pinned", "index": n-1, "lag": max(lag),
-                        "lag_end": lag[-1]}
+            targets = [rho for rho in (lo, hi) if rho in attracting_rhos
+                       and abs(b[-1]-rho) < abs(b[k0]-rho)]
+            if targets:
+                rho = min(targets, key=lambda z: abs(b[-1]-z))
+                ks = np.unique(np.linspace(k0, n-1, min(400, n-k0)).astype(int))
+                lag = []
+                for k in ks:
+                    bn = _nullcline_b(a[k], b[k], Ap, App, Bp, Bpp, lo, hi)
+                    lag.append(math.inf if bn is None else abs(b[k]-bn)/r[k])
+                if max(lag) <= tol and lag[-1] <= lag[0]:
+                    # A small lag alone does not license an infinite tail:
+                    # the nullcline can fold at a finite radius and Newton
+                    # can jump to another root in this same trap interval.
+                    probe_b = float(b[-1])
+                    safe = True
+                    for aa in np.geomspace(abs(a[-1]), max(10*abs(a[-1]), reach), 65)[1:]:
+                        bn = _nullcline_b(math.copysign(aa, a[-1]), probe_b,
+                                          Ap, App, Bp, Bpp, lo, hi)
+                        if (bn is None
+                                or abs(bn-rho) > abs(probe_b-rho)*(1+1e-8)
+                                or abs(bn-probe_b) > 0.25*abs(probe_b-rho)):
+                            safe = False
+                            break
+                        probe_b = bn
+                    if safe:
+                        return {"sector": "pinned", "index": n-1,
+                                "lag": max(lag), "lag_end": lag[-1],
+                                "trap": rho}
         # diagonal: remaining J drift after k, attested over an octave
         # Symmetric normal cases have a real A' root at b=0.  A sampled
         # branch may hit that trap exactly, where J is singular; the finite
@@ -689,9 +716,7 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
                     rec["reason"] = "nullcline root lost"
                     break
                 b = bn; pts.append([aa, b])
-            # the trap it approaches: the interval end the nullcline tends to
-            rec["trap"] = (lo if abs(b-lo) < abs(b-hi) else hi) \
-                if math.isfinite(lo) or math.isfinite(hi) else None
+            rec["trap"] = lic["trap"]
         else:
             J0 = lic["J0"]
             for k in range(1, n_pts+1):

@@ -211,5 +211,41 @@ def test_gaussian_degree11_stable_growth_uses_local_handoff_chord(
             enumeration=enumeration)[0]
     assert branch.term == "level_bar"
     assert tail["grow_term"] == "box_exit"
-    assert tail["sector"] == "pinned"
+    assert tail["sector"] == "diagonal"
     assert tail["n_grown"] > 100
+
+
+def test_gaussian_degree11_folded_nullcline_is_not_a_pinned_tail(
+        degree11_case):
+    m, enumeration, _, _, critical, stop_loss = degree11_case
+    A = np.asarray(m._fa, dtype=float)
+    B = np.asarray(m._fb, dtype=float)
+    Ap = np.polyder(A[::-1]); App = np.polyder(Ap)
+    Bp = np.polyder(B[::-1]); Bpp = np.polyder(Bp)
+    assert serve._nullcline_b(57878.522, 0.254762, Ap, App,
+                             Bp, Bpp, 0.0, math.inf) is None
+    view = atlas.compute_box(m, enumeration)
+    box = portrait._trace_box(m, view)
+    ds = max(view[1]-view[0], view[3]-view[2])/30000
+    saddle = min(enumeration.saddles,
+                 key=lambda q: abs(float(q.b)-0.141912))
+    with engine.using("native"):
+        branch = charts.trace_stable(
+            m, saddle.b, +1, box=box, ds=ds,
+            critical_local=saddle.local,
+            critical_stub=portrait._stable_stub(saddle, +1, m),
+            critical_points=critical, stop_loss=stop_loss)
+        tail = serve._j_tails(
+            m, SimpleNamespace(branches=[branch], box=box),
+            float(atlas.effective_degree(m)),
+            enumeration=enumeration)[0]
+    # At the user's deep zoom, the old pinned tail followed a nullcline
+    # toward b=0 and made a spurious near-vertical jump at its finite fold.
+    # The continued flow passes smoothly across the view instead.
+    assert tail["sector"] == "diagonal"
+    assert tail["grow_term"] == "box_exit"
+    grown = np.asarray(tail["grown"])
+    zoom = grown[(57626 < grown[:, 0]) & (grown[:, 0] < 57660)]
+    assert len(zoom) >= 10
+    assert np.all((0.2545 < zoom[:, 1]) & (zoom[:, 1] < 0.2550))
+    assert np.max(np.abs(np.diff(zoom[:, 1]))) < 1e-4
