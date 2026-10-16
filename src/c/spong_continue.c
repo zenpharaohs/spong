@@ -71,6 +71,7 @@
 #define STALL_WINDOW    12
 #define NOISE_C         4.0     /* gauss._NOISE_C: evaluation-floor convergence */
 #define TURN_RES_FACTOR 611.0   /* charts.TURN_RES_FACTOR: chord resolution guard */
+#define FIELD_ENDPOINT_RES_FACTOR 1024.0  /* charts.FIELD_ENDPOINT_RES_FACTOR */
 
 static const double SQRT15 = 3.87298334620741688517926539978239961;
 static const double SQRT3  = 1.73205080756887729352744634150587237;
@@ -81,6 +82,8 @@ static const int NEWTON_MAX = 30;
 /* np.cos(np.radians(0.75)); computed the same way so the comparison against
  * the reference is exact. */
 static double turn_max(void) { return cos(0.75 * 3.14159265358979323846 / 180.0); }
+/* Margin inside the successor's 0.75-degree turn budget. */
+static double endpoint_field_min(void) { return cos(0.5 * 3.14159265358979323846 / 180.0); }
 
 /* model.horner: the Python scalar fast path, which cannot fuse. */
 static double horner_p(const double *c, size_t n, double x) {
@@ -559,6 +562,8 @@ static int chord_geometry_ok(const spong_continue_field *f,
     double d2a = a_new - prev1_a, d2b = b_new - prev1_b;
     double n2 = hypot(d2a, d2b);
     if (!isfinite(n2) || n2 == 0.0 || n2 > 2.0 * cur) return 0;
+    double res = TURN_RES_FACTOR * DBL_EPSILON
+                 * (fabs(a_star(f, b_new)) + fabs(w_new) + fabs(b_new));
     double ga, gb;
     grad_loss(f, prev1_a, prev1_b, &ga, &gb);
     double ng = hypot(ga, gb);
@@ -573,11 +578,30 @@ static int chord_geometry_ok(const spong_continue_field *f,
         double alignment = -flow * (ga * d2a + gb * d2b) / (ng * n2);
         if (alignment < field_min) return 0;
     }
+    /* Check the tangent at this chord's END before accepting it. A coarse
+     * chord can pass the start-field and old-chord tests while the field
+     * turns sharply at its endpoint. Shrinking its successor cannot repair
+     * that stale secant; this chord must be retried at a smaller scale. */
+    if (n2 > FIELD_ENDPOINT_RES_FACTOR * DBL_EPSILON
+                 * (fabs(a_star(f, b_new)) + fabs(w_new) + fabs(b_new))) {
+        double gea, geb;
+        grad_loss(f, a_new, b_new, &gea, &geb);
+        double nge = hypot(gea, geb);
+        base ve;
+        eval_base_p(f, b_new, &ve);
+        double scale_ea = 2.0 * (fabs(a_new) * ve.A + fabs(ve.B));
+        double scale_eb = 2.0 * fabs(a_new) * fabs(ve.Bp)
+                          + a_new * a_new * fabs(ve.Ap);
+        double floor_e = 16.0 * DBL_EPSILON * hypot(scale_ea, scale_eb);
+        if (!isfinite(nge)) return 0;
+        if (nge >= fmax(1e-12, 1e3 * floor_e)) {
+            double alignment = -flow * (gea * d2a + geb * d2b) / (nge * n2);
+            if (alignment < endpoint_field_min()) return 0;
+        }
+    }
     if (n_pts < 2) return 1;
     double d1a = prev1_a - prev0_a, d1b = prev1_b - prev0_b;
     double n1 = hypot(d1a, d1b);
-    double res = TURN_RES_FACTOR * DBL_EPSILON
-                 * (fabs(a_star(f, b_new)) + fabs(w_new) + fabs(b_new));
     return !(n1 > res && n2 > res
              && (d1a * d2a + d1b * d2b) / (n1 * n2) < tmax);
 }

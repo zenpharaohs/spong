@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from spong import atlas, charts, engine, model, portrait, sturm
+from spong import atlas, charts, engine, model, portrait, sturm, topology
+from spong.native_trace import decode, measure_native
 from demos.explorer import serve
 
 
@@ -52,6 +53,23 @@ def test_stiff_continuation_keeps_accepted_turns_resolved(index):
                 alignment = -inp["flow"]*float(grad @ chords[j]) / (
                     norm*lengths[j])
                 assert alignment >= charts.FIELD_ALIGNMENT_MIN
+        for j, (a, b) in enumerate(curves[-1][1:]):
+            w = a-m.s_a_star(b)
+            resolution = (charts.FIELD_ENDPOINT_RES_FACTOR
+                          * np.finfo(float).eps
+                          * (abs(m.s_a_star(b))+abs(w)+abs(b)))
+            if lengths[j] <= resolution:
+                continue
+            grad = m.gradL(a, b)
+            norm = float(np.hypot(*grad))
+            scale_a = 2.0*(abs(a)*m.A(b)+abs(m.B(b)))
+            scale_b = 2.0*abs(a)*abs(m.Bp(b))+a*a*abs(m.Ap(b))
+            floor = 16.0*np.finfo(float).eps * float(
+                np.hypot(scale_a, scale_b))
+            if norm >= max(1e-12, 1e3*floor):
+                alignment = -inp["flow"]*float(grad @ chords[j]) / (
+                    norm*lengths[j])
+                assert alignment >= charts.FIELD_ENDPOINT_ALIGNMENT_MIN
         for j in range(1, len(chords)):
             a, b = curves[-1][j+1]
             w = a - m.s_a_star(b)
@@ -62,7 +80,11 @@ def test_stiff_continuation_keeps_accepted_turns_resolved(index):
             cosine = float(chords[j-1] @ chords[j]) / (
                 lengths[j-1]*lengths[j])
             assert cosine >= charts.TURN_MAX
-    assert np.array_equal(*curves)
+    # The endpoint check can select the normalized-plane rescue, whose
+    # internal deviation-coordinate rounding need not be bitwise identical
+    # across the Python and C dispatch loops.
+    assert curves[0].shape == curves[1].shape
+    assert np.max(np.abs(curves[0]-curves[1])) < 1e-9
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +109,7 @@ def degree11_case():
 
 
 @pytest.mark.parametrize("saddle_b,sign", [(-0.14, -1), (0.14, 1)])
-def test_gaussian_degree11_stable_branch_refuses_false_box_exit(
+def test_gaussian_degree11_stable_branch_reaches_loss_bar(
         degree11_case, saddle_b, sign):
     m, enumeration, box, ds, critical, stop_loss = degree11_case
     saddle = min(enumeration.saddles,
@@ -99,12 +121,58 @@ def test_gaussian_degree11_stable_branch_refuses_false_box_exit(
             critical_stub=portrait._stable_stub(saddle, sign, m),
             critical_points=critical, stop_loss=stop_loss)
     lengths = np.linalg.norm(np.diff(branch.Y, axis=0), axis=1)
-    assert branch.term == "abort_step_failure"
+    assert branch.term == "level_bar"
+    assert float(m.L(*branch.Y[-1])) > stop_loss
+    for piece in branch.pieces:
+        if piece.evidence.get("representation") == "native_dense_trace":
+            _, vertices, _ = decode(piece.evidence["trace"])
+            assert len(vertices) == piece.evidence["source_points"]
+            if piece.kind == "chart_continuation":
+                assert measure_native(m, branch.Y, piece, 1)["status"] == "measured"
     assert np.max(lengths) <= 8.0*ds
     assert branch.certs["angle_energy"] < 1e-6
 
 
-def test_gaussian_degree11_growth_refuses_off_flow_join(degree11_case):
+@pytest.mark.parametrize("saddle_b,direction", [
+    (-0.483, -1), (-0.142, -1), (0.142, 1), (0.483, 1),
+])
+def test_gaussian_degree11_unstable_escape_passes_coarse_chord_deadlock(
+        degree11_case, saddle_b, direction):
+    m, enumeration, _, _, critical, _ = degree11_case
+    view = atlas.compute_box(m, enumeration)
+    box = portrait._trace_box(m, view)
+    ds = max(view[1]-view[0], view[3]-view[2])/30000
+    saddle = min(enumeration.saddles,
+                 key=lambda q: abs(float(q.b)-saddle_b))
+    stub = portrait._unstable_stub(saddle, direction)
+    feasible = topology.sublevel_component_minima(
+        m, enumeration, stub.curve[-1])
+    same_side = [q for q in feasible
+                 if direction*(q.b-saddle.b) > 0]
+    b_exit = box[3] if direction > 0 else box[2]
+    direct = same_side[0] if len(same_side) == 1 else None
+    target = ((direct.a, direct.b) if direct is not None
+              else (float(m.a_star(b_exit)), b_exit))
+    trace_ds = ds
+    if direct is not None:
+        trace_ds = max(abs(direct.b-saddle.b)/4000,
+                       float(np.hypot(direct.a-saddle.a,
+                                      direct.b-saddle.b))/8000)
+    with engine.using("native"):
+        branch = charts.trace_unstable(
+            m, saddle.b, target, box=box, ds=trace_ds,
+            cap_r=portrait._capture_radius(enumeration, trace_ds),
+            critical_local=saddle.local, critical_stub=stub,
+            arrival_local=(direct.local if direct is not None else None),
+            candidate_minima=same_side, candidate_enumeration=enumeration,
+            capture_targets=[(q.a, q.b) for q in same_side],
+            critical_points=critical)
+    assert branch.term == "box_exit"
+    assert direction*branch.Y[-1, 1] > box[3 if direction > 0 else 2]*direction
+    assert branch.diag.get("step_failure") is None
+
+
+def test_gaussian_degree11_growth_never_licenses_failed_join(degree11_case):
     m, enumeration, box, ds, critical, stop_loss = degree11_case
     saddle = min(enumeration.saddles, key=lambda q: float(q.b))
     with engine.using("native"):
@@ -117,7 +185,31 @@ def test_gaussian_degree11_growth_refuses_off_flow_join(degree11_case):
             m, SimpleNamespace(branches=[branch], box=box),
             float(atlas.effective_degree(m)),
             enumeration=enumeration)[0]
-    assert tail["grow_term"] in (
-        "abort_step_failure", "growth_geometry_failure")
-    assert tail["sector"] is None
-    assert tail["n_grown"] < 100
+    if tail["grow_term"] != "box_exit":
+        assert tail["sector"] is None
+        assert tail["points"] == []
+        assert tail["reason"].startswith("stable growth stopped at ")
+
+
+def test_gaussian_degree11_stable_growth_uses_local_handoff_chord(
+        degree11_case):
+    m, enumeration, _, _, critical, stop_loss = degree11_case
+    view = atlas.compute_box(m, enumeration)
+    box = portrait._trace_box(m, view)
+    ds = max(view[1]-view[0], view[3]-view[2])/30000
+    saddle = min(enumeration.saddles,
+                 key=lambda q: abs(float(q.b)+0.141912))
+    with engine.using("native"):
+        branch = charts.trace_stable(
+            m, saddle.b, -1, box=box, ds=ds,
+            critical_local=saddle.local,
+            critical_stub=portrait._stable_stub(saddle, -1, m),
+            critical_points=critical, stop_loss=stop_loss)
+        tail = serve._j_tails(
+            m, SimpleNamespace(branches=[branch], box=box),
+            float(atlas.effective_degree(m)),
+            enumeration=enumeration)[0]
+    assert branch.term == "level_bar"
+    assert tail["grow_term"] == "box_exit"
+    assert tail["sector"] == "pinned"
+    assert tail["n_grown"] > 100

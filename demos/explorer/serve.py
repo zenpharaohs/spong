@@ -483,10 +483,22 @@ def _grow_stable(m, start, ds, r_max, critical, max_steps=200000,
     if term != "box_exit":
         last = pts[-1] if len(pts) else start
         b0 = float(last[1]); w0 = float(last[0] - m.a_star(b0))
+        # The fallback's continuation floor belongs to this handoff. The
+        # traced branch's last chord can be thousands of times larger than
+        # the potential phase's last accepted chord after a stiff fold;
+        # reusing it makes the chart refuse at an artificial floor.
+        handoff_ds0 = ds0
+        if len(pts) > 1:
+            local_chord = math.hypot(float(pts[-1][0]-pts[-2][0]),
+                                     float(pts[-1][1]-pts[-2][1]))
+            if local_chord > 0.0:
+                handoff_ds0 = (local_chord if handoff_ds0 is None else
+                               min(handoff_ds0, local_chord))
         try:
             more, term, _sw, _ = charts._continue_curve(
                 m, b0, w0, -1, [], box, ds,
-                ds0=(ds0 if ds0 is not None else min(ds, 1e-6)),
+                ds0=(handoff_ds0 if handoff_ds0 is not None
+                     else min(ds, 1e-6)),
                 engine_diag={}, max_steps=max_steps)
             grown, valid = resolved_prefix(tuple(last),
                 [(float(q[0]), float(q[1])) for q in more[1:]])

@@ -51,6 +51,10 @@ MAX_SWITCHES = 12
 STEP_CEILING = 5000000
 TURN_MAX = float(np.cos(np.radians(0.75)))   # engine turn budget (cosine)
 FIELD_ALIGNMENT_MIN = float(np.cos(np.radians(15.0)))
+# Leave margin inside the 0.75-degree successor turn budget: a vanishing
+# successor approaches the field at this chord's endpoint.
+FIELD_ENDPOINT_ALIGNMENT_MIN = float(np.cos(np.radians(0.5)))
+FIELD_ENDPOINT_RES_FACTOR = 1024.0
 # The turn test compares two chord directions; a chord is only a direction
 # if it is long against the rounding of its endpoints.  A 0.75 degree budget
 # needs the chord to be ~8/theta = 611 times the endpoint noise
@@ -2368,6 +2372,8 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                 n2 = float(np.hypot(d2a, d2b))
                 if not np.isfinite(n2) or n2 == 0.0 or n2 > 2.0*cur:
                     return False
+                res = TURN_RES_FACTOR*np.finfo(float).eps*(
+                    abs(m.s_a_star(b_try))+abs(w_try)+abs(b_try))
                 ga, gb = m.gradL(p1[0], p1[1])
                 ng = float(np.hypot(ga, gb))
                 scale_a = 2.0*(abs(p1[0])*m.A(p1[1])
@@ -2382,13 +2388,32 @@ def _continue_curve_python(m: Model, b0: float, w0: float, flow: int,
                     alignment = -flow*(ga*d2a+gb*d2b)/(ng*n2)
                     if alignment < FIELD_ALIGNMENT_MIN:
                         return False
+                # A chord may pass the start-field and previous-chord tests
+                # while the field turns sharply near its END. Then no amount
+                # of shrinking the next chord can pass the turn test: its
+                # limit is the true tangent, not the stale coarse secant.
+                # Refine this chord while it can still be retried.
+                if n2 > FIELD_ENDPOINT_RES_FACTOR*np.finfo(float).eps*(
+                        abs(m.s_a_star(b_try))+abs(w_try)+abs(b_try)):
+                    ga, gb = m.gradL(a_try, b_try)
+                    ng = float(np.hypot(ga, gb))
+                    scale_a = 2.0*(abs(a_try)*m.A(b_try)
+                                   + abs(m.B(b_try)))
+                    scale_b = (2.0*abs(a_try)*abs(m.Bp(b_try))
+                               + a_try*a_try*abs(m.Ap(b_try)))
+                    field_floor = 16.0*np.finfo(float).eps * float(
+                        np.hypot(scale_a, scale_b))
+                    if not np.isfinite(ng):
+                        return False
+                    if ng >= max(1e-12, 1e3*field_floor):
+                        alignment = -flow*(ga*d2a+gb*d2b)/(ng*n2)
+                        if alignment < FIELD_ENDPOINT_ALIGNMENT_MIN:
+                            return False
                 if len(pts) < 2:
                     return True
                 p0 = pts[-2]
                 d1a, d1b = p1[0]-p0[0], p1[1]-p0[1]
                 n1 = float(np.hypot(d1a, d1b))
-                res = TURN_RES_FACTOR*np.finfo(float).eps*(
-                    abs(m.s_a_star(b_try))+abs(w_try)+abs(b_try))
                 return not (n1 > res and n2 > res and
                     (d1a*d2a+d1b*d2b)/(n1*n2) < TURN_MAX)
 
@@ -3439,6 +3464,24 @@ def trace_stable(m: Model, b_saddle: float, sign: int,
         engine_pts, term, sw, _ = _continue_curve(
             m, b0, w0, -1, [], box, ds, ds0=launch_scale,
             engine_diag=diag, centered_local=critical_local)
+        # The potential-rate phase enforces the saddle-loss bar, but its
+        # chart-continuation fallback did not. A later step failure cannot
+        # erase an already accepted ascent vertex above that bar. Retain the
+        # first crossing (including its native dense-step evidence) and let
+        # the independent audit prove the exact critical-value comparison.
+        if stop_loss is not None and np.isfinite(stop_loss):
+            for index, (a, b) in enumerate(engine_pts):
+                if float(m.L(a, b)) > stop_loss:
+                    if term != "level_bar":
+                        diag["level_bar_truncated_from"] = term
+                    diag.pop("step_failure", None)
+                    if "_last_trace" in diag and index + 1 < len(engine_pts):
+                        trim = np.zeros(24, dtype=np.float64)
+                        trim[0], trim[20] = 4.0, float(index + 1)
+                        diag["_last_trace"] += trim.tobytes()
+                    engine_pts = engine_pts[:index + 1]
+                    term = "level_bar"
+                    break
     recorded = [(a_s, b_saddle)] + (prefix or [engine_pts[0]])
     recorder.append(recorded, engine_pts, "chart_continuation", term=term,
                     evidence=trace_evidence(diag))

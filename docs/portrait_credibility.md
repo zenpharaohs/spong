@@ -48,20 +48,40 @@ asymptote-orientation residual about `0.99999`, despite a `box_exit` label.
 The overall portrait was already `fp64_unresolved` because other branches
 aborted; that status did not prevent the bad strokes from being exported.
 
-The continuation constructor now refuses an oversized physical chord, a turn
-that remains unresolved at its step floor, or a chord more than 15 degrees
-from the oriented gradient when that direction has at least three reliable
-binary64 digits. Exhausting the retry budget also aborts instead of emitting
-the last failed candidate. The explorer's separate display growth checks its
-own chords and oriented field, and an aborted trace or growth can never
-license an analytic tail. The two offending stable branches now stop with
-`abort_step_failure` before the jumps, with angle energy about `4.5e-9` on
-their retained prefixes. This is a construction safeguard, not certification:
-the portrait remains `fp64_unresolved` until a conditioned continuation and
-independent geometry checks can resolve the missing segments.
-Simply lowering the continuation floor to one-millionth of the launch chord
-produced a smooth-looking `box_exit` with angle energy about `133`, so more
-binary64 steps alone did not recover a credible branch.
+The continuation constructor refuses an oversized physical chord, an
+unresolved turn, or a chord more than 15 degrees from the oriented gradient
+at its start. The former turn check alone could deadlock: the last accepted
+chord was allowed to end several degrees away from the local tangent, so
+shrinking its successor only made the measured turn converge to that stale
+error. On this case, the discrepancy was about 29 degrees on one stable
+branch and 4.93 or 0.94 degrees on outward unstable branches. The exact
+rational field at those endpoints agrees closely with the binary64 field;
+these particular stops were not local precision limits. The constructor now
+checks the field at both ends of every resolved chord and refines a chord
+before accepting an underresolved endpoint. The four mirrored outward
+unstable branches then reach the trace-box boundary.
+
+The stable chart fallback also used to ignore the highest-saddle loss bar
+already enforced by the potential-rate phase. Its later step failure hid an
+earlier accepted vertex above that bar. The first crossing is now retained as
+`level_bar`, with the native dense-step trace trimmed to the same vertex. The
+independent audit must still verify the exact loss comparison and proposed
+geometry; this construction change does not itself certify the portrait.
+With the new geometry, the independent ordinary audit reports certified
+topology and attested representation for the default case. Two inward
+unstable branches still stop at the travel budget near their distant minima;
+their destinations are resolved from interior level-set evidence rather than
+drawn all the way to the critical points.
+The explorer's separate display growth checks its own chords and oriented
+field, and a failed growth cannot license an analytic tail. Its handoff from
+potential-rate growth into chart continuation now uses the last local chord
+to set the retry floor; reusing the much larger chord from the original
+loss-bar stop had caused another artificial refusal. The two formerly
+aborting mirrored stable display tails now reach the box and acquire licensed
+asymptotic extensions. Simply lowering
+the old continuation floor to one-millionth of the launch chord produced a
+smooth-looking `box_exit` with angle energy about `133`, so more binary64
+steps alone did not recover a credible branch.
 
 ## Independent level-normal measurements
 

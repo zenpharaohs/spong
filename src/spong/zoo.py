@@ -463,9 +463,10 @@ NORMAL_SYMMETRIC_NEARFLAT_D11 = ZooCase(
     default_view=None,
     description=(
         "Degree-11 small-integer Gaussian example with a nearly flat "
-        "backbone and stiff stable-manifold continuation. Its current "
-        "portrait is fp64_unresolved; use it to investigate geometry, "
-        "not as a certified reference portrait."
+        "backbone and stiff manifold continuation. The default portrait's "
+        "topology certifies after two-ended chord checks and stable loss-bar "
+        "stops; two long approaches to finite minima remain travel-budget "
+        "truncated, with their fates resolved by the independent audit."
     ),
 )
 
