@@ -455,6 +455,21 @@ NORMAL_SYMMETRIC_FLAT_D7 = ZooCase(
 )
 
 
+NORMAL_SYMMETRIC_NEARFLAT_D11 = ZooCase(
+    name="normal-symmetric-nearflat-d11",
+    f=(0, -3, 0, -3, 0, -3, 0, -3, 0, -3, 0, -3),
+    g=(-3, 1, -3, -10, -3, 31, -3, -35, -3, 11, -3, -1),
+    moment_dist="normal01",
+    default_view=None,
+    description=(
+        "Degree-11 small-integer Gaussian example with a nearly flat "
+        "backbone and stiff stable-manifold continuation. Its current "
+        "portrait is fp64_unresolved; use it to investigate geometry, "
+        "not as a certified reference portrait."
+    ),
+)
+
+
 NORMAL_LINEAR_RIPPLE_D5 = ZooCase(
     name="normal-linear-ripple-d5",
     f=(0, 1),
@@ -634,6 +649,7 @@ CASES = {
     NORMAL_SYMMETRIC_SMALL_INTEGER_D9.name: NORMAL_SYMMETRIC_SMALL_INTEGER_D9,
     NORMAL_SYMMETRIC_FLAT_D5.name: NORMAL_SYMMETRIC_FLAT_D5,
     NORMAL_SYMMETRIC_FLAT_D7.name: NORMAL_SYMMETRIC_FLAT_D7,
+    NORMAL_SYMMETRIC_NEARFLAT_D11.name: NORMAL_SYMMETRIC_NEARFLAT_D11,
     NORMAL_LINEAR_RIPPLE_D5.name: NORMAL_LINEAR_RIPPLE_D5,
     RADEMACHER_CHEBYSHEV_D5.name: RADEMACHER_CHEBYSHEV_D5,
 }
