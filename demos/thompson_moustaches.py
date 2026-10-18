@@ -224,7 +224,7 @@ def _uniform_cache(states, gradients, loss, rounds, chunk_steps,
     n_arms = len(states)
     pulls = [len(range(i, rounds, n_arms)) for i in range(n_arms)]
     if workers is None:
-        workers = (min(4, n_arms, os.cpu_count() or 1)
+        workers = (min(12, n_arms, os.cpu_count() or 1)
                    if rounds * chunk_steps >= 20000 else 1)
     workers = max(1, min(int(workers), n_arms))
     tasks = [(arm, count, deadline) for arm, count in zip(cache.arms, pulls)]

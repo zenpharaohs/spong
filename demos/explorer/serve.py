@@ -1061,6 +1061,27 @@ def trace(payload: dict) -> dict:
             "arclength": ds * (len(pts) // 2 - 1)}
 
 
+# Interactive allocator ceilings.  The uniform record is computed in parallel,
+# so a long run is bounded by memory rather than patience: every optimizer
+# iterate is retained for replay (about 136 bytes per step in the record,
+# a few copies at most across the two policies), so 50M steps stays in the
+# low tens of GB.  The browser only ever receives thinned traces.
+ALLOCATOR_MAX_ROUNDS = 10_000_000
+ALLOCATOR_MAX_STEPS = 50_000_000
+ALLOCATOR_MAX_SECONDS = 3600.0
+ALLOCATOR_HISTORY_POINTS = 384
+
+
+def _thin_history(history, max_points=ALLOCATOR_HISTORY_POINTS):
+    """Log-grid subsample of a per-pull loss history, keeping both ends."""
+    n = len(history)
+    if n <= max_points:
+        return list(history)
+    indices = np.unique(np.concatenate((
+        [0], np.rint(np.geomspace(1, n-1, max_points-1)).astype(int))))
+    return [history[int(i)] for i in indices]
+
+
 def _bounded_int(payload, name, default, lower, upper):
     value = int(payload.get(name, default))
     if not lower <= value <= upper:
@@ -1138,7 +1159,7 @@ def _allocator_policy(result, color, max_points=350, *,
                           else None),
             "loss_history": [
                 [int(step), float(value) if math.isfinite(value) else None]
-                for step, value in result.loss_histories[arm]],
+                for step, value in _thin_history(result.loss_histories[arm])],
             "learning_curve": _learning_curve_samples(
                 trajectory, model, exact=exact_learning_curve)
                 if model is not None else [],
@@ -1180,12 +1201,14 @@ def allocator(payload: dict) -> dict:
         raise ValueError("allocation_view must have increasing bounds")
 
     starts = _bounded_int(payload, "starts", 32, 1, 512)
-    rounds = _bounded_int(payload, "rounds", 3200, starts, 250000)
+    rounds = _bounded_int(payload, "rounds", 3200, starts,
+                          ALLOCATOR_MAX_ROUNDS)
     chunk_steps = _bounded_int(payload, "chunk_steps", 10, 1, 1000)
     batch_size = _bounded_int(payload, "batch_size", 32, 1, 100000)
     seed = _bounded_int(payload, "seed", 1729, 0, 2**32 - 1)
-    if rounds * chunk_steps > 2_000_000:
-        raise ValueError("rounds * chunk_steps must not exceed 2,000,000")
+    if rounds * chunk_steps > ALLOCATOR_MAX_STEPS:
+        raise ValueError("rounds * chunk_steps must not exceed "
+                         f"{ALLOCATOR_MAX_STEPS:,}")
 
     method = str(payload.get("method", "adam"))
     schedule = str(payload.get("schedule", "inverse-sqrt"))
@@ -1207,8 +1230,10 @@ def allocator(payload: dict) -> dict:
         if not math.isfinite(learning_rate) or learning_rate <= 0.0:
             raise ValueError("learning_rate must be finite and positive")
     time_limit_sec = float(payload.get("time_limit_sec", 60.0))
-    if not math.isfinite(time_limit_sec) or not 1.0 <= time_limit_sec <= 300.0:
-        raise ValueError("time_limit_sec must be finite and in [1, 300]")
+    if (not math.isfinite(time_limit_sec)
+            or not 1.0 <= time_limit_sec <= ALLOCATOR_MAX_SECONDS):
+        raise ValueError("time_limit_sec must be finite and in "
+                         f"[1, {ALLOCATOR_MAX_SECONDS:g}]")
     retire_local_minima = payload.get("retire_local_minima", False)
     if not isinstance(retire_local_minima, bool):
         raise ValueError("retire_local_minima must be boolean")
@@ -1306,8 +1331,9 @@ def allocator_endpoint_audit(payload: dict) -> dict:
     if not isinstance(endpoints, list) or len(endpoints) > 1024:
         raise ValueError("endpoints must be a list of at most 1024 entries")
     limit = float(payload.get("audit_time_limit_sec", 60.0))
-    if not math.isfinite(limit) or not 1 <= limit <= 300:
-        raise ValueError("audit_time_limit_sec must lie in [1, 300]")
+    if not math.isfinite(limit) or not 1 <= limit <= ALLOCATOR_MAX_SECONDS:
+        raise ValueError("audit_time_limit_sec must lie in "
+                         f"[1, {ALLOCATOR_MAX_SECONDS:g}]")
     deadline = time.perf_counter()+limit
     enumeration = _ENUM.get(key)
     if enumeration is None:
@@ -1432,7 +1458,7 @@ def isolated_allocator(payload: dict) -> dict:
         requested_limit = 60.0
     # Allow worker startup, library discovery and pool teardown outside the
     # cooperative allocation clock before enforcing the hard process limit.
-    hard_limit = min(300.0, max(1.0, requested_limit)) + 15.0
+    hard_limit = min(ALLOCATOR_MAX_SECONDS, max(1.0, requested_limit)) + 15.0
 
     command = [sys.executable, str(Path(__file__).resolve()),
                "--allocator-worker"]

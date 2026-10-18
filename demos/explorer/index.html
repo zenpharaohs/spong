@@ -120,10 +120,10 @@
        font-size:11px;margin:8px 0 2px;padding-top:8px;border-top:1px dotted var(--rule-2)}
   .keystrip .grp{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .glyph-min,.glyph-gmin,.glyph-ns,.glyph-bs{display:inline-block;width:10px;height:10px}
-  .glyph-min{border-radius:50%;background:var(--glyph)}
+  .glyph-min{border-radius:50%;background:var(--glyph);border:1.6px solid var(--glyph)}
   .glyph-gmin{border-radius:50%;background:#fff;border:1.6px solid var(--glyph)}
-  .glyph-ns{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
-       border-bottom:8px solid var(--glyph)}
+  .glyph-ns{width:9px;height:9px;background:var(--glyph);border:1.6px solid var(--glyph);
+       transform:rotate(45deg)}
   .glyph-bs{width:9px;height:9px;background:#fff;border:1.6px solid var(--glyph);
        transform:rotate(45deg)}
 
@@ -599,7 +599,7 @@
         </div>
         <div>
           <label for="allocLimit">time limit (s)</label>
-          <input id="allocLimit" type="number" value="60" min="1" max="300" step="1">
+          <input id="allocLimit" type="number" value="60" min="1" max="3600" step="1">
         </div>
         <div class="wide row">
           <label><input id="allocRetire" type="checkbox"> retire at enumerated local minima</label>
@@ -1055,29 +1055,25 @@ function updateWallGap(data){
 }
 
 /* ---------------- portrait ---------------- */
-/* Critical-point glyphs, following render.py: filled dot = local minimum,
-   open circle = global minimum, triangle = N-root saddle, open diamond =
-   B-root saddle (a saddle by the det H = -4B'^2 clause, so it gets its own
-   mark), cross = degenerate. */
+/* Critical-point glyphs, following render.py: circles are minima, diamonds
+   are saddles.  OPEN marks are global extrema -- global minima, and B-root
+   saddles (a* = 0, all at the level C, the B-saddle roof) -- FILLED marks are
+   the other minima and N-root saddles.  Open and filled glyphs of one shape
+   are the same size.  Cross = degenerate. */
+const GLYPH_MIN_R = 5, GLYPH_SADDLE_R = 5.2;
 function glyph(ctx, x, y, c){
   const G = css("--glyph");
-  if (c.kind === "min" && c.global){
-    ctx.fillStyle = "#fff"; ctx.strokeStyle = G; ctx.lineWidth = 1.8;
-    ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke();
-  } else if (c.kind === "min"){
-    ctx.fillStyle = G; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(x, y, 3.4, 0, 7); ctx.fill(); ctx.stroke();
-  } else if (c.kind === "saddle" && c.source === "B"){
-    ctx.fillStyle = "#fff"; ctx.strokeStyle = G; ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(x, y-5.2); ctx.lineTo(x+5.2, y);
-    ctx.lineTo(x, y+5.2); ctx.lineTo(x-5.2, y); ctx.closePath();
-    ctx.fill(); ctx.stroke();
+  if (c.kind === "min"){
+    ctx.fillStyle = c.global ? "#fff" : G; ctx.strokeStyle = G;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(x, y, GLYPH_MIN_R, 0, 7); ctx.fill(); ctx.stroke();
   } else if (c.kind === "saddle"){
-    ctx.fillStyle = G; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
+    const r = GLYPH_SADDLE_R;
+    ctx.fillStyle = c.source === "B" ? "#fff" : G; ctx.strokeStyle = G;
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.moveTo(x, y-4.8); ctx.lineTo(x-4.2, y+2.4);
-    ctx.lineTo(x+4.2, y+2.4); ctx.closePath();
+    ctx.moveTo(x, y-r); ctx.lineTo(x+r, y);
+    ctx.lineTo(x, y+r); ctx.lineTo(x-r, y); ctx.closePath();
     ctx.fill(); ctx.stroke();
   } else {
     ctx.strokeStyle = css("--rim"); ctx.lineWidth = 1.6;
@@ -3242,9 +3238,21 @@ function exportSvg(){
       stroke: css("--connection"), "stroke-width": 2.2 }));
   }
   for (const c of S.P.critical){
-    out.push(`  <circle cx="${X(c.a).toFixed(3)}" cy="${Y(c.b).toFixed(3)}" r="4" `
-             + `fill="${c.kind === "min" ? css("--glyph") : "#fff"}" stroke="${css("--glyph")}" `
-             + `data-kind="${c.kind}" data-source="${c.source}" data-a="${c.a}" data-b="${c.b}" data-loss="${c.loss}"/>\n`);
+    // Same convention as glyph(): open = global extremum, filled = not.
+    const G = css("--glyph"), x = X(c.a), y = Y(c.b);
+    const data = `data-kind="${c.kind}" data-source="${c.source}" data-global="${!!c.global}" `
+               + `data-a="${c.a}" data-b="${c.b}" data-loss="${c.loss}"`;
+    if (c.kind === "saddle"){
+      const r = GLYPH_SADDLE_R;
+      const d = `M${x.toFixed(3)},${(y-r).toFixed(3)} L${(x+r).toFixed(3)},${y.toFixed(3)} `
+              + `L${x.toFixed(3)},${(y+r).toFixed(3)} L${(x-r).toFixed(3)},${y.toFixed(3)} Z`;
+      out.push(`  <path d="${d}" fill="${c.source === "B" ? "#fff" : G}" stroke="${G}" `
+               + `stroke-width="1.6" ${data}/>\n`);
+    } else {
+      out.push(`  <circle cx="${x.toFixed(3)}" cy="${y.toFixed(3)}" r="${GLYPH_MIN_R}" `
+               + `fill="${c.kind === "min" && !c.global ? G : "#fff"}" stroke="${G}" `
+               + `stroke-width="1.8" ${data}/>\n`);
+    }
   }
   out.push("</svg>\n");
   const filename = exportFilename().replace(/\.png$/, ".svg");

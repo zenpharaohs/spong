@@ -135,7 +135,10 @@ passed to the sampler.  For finite positive losses, the default observation
 uses `L/(a+L)`, with `a` periodically recalibrated to the median recent
 allocated loss; all active held-loss posteriors are reset under the new `a`.
 Interactive allocation also has a configurable wall-clock limit (60 seconds
-by default, at most 300 seconds).  The status shows elapsed time while the
+by default, at most one hour); rounds may reach 10,000,000 and
+rounds x steps/round 50,000,000.  Memory, not time, is the real ceiling: the
+uniform record keeps every iterate for replay (about 136 bytes per step), while
+the browser receives only thinned traces and log-grid loss histories.  The status shows elapsed time while the
 request runs, and Cancel releases the viewer immediately.  The HTTP endpoint
 runs allocation beyond a process boundary: ordinary code cooperatively checks
 the deadline, while the server can still kill a native sampler call that fails
