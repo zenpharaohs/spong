@@ -1,0 +1,22 @@
+// Execute the actual browser exporter with recorded-shape state, without a DOM.
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const html=fs.readFileSync(new URL('../demos/explorer/index.html',import.meta.url),'utf8');
+const code=html.slice(html.indexOf('function exportSvg(){'),html.indexOf('els("exportSvg").onclick'));
+const state={view:{a0:0,a1:1,b0:0,b1:1},P:{field:{A:[1],B:[0]},branches:[],critical:[{a:.5,b:.5,kind:'min',global:true,source:'N',loss:0}]},traces:[[],[[.1,.2],[.3,.4]]],allocator:{equal:{traces:[{points:[[0,0],[1,1]],color:'#123456',width:2,opacity:.25,mark_start:true,mark_end:true}]},thompson:{traces:[{points:[[.5,.5]],color:'#654321',width:4,opacity:0,mark_start:true,mark_end:true}]}}};
+let result;
+const context={S:state,cP:{width:760,height:470},WALL:null,GLYPH_MIN_R:5,GLYPH_SADDLE_R:5,els:id=>({checked:false,textContent:id}),css:()=> '#abcdef',evalp:p=>p[0],exportFilename:()=> 'test.png',Blob:class{constructor(parts){result=parts.join('');}},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},document:{createElement:()=>({click(){},remove(){}}),body:{appendChild(){}}},setTimeout(){}};
+vm.runInNewContext(code+'\nexportSvg();',context);
+assert.match(result,/data-policy="equal"/);assert.match(result,/data-policy="thompson"/);
+assert.match(result,/stroke="#123456" stroke-width="2" opacity="0.25"/);
+assert.match(result,/fill="#654321" opacity="0"/);
+assert.match(result,/data-kind="user-trajectory"/);
+assert.equal((result.match(/data-role="start"/g)||[]).length,2);
+assert.equal((result.match(/data-role="end"/g)||[]).length,3);
+assert.ok(result.indexOf('optimizer-trajectories')<result.indexOf('data-kind="min"'));
+assert.match(result,/clip-path="url\(#trajectory-clip\)"/);
+state.allocator=null;state.traces=[];
+vm.runInNewContext(code+'\nexportSvg();',context);
+assert.doesNotMatch(result,/data-policy=|data-role=|data-kind="user-trajectory"/);
+console.log('SVG exporter: allocation styling, both policies, manual traces, markers, empty state, clipping and layer order passed');
