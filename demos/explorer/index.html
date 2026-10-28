@@ -3237,6 +3237,36 @@ function exportSvg(){
       "data-miss": rec.numerical_miss,
       stroke: css("--connection"), "stroke-width": 2.2 }));
   }
+  // Mirror drawPortrait's demo layers, including allocation-share styling.
+  // Keep critical-point glyphs above these traces as on the canvas.
+  out.push(`<defs><clipPath id="trajectory-clip"><rect width="${W}" height="${H}"/></clipPath></defs>\n`);
+  out.push('<g id="optimizer-trajectories" clip-path="url(#trajectory-clip)">\n');
+  const marker = (p, radius, color, opacity, role) => {
+    if (!p || !p.every(Number.isFinite)) return;
+    out.push(`<circle cx="${X(p[0]).toFixed(3)}" cy="${Y(p[1]).toFixed(3)}" r="${radius}" fill="${esc(color)}" opacity="${opacity}" data-role="${role}"/>\n`);
+  };
+  for (const policy of ["equal", "thompson"]){
+    const group = S.allocator && S.allocator[policy];
+    if (!group) continue;
+    for (const [arm, tr] of (group.traces || []).entries()){
+      const pts = tr.points || [];
+      if (!pts.length) continue;
+      const color = tr.color || css("--trace"), opacity = tr.opacity ?? .5;
+      out.push(`<g data-policy="${policy}" data-arm="${arm}">\n`);
+      out.push(path(pts, {stroke:color, "stroke-width":tr.width ?? 1,
+        opacity, "data-kind":"allocator-trajectory"}));
+      if (tr.mark_start) marker(pts[0], 2.5, color, opacity, "start");
+      if (tr.mark_end) marker(pts[pts.length-1], 3.5, color, opacity, "end");
+      out.push('</g>\n');
+    }
+  }
+  for (const [index, pts] of S.traces.entries()){
+    if (!pts.length) continue;
+    out.push(path(pts, {stroke:css("--trace"), "stroke-width":1.4,
+      "data-kind":"user-trajectory", "data-trace":index}));
+    marker(pts[pts.length-1], 3, css("--trace"), 1, "end");
+  }
+  out.push('</g>\n');
   for (const c of S.P.critical){
     // Same convention as glyph(): open = global extremum, filled = not.
     const G = css("--glyph"), x = X(c.a), y = Y(c.b);
