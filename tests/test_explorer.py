@@ -51,6 +51,32 @@ def test_aborted_stable_growth_cannot_license_a_tail(monkeypatch):
     assert trace_tail["reason"] == "stable trace stopped at abort_step_failure"
 
 
+@pytest.mark.parametrize("sign, offset", [(1.0, -6.6e-12), (-1.0, -4.1e-13)])
+def test_branch_pinned_on_a_tall_ridge_gets_its_pinned_tail(sign, offset):
+    """linear-target-d17-thrash: A ~ 1.5e18 at the attracting root rho near
+    -5.035 puts the nullcline's offset from rho below binary64's resolution of
+    rho.  The offsets are the end points the tracer reaches on the two arms."""
+    from types import SimpleNamespace
+    from spong import model
+
+    z = zoo.get("linear-target-d17-thrash")
+    degree = max(len(z.f), len(z.g))-1
+    m = model.build(z.f, z.g, zoo.moments_for(z, 2*degree+1))
+    rho = min((r for r, attracting in serve._traps(m) if attracting),
+              key=lambda r: abs(r+5.035))
+    a = np.geomspace(3.131, 10.74, 200)
+    b = rho+offset-5.5e-9*(a[0]/a)**6
+    branch = SimpleNamespace(kind="stable", term="level_bar",
+                             Y=np.column_stack((sign*a, b)), diag={})
+    portrait = SimpleNamespace(branches=[branch], box=(-20, 20, -20, 20))
+    tail = serve._j_tails(m, portrait, float(degree))[0]
+    assert tail["sector"] == "pinned"
+    assert tail["trap"] == rho
+    assert tail.get("reason") is None
+    assert sign*tail["points"][-1][0] >= 3e3
+    assert abs(tail["points"][-1][1]-rho) < 1e-9
+
+
 class _FakeContinuousBernoulliBank:
     def __init__(self, n_arms, seed=0, library=None):
         self.n_arms = n_arms

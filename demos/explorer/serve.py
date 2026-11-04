@@ -219,6 +219,19 @@ def _abs_horner(coef_desc, x):
     return s
 
 
+def _root_resolution(Ap, App, rho):
+    """How closely binary64 can place a simple root rho of A'.
+
+    Horner's first-order error bound n*eps*sum|c_k x^k| (coefficient rounding
+    charges one more eps), divided by the slope |A''| at the root.  Distances
+    from rho below this are not measurements.
+    """
+    slope = abs(np.polyval(App, rho))
+    if slope == 0.0:
+        return math.inf
+    return len(Ap)*EPS*_abs_horner(Ap, rho)/slope
+
+
 def _traps(m):
     """The critical points at infinity, EXACTLY classified.
 
@@ -572,6 +585,7 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
     Ap = np.polyder(A[::-1]); App = np.polyder(Ap)
     Bc = np.asarray(m._fb, dtype=float)
     Bp = np.polyder(Bc[::-1]); Bpp = np.polyder(Bp)
+    rho_floor = {rho: _root_resolution(Ap, App, rho) for rho in real_rhos}
     critical = (np.array([[float(q.a), float(q.b)]
                           for q in enumeration.points], dtype=float)
                 if enumeration is not None else None)
@@ -580,6 +594,12 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
         lo = max([z for z in real_rhos if z < b0], default=-math.inf)
         hi = min([z for z in real_rhos if z > b0], default=math.inf)
         return lo, hi
+
+    def newton_interval(lo, hi):
+        # A nullcline root may sit on the far side of a stored rho by up to
+        # that rho's resolution; a hard wall there would reject it.
+        return (lo-rho_floor[lo] if lo in rho_floor else lo,
+                hi+rho_floor[hi] if hi in rho_floor else hi)
 
     def license(pts):
         a = np.array([q[0] for q in pts]); b = np.array([q[1] for q in pts])
@@ -591,26 +611,33 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
         if k0 < n-1 and abs(a[-1]) > abs(a[k0]):
             lo, hi = interval(b[-1])
             targets = [rho for rho in (lo, hi) if rho in attracting_rhos
-                       and abs(b[-1]-rho) < abs(b[k0]-rho)]
+                       and (abs(b[-1]-rho) < abs(b[k0]-rho)
+                            or abs(b[-1]-rho) <= rho_floor[rho])]
             if targets:
                 rho = min(targets, key=lambda z: abs(b[-1]-z))
                 ks = np.unique(np.linspace(k0, n-1, min(400, n-k0)).astype(int))
                 lag = []
+                wide = newton_interval(lo, hi)
                 for k in ks:
-                    bn = _nullcline_b(a[k], b[k], Ap, App, Bp, Bpp, lo, hi)
+                    bn = _nullcline_b(a[k], b[k], Ap, App, Bp, Bpp, *wide)
                     lag.append(math.inf if bn is None else abs(b[k]-bn)/r[k])
                 if max(lag) <= tol and lag[-1] <= lag[0]:
                     # A small lag alone does not license an infinite tail:
                     # the nullcline can fold at a finite radius and Newton
                     # can jump to another root in this same trap interval.
+                    # Those comparisons mean nothing once they fall below
+                    # the resolution of rho itself: on a tall ridge the
+                    # nullcline's offset from rho is smaller than that long
+                    # before |a| reaches the probe's far end.
+                    floor = rho_floor[rho]
                     probe_b = float(b[-1])
                     safe = True
                     for aa in np.geomspace(abs(a[-1]), max(10*abs(a[-1]), reach), 65)[1:]:
                         bn = _nullcline_b(math.copysign(aa, a[-1]), probe_b,
-                                          Ap, App, Bp, Bpp, lo, hi)
+                                          Ap, App, Bp, Bpp, *wide)
                         if (bn is None
-                                or abs(bn-rho) > abs(probe_b-rho)*(1+1e-8)
-                                or abs(bn-probe_b) > 0.25*abs(probe_b-rho)):
+                                or abs(bn-rho) > max(abs(probe_b-rho)*(1+1e-8), floor)
+                                or abs(bn-probe_b) > max(0.25*abs(probe_b-rho), 2.0*floor)):
                             safe = False
                             break
                         probe_b = bn
@@ -618,6 +645,14 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
                         return {"sector": "pinned", "index": n-1,
                                 "lag": max(lag), "lag_end": lag[-1],
                                 "trap": rho}
+        # A branch pinned within the resolution of an attracting root is not
+        # on a diagonal, whatever the J drift says: the weight |A'/2A|/r in
+        # that drift nearly vanishes on the ridge, so the test would pass and
+        # hand back a level set with no real b beyond the branch.
+        lo, hi = interval(b[-1])
+        if any(rho in attracting_rhos and abs(b[-1]-rho) <= rho_floor[rho]
+               for rho in (lo, hi)):
+            return None
         # diagonal: remaining J drift after k, attested over an octave
         # Symmetric normal cases have a real A' root at b=0.  A sampled
         # branch may hit that trap exactly, where J is singular; the finite
@@ -711,7 +746,7 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
         if lic["sector"] == "pinned":
             for k in range(1, n_pts+1):
                 aa = a0 + s*step0*(amax/step0)**(k/n_pts)
-                bn = _nullcline_b(aa, b, Ap, App, Bp, Bpp, lo, hi)
+                bn = _nullcline_b(aa, b, Ap, App, Bp, Bpp, *newton_interval(lo, hi))
                 if bn is None:
                     rec["reason"] = "nullcline root lost"
                     break
