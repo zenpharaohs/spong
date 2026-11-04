@@ -19,6 +19,33 @@ complete mathematical recital (§1–§11), the certificate semantics
 contracts, the architecture, and the migration plan from the MATLAB
 predecessor (`mse-bundle`).
 
+## Install
+
+spong needs Python 3.10 or later, a C compiler and GMP:
+
+```sh
+brew install gmp                # Debian/Ubuntu: apt install libgmp-dev
+git clone https://github.com/zenpharaohs/spong
+cd spong
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+spong-validate-native --no-zoo  # a seconds-long check of the C core
+```
+
+If `gmp.h` is somewhere unusual, set `SPONG_GMP_PREFIX` to its install prefix.
+Add `".[render]"` for the Matplotlib demos and `".[dev]"` for the test suite,
+which then runs with `python -m pytest`.
+
+To look at a portrait, use the inspector, with **true angle** and **fit to
+skeleton**.  It is the complete picture, stable tails included:
+
+```sh
+python demos/explorer/serve.py   # http://127.0.0.1:8710
+```
+
+`demos/scipy_portrait_comparison.py` compares a certified portrait with the
+usual SciPy and Matplotlib recipe (`pip install scipy matplotlib`).
+
 Status: **Phases 1–5 landed — the instrument draws** — `spong.model` (exact coefficients, the (b, w)
 chart, closed-form level curves, Hessian identities) and `spong.sturm`
 (EXACT enumeration: primitive-PRS Sturm chains over dyadic-rational inputs,

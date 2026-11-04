@@ -35,6 +35,7 @@ assembly contract is established and tested before it can matter.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from contextlib import contextmanager
 
@@ -162,3 +163,24 @@ def trace_unstable(*args, **kwargs):
 # ------------------------------------------------------------------ #
 
 from ._parallel import workers, map_ordered
+
+
+@contextlib.contextmanager
+def for_command_line():
+    """The fast path for a console command, unless the shell chose otherwise.
+
+    The library default stays Python, for the reason given above; a person
+    running a command wants the native engine and their cores.
+    """
+    previous = os.environ.get("SPONG_WORKERS")
+    if previous is None:
+        os.environ["SPONG_WORKERS"] = str(os.cpu_count() or 1)
+    try:
+        if "SPONG_ENGINE" in os.environ:
+            yield
+        else:
+            with using("native"):
+                yield
+    finally:
+        if previous is None:
+            os.environ.pop("SPONG_WORKERS", None)

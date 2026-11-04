@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import model, portrait, render, zoo
+from . import engine, model, portrait, render, zoo
 
 
 def _coefficients(rng: np.random.Generator, degree: int,
@@ -475,6 +475,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    with engine.for_command_line():
+        return _main(argv)
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     args.view = _view(args.view)

@@ -8,3 +8,4 @@ out/
 !docs/**/*.png
 .DS_Store
 .venv/
+*.egg-info/

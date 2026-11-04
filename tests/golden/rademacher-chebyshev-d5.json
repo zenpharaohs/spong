@@ -1,0 +1,307 @@
+{
+  "branches": [
+    {
+      "angle_energy[RESIDUAL]": 0.0,
+      "angle_resolved": 0,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.0006381488270199566,
+      "n_points": 514,
+      "saddle_b": -1.1615162397707102,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 0.0,
+      "angle_resolved": 0,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.000583383601207949,
+      "n_points": 514,
+      "saddle_b": -1.1615162397707102,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 3.4011822337808124e-18,
+      "angle_resolved": 697,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.0007133124254737855,
+      "n_points": 1212,
+      "saddle_b": -0.3939847164290354,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.3425062038940713e-17,
+      "angle_resolved": 727,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.009460197704071697,
+      "n_points": 1242,
+      "saddle_b": -0.3939847164290354,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 5.377967022935129e-17,
+      "angle_resolved": 426,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.0031393143201823783,
+      "n_points": 941,
+      "saddle_b": 0.9296151005367913,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 8.522956620639818e-17,
+      "angle_resolved": 426,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.006223647927556263,
+      "n_points": 941,
+      "saddle_b": 0.9296151005367913,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 6.076086648074493e-13,
+      "angle_resolved": 150,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.09085990510414746,
+      "n_points": 665,
+      "saddle_b": 1.309238038729265,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 9.46939505047237e-13,
+      "angle_resolved": 184,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "kind": "stable",
+      "max_turn_deg[RESIDUAL]": 0.14903639835029334,
+      "n_points": 699,
+      "saddle_b": 1.309238038729265,
+      "term": "level_bar"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.1419032991065985e-15,
+      "angle_resolved": 24055,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.00911804761505122,
+      "n_points": 24570,
+      "saddle_b": -1.1615162397707102,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 8.682786423409824e-18,
+      "angle_resolved": 9652,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.07621778405201639,
+      "n_points": 10167,
+      "saddle_b": -1.1615162397707102,
+      "seam_residual[RESIDUAL]": 1.1193032178197226e-16,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 2.585036825873963e-13,
+      "angle_resolved": 24048,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.1184574212601816,
+      "n_points": 24563,
+      "saddle_b": -0.3939847164290354,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.3085387171799671e-08,
+      "angle_resolved": 24041,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 18.91920735866908,
+      "n_points": 24556,
+      "saddle_b": -0.3939847164290354,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 2.531885433185859e-14,
+      "angle_resolved": 24056,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.07998158441827431,
+      "n_points": 24571,
+      "saddle_b": 0.9296151005367913,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.397217189025685e-13,
+      "angle_resolved": 24047,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.08969111929277859,
+      "n_points": 24562,
+      "saddle_b": 0.9296151005367913,
+      "term": "capture"
+    },
+    {
+      "angle_energy[RESIDUAL]": 6.088718679663385e-18,
+      "angle_resolved": 9580,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.01472112298102358,
+      "n_points": 10095,
+      "saddle_b": 1.309238038729265,
+      "seam_residual[RESIDUAL]": 1.5195739310006626e-16,
+      "term": "box_exit"
+    },
+    {
+      "angle_energy[RESIDUAL]": 1.4061585275252583e-16,
+      "angle_resolved": 24035,
+      "angle_unresolved": 0,
+      "backbone_residual[RESIDUAL]": 0.0,
+      "connection[RESIDUAL]": true,
+      "kind": "unstable",
+      "max_turn_deg[RESIDUAL]": 0.011251765935922578,
+      "n_points": 24550,
+      "saddle_b": 1.309238038729265,
+      "term": "capture"
+    }
+  ],
+  "case": {
+    "default_view": null,
+    "f": [
+      0.0,
+      1.0
+    ],
+    "g": [
+      1.0,
+      5.0,
+      0.0,
+      -20.0,
+      0.0,
+      16.0
+    ],
+    "moment_dist": "rademacher",
+    "name": "rademacher-chebyshev-d5"
+  },
+  "critical": [
+    {
+      "a": 9.603298732449457e-49,
+      "b": -1.1615162397707102,
+      "kind": "saddle",
+      "source": "B",
+      "u2_sign": -1
+    },
+    {
+      "a": 0.4810664278461243,
+      "b": -0.935543729638106,
+      "kind": "min",
+      "source": "N",
+      "u2_sign": 1
+    },
+    {
+      "a": 0.36666198919277837,
+      "b": -0.3939847164290354,
+      "kind": "saddle",
+      "source": "N",
+      "u2_sign": -1
+    },
+    {
+      "a": 0.33403979131067557,
+      "b": 0.2841808466260919,
+      "kind": "min",
+      "source": "N",
+      "u2_sign": 1
+    },
+    {
+      "a": 0.23064112022134112,
+      "b": 0.9296151005367913,
+      "kind": "saddle",
+      "source": "N",
+      "u2_sign": -1
+    },
+    {
+      "a": 0.13808031867169834,
+      "b": 1.1996320696018898,
+      "kind": "min",
+      "source": "N",
+      "u2_sign": 1
+    },
+    {
+      "a": 0.06982359361198905,
+      "b": 1.309238038729265,
+      "kind": "saddle",
+      "source": "N",
+      "u2_sign": -1
+    }
+  ],
+  "enumeration": {
+    "morse[EXACT]": true,
+    "n_critical": 7,
+    "n_min": 3,
+    "n_saddle": 4,
+    "psi_positive[EXACT]": true,
+    "u2_alternation[EXACT]": true
+  },
+  "genericity": {
+    "alpha_lead_positive": true,
+    "d_eff": 5,
+    "generic": true,
+    "mu_lead_positive": true
+  },
+  "index_balance": {
+    "a_bound": 2.0,
+    "b_bound": 4.0,
+    "balanced": true,
+    "expected": -1,
+    "n_min": 3,
+    "n_saddle": 4,
+    "winding": -1
+  },
+  "summary": {
+    "all_branches_clean": true,
+    "balanced": true,
+    "representation_attested": true,
+    "topology_status": "certified",
+    "worst_angle_energy": 1.3085387171799671e-08,
+    "worst_max_turn_deg": 18.91920735866908
+  },
+  "topology": {
+    "ambiguous_count": 0,
+    "attempts": [
+      {
+        "ambiguous": 0,
+        "forbidden": 0,
+        "geometry_level": 0,
+        "reason": null,
+        "status": "certified",
+        "uncertified_ends": 0,
+        "uncertified_tails": 0
+      }
+    ],
+    "forbidden_count": 0,
+    "geometry_level": 0,
+    "resolution_reason": null,
+    "status": "certified"
+  }
+}

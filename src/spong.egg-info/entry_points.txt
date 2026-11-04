@@ -1,4 +1,0 @@
-[console_scripts]
-spong-compare-portrait = spong.comparison_cli:main
-spong-random-portrait = spong.cli:main
-spong-validate-native = spong.validate:main

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import comparison, model, portrait, render, zoo
+from . import comparison, engine, model, portrait, render, zoo
 
 
 def _zoo_model(case):
@@ -75,6 +75,11 @@ def _branch_record(m, branch, spacing):
 
 
 def main(argv=None):
+    with engine.for_command_line():
+        return _main(argv)
+
+
+def _main(argv=None):
     parser = argparse.ArgumentParser(
         description="Compare SPONG with ordinary phase-portrait algorithms")
     parser.add_argument("--zoo", choices=zoo.names(),
