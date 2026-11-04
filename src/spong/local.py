@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, replace
-from decimal import Decimal, localcontext
+from decimal import (Context, Decimal, MAX_EMAX, MAX_PREC, MIN_EMIN, getcontext,
+                     localcontext)
 from fractions import Fraction
 from math import comb
 
 import numpy as np
 
+from . import _parallel
 from . import _poly as P
 from ._poly import Poly
 from .model import Model
@@ -52,8 +54,29 @@ class SpectralData:
                          tuple[Decimal, Decimal]]
 
 
+_EXACT_CONTEXT = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN, traps=[])
+
+
 def _decimal(x: Fraction) -> Decimal:
-    return Decimal(x.numerator) / Decimal(x.denominator)
+    """x correctly rounded in the current context, as Decimal(n)/Decimal(d) gives.
+
+    Converting two 18000-bit integers to Decimal to keep 100 digits is most of
+    the cost of a jet.  So form just enough leading digits of the quotient in
+    integer arithmetic, with one sticky digit so the rounding sees exactly what
+    the exact quotient would have given it.
+    """
+    n, d = x.numerator, x.denominator
+    if n == 0:
+        return Decimal(0)
+    context = getcontext()
+    # Scale so the integer quotient has at least prec+2 digits.
+    digits = context.prec+3-(abs(n).bit_length()-d.bit_length())*30103//100000
+    q, r = (divmod(abs(n)*10**digits, d) if digits >= 0
+            else divmod(abs(n), d*10**(-digits)))
+    if r == 0:     # a terminating quotient: let Decimal choose its exponent
+        return Decimal(n)/Decimal(d)
+    value = Decimal(10*q+1).scaleb(-digits-1, context=_EXACT_CONTEXT)
+    return context.plus(value if n > 0 else value.copy_negate())
 
 
 def _scaled_norm(x) -> float:
@@ -879,7 +902,9 @@ def build_stubs(m: Model, point, minima,
         return jet
     grid = {(s.manifold, s.orientation): s
             for s in _build_stubs(m, point, minima, resolution_level,
-                                  jet_mode=False)}
+                                  jet_mode=False,
+                                  only={(s.manifold, s.orientation)
+                                        for s in jet if not ready(s)})}
     merged = []
     for s in jet:
         if ready(s):
@@ -891,7 +916,8 @@ def build_stubs(m: Model, point, minima,
 
 
 def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
-                 jet_mode: bool = False) -> tuple[InvariantStub, ...]:
+                 jet_mode: bool = False,
+                 only=None) -> tuple[InvariantStub, ...]:
     """Materialize and certify the four local invariant-manifold stubs.
 
     ``resolution_level`` is a development/convergence axis: level k
@@ -912,9 +938,8 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
     spectral_resolution_margin = float(
         np.min(spectral_abs)
         / max(np.finfo(float).eps*np.max(spectral_abs), 1e-300))
-    stubs = []
-    for chart in local.poincare:
-        for orientation in (-1, 1):
+    def one_stub(task):
+            chart, orientation = task
             reach = chart.desired_reach
             reason = "no attempt"
             # The jet lives in centered eigenframe coordinates, so the
@@ -1409,12 +1434,11 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                     ("flow_extension_steps", 0.0),
                     ("flow_extension_arclength", 0.0),
                 )
-                stubs.append(InvariantStub(
+                return InvariantStub(
                     chart.manifold, orientation, b_direction, None,
                     "undetermined" if chart.manifold == "unstable"
                     else "infinity",
-                    ((local.a, local.b),), "conditioned_refusal", refused))
-                continue
+                    ((local.a, local.b),), "conditioned_refusal", refused)
 
             # If the invariant graph is valid but the downstream divided ODE
             # is still in shallow water, keep advancing a certified graph.
@@ -1581,7 +1605,7 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                 ("jet_tolerance",
                  float(data.get("jet_tolerance", np.nan))),
             )
-            stubs.append(InvariantStub(
+            return InvariantStub(
                 chart.manifold, orientation, b_direction, destination_b,
                 destination_kind, tuple(map(tuple, fine)), preferred, certs,
                 trajectory_evidence={
@@ -1594,5 +1618,12 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                         "tangents": (tuple(df["tangent"][0]),)
                                     + tuple(map(tuple, df["tangent"]))}
                        if use_jet else {}),
-                }))
-    return tuple(stubs)
+                })
+
+    # Each stub is its own graph solve on a read-only jet; one saddle's slow
+    # stubs are usually what the whole enumeration is waiting for.
+    tasks = [(chart, orientation) for chart in local.poincare
+             for orientation in (-1, 1)
+             if only is None or (chart.manifold, orientation) in only]
+    return tuple(_parallel.map_ordered(one_stub, tasks,
+                                       workers=_parallel.workers()))
