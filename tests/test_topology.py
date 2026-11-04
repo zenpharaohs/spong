@@ -514,3 +514,13 @@ def test_minimum_basin_uses_conditioned_critical_spectrum(d2, monkeypatch):
     monkeypatch.setattr(type(m), "hessL", forbidden_global_hessian)
     radii = topology._minimum_basin_radii(m, e)
     assert set(radii) == {(float(q.a), float(q.b)) for q in e.minima}
+
+
+def test_monotone_subarc_query_matches_the_direct_check():
+    rng = np.random.default_rng(20261104)
+    for _ in range(40):
+        Y = np.cumsum(rng.choice([-1.0, 0.0, 1.0, 2.0], size=(60, 2)), axis=0)
+        query = topology._monotone_subarc_test(Y)
+        for _ in range(200):
+            i, j = rng.integers(0, 70, size=2)
+            assert query(i, j) == topology._strictly_monotone_subarc(Y, i, j)

@@ -53,6 +53,7 @@ from fractions import Fraction
 import math
 import os
 
+from . import _parallel
 from . import _poly as P
 from . import sturm
 
@@ -107,17 +108,36 @@ def _root_poly(m, point):
     return m.critical_reduced
 
 
-def value_sign(m, point, c: Fraction, budget: int = 64):
+def _signs_at(m, points, c: Fraction, signs: dict | None = None) -> list:
+    """value_sign for several critical points at one level, each at most once.
+
+    signs is a memo for one build: a level's signs are asked for when it is
+    accepted, when the levels are classified and again for its components.
+    The exact work holds no Python objects, so the points can run concurrently.
+    """
+    memo = {} if signs is None else signs
+    missing = [p for p in points if (id(p), c) not in memo]
+    if missing:
+        R = level_polynomial(m, c)
+        integers = P.int_primitive(P.trim(R))
+        for p, s in zip(missing, _parallel.map_ordered(
+                lambda p: value_sign(m, p, c, _R=R, _integers=integers),
+                missing, workers=_parallel.workers())):
+            memo[(id(p), c)] = s
+    return [memo[(id(p), c)] for p in points]
+
+
+def value_sign(m, point, c: Fraction, budget: int = 64, _R=None, _integers=None):
     """Exact sign of u(q) - c at the critical point q, or None if undecided.
 
     None means the isolating interval could not be refined enough to
     certify the sign within ``budget`` steps -- i.e. c is at (or
     indistinguishably near) this critical value.  Never guessed.
     """
-    R = level_polynomial(m, c)
+    R = level_polynomial(m, c) if _R is None else _R
     iv = point.interval
     root = _root_poly(m, point)
-    native = _native_value_sign(R, root, iv)
+    native = _native_value_sign(R, root, iv, _integers)
     if native is not NotImplemented:
         return native
     for _ in range(budget):
@@ -132,7 +152,7 @@ def value_sign(m, point, c: Fraction, budget: int = 64):
     return None
 
 
-def _native_value_sign(R, root, iv):
+def _native_value_sign(R, root, iv, integers=None):
     """Sign of R at the algebraic root isolated by iv, by the fused kernel.
 
     Uses the ROOT polynomial's persistent plan (B, N or H -- already built
@@ -143,7 +163,8 @@ def _native_value_sign(R, root, iv):
     limit both map to None, the same undecided answer the refinement loop
     gives up with.  NotImplemented when the C core is absent.
     """
-    integers = P.int_primitive(P.trim(R))
+    if integers is None:
+        integers = P.int_primitive(P.trim(R))
     root_integers = P.int_primitive(P.trim(root))
     if not integers or not root_integers:
         return NotImplemented
@@ -202,7 +223,7 @@ def backbone_level_at_infinity(m):
     return Fraction(m.C) - B[-1] * B[-1] / A[-1]
 
 
-def separating_levels(m, e, attempts: int = 40) -> LevelSequence:
+def separating_levels(m, e, attempts: int = 40, _signs=None) -> LevelSequence:
     """Rational levels separating the DISTINCT values of the merge tree.
 
     The values are the critical values AND u(infinity): a level is accepted
@@ -258,7 +279,7 @@ def separating_levels(m, e, attempts: int = 40) -> LevelSequence:
             c = Fraction(candidate)
             if u_inf is not None and c == u_inf:
                 continue
-            signs = [value_sign(m, p, c) for p in points]
+            signs = _signs_at(m, points, c, _signs)
             if any(s is None or s == 0 for s in signs):
                 continue
             signature = (tuple(signs),
@@ -270,8 +291,9 @@ def separating_levels(m, e, attempts: int = 40) -> LevelSequence:
 
     levels = tuple(sorted(accepted))
     classes: dict[tuple[int, ...], list[int]] = {}
+    by_level = [_signs_at(m, points, c, _signs) for c in levels]
     for i, p in enumerate(points):
-        key = tuple(1 if (value_sign(m, p, c) or 0) > 0 else 0 for c in levels)
+        key = tuple(1 if (signs[i] or 0) > 0 else 0 for signs in by_level)
         classes.setdefault(key, []).append(i)
     grouped = tuple(tuple(v) for _, v in sorted(
         classes.items(), key=lambda kv: sum(kv[0]), reverse=True))
@@ -317,7 +339,7 @@ def _sign_at_infinity(R, positive: bool) -> int:
     return s if positive or (len(R) - 1) % 2 == 0 else -s
 
 
-def components_at(m, e, c: Fraction) -> tuple[Component, ...]:
+def components_at(m, e, c: Fraction, _signs=None) -> tuple[Component, ...]:
     """The components of {u < c}, as b-intervals with their critical sets.
 
     Every root of (C - c)A - B^2 is SIMPLE when c is not a critical value
@@ -362,10 +384,12 @@ def components_at(m, e, c: Fraction) -> tuple[Component, ...]:
     # Hoisted: value_sign and the gap index are per critical point, not per
     # component, and both are exact refinement loops.
     inside: dict[int, int] = {}
+    relevant = [p for p in points if p.kind != "degenerate"]
+    point_sign = dict(zip(map(id, relevant), _signs_at(m, relevant, c, _signs)))
     for i, p in enumerate(points):
         if p.kind == "degenerate":
             continue
-        if value_sign(m, p, c) != -1:
+        if point_sign[id(p)] != -1:
             continue
         inside[i] = (LR.gap_index(c, p) if LR is not None
                      else _gap_index(m, R, p))
@@ -481,8 +505,9 @@ def build(m, e) -> MergeTree:
     Cost is one root isolation per level -- (#distinct critical values - 1)
     of them, at degree ~2 deg g -- shared by every branch of the portrait.
     """
-    seq = separating_levels(m, e)
-    per_level = tuple(components_at(m, e, c) for c in seq.levels)
+    signs: dict = {}
+    seq = separating_levels(m, e, _signs=signs)
+    per_level = tuple(components_at(m, e, c, _signs=signs) for c in seq.levels)
     parents: list[tuple[int | None, ...]] = []
     for k, comps in enumerate(per_level):
         if k + 1 >= len(per_level):

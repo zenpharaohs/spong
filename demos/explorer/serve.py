@@ -213,6 +213,13 @@ def _max_chord(Y) -> float:
 EPS = np.finfo(float).eps
 
 
+def _horner(coef_desc, x):
+    s = 0.0
+    for c in coef_desc:
+        s = s*x + c
+    return s
+
+
 def _abs_horner(coef_desc, x):
     """Sum of |c_k x^k| -- the running-error scale of a Horner evaluation."""
     ax = abs(x)
@@ -411,12 +418,17 @@ def _nullcline_b(a, b, Ap, App, Bp, Bpp, lo, hi):
     Newton with residual acceptance against the running-error floor of
     a A' - 2 B'; iterates are kept inside the trap interval (lo, hi).
     """
+    # Plain floats and the same Horner order as np.polyval, so the same values
+    # at a fraction of the cost: this runs for every point of every pinned tail.
+    a = float(a); b = float(b)
+    Ap, App, Bp, Bpp = (p.tolist() if hasattr(p, "tolist") else p
+                        for p in (Ap, App, Bp, Bpp))
     for _ in range(80):
-        F = a*np.polyval(Ap, b) - 2.0*np.polyval(Bp, b)
+        F = a*_horner(Ap, b) - 2.0*_horner(Bp, b)
         floor = 8.0*EPS*(abs(a)*_abs_horner(Ap, b) + 2.0*_abs_horner(Bp, b))
         if abs(F) <= max(floor, 1e-300):
             return b
-        Fp = a*np.polyval(App, b) - 2.0*np.polyval(Bpp, b)
+        Fp = a*_horner(App, b) - 2.0*_horner(Bpp, b)
         if Fp == 0.0:
             return None
         bn = b - F/Fp
@@ -426,7 +438,7 @@ def _nullcline_b(a, b, Ap, App, Bp, Bpp, lo, hi):
             # Stagnation at an interval endpoint is not a root.  In
             # particular, after a finite nullcline fold, repeated bisection
             # toward a trap can reach machine zero with a large residual.
-            residual = a*np.polyval(Ap, bn) - 2.0*np.polyval(Bp, bn)
+            residual = a*_horner(Ap, bn) - 2.0*_horner(Bp, bn)
             error = 8.0*EPS*(abs(a)*_abs_horner(Ap, bn)
                              + 2.0*_abs_horner(Bp, bn))
             return bn if abs(residual) <= max(error, 1e-300) else None

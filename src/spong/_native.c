@@ -1241,9 +1241,13 @@ static PyObject *LocalKernel_poincare_graph(LocalKernel *self, PyObject *args) {
         return PyErr_NoMemory();
     }
     spong_poincare_graph_result proposal;
-    int status = spong_poincare_graph_proposal(&self->jet, V, M, ld, lt, alpha0, alpha1,
-                                               sign, (size_t)n, tol, (size_t)max_iter,
-                                               x, h, &proposal);
+    /* Doubles, a read-only jet and buffers owned by this call: no Python object. */
+    int status;
+    Py_BEGIN_ALLOW_THREADS status =
+        spong_poincare_graph_proposal(&self->jet, V, M, ld, lt, alpha0, alpha1,
+                                      sign, (size_t)n, tol, (size_t)max_iter,
+                                      x, h, &proposal);
+    Py_END_ALLOW_THREADS
     if (status == -2) {
         PyMem_Free(x);
         PyMem_Free(h);
@@ -2128,9 +2132,13 @@ static PyObject *native_poincare_pullback(PyObject *self, PyObject *args) {
         goto cleanup;
     }
     spong_vector_polynomial result;
-    int status =
+    /* The strings stay alive through owned[] and args; the GMP work touches no
+     * Python object. */
+    int status;
+    Py_BEGIN_ALLOW_THREADS status =
         spong_poincare_pullback_decimal(text, (size_t)nu, (size_t)ns, map, lambda_u,
                                         lambda_s, (uint64_t)precision_bits, &result);
+    Py_END_ALLOW_THREADS
     PyMem_Free(map);
     if (status != SPONG_EXACT_OK) {
         PyErr_Format(PyExc_ArithmeticError,

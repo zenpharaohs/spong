@@ -444,6 +444,9 @@ def _poincare_candidates(jet: LocalJet, nearby_b: tuple[float, ...],
                          ) -> tuple[PoincareData, ...]:
     lam = np.asarray(jet.spectral.eigenvalues)
     eig = np.asarray(jet.spectral.frame)
+    # Both manifolds rotate the same exact coefficients at the same precision.
+    exact_decimal = {}
+
     def transformed_native(Rd, chart_eigenvalues):
         """Round only after the exact jet has been rotated in high precision."""
         def power(value, exponent):
@@ -466,7 +469,9 @@ def _poincare_candidates(jet: LocalJet, nearby_b: tuple[float, ...],
                     for bpower, rational in enumerate(row):
                         if not rational:
                             continue
-                        value = _decimal(rational)
+                        value = exact_decimal.get(rational)
+                        if value is None:
+                            value = exact_decimal[rational] = _decimal(rational)
                         for ka in range(apower+1):
                             ca = (Decimal(comb(apower, ka))
                                   * power(Rd[0][0], ka)

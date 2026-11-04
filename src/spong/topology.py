@@ -620,6 +620,32 @@ def _drop_removable(events, Y1, Y2, sag1, sag2):
         yield i, j, kind, point
 
 
+def _monotone_subarc_test(Y):
+    """_strictly_monotone_subarc as a constant-time query on one polyline.
+
+    A branch can report very many ambiguous self-contacts, each over a long
+    stretch of a long polyline.  For each coordinate and direction, record the
+    first step at or after k that breaks strict monotonicity; a subarc is then
+    monotone exactly when that step lies beyond it.
+    """
+    steps = np.diff(np.asarray(Y, dtype=float), axis=0)
+    n = len(steps)
+    index = np.arange(n)
+    breaks = []
+    for axis in (0, 1):
+        for ok in (steps[:, axis] > 0.0, steps[:, axis] < 0.0):
+            breaks.append(np.minimum.accumulate(
+                np.where(ok, n, index)[::-1])[::-1])
+
+    def monotone(first_segment, second_segment):
+        lo, hi = sorted((first_segment, second_segment))
+        if lo >= n:
+            return True
+        end = min(hi, n-1)
+        return any(b[lo] > end for b in breaks)
+    return monotone
+
+
 def _strictly_monotone_subarc(Y, first_segment, second_segment):
     """Whether one coordinate exactly orders the intervening polyline."""
     lo, hi = sorted((first_segment, second_segment))
@@ -2063,6 +2089,7 @@ def audit(m, enumeration, branches, box,
 
     for i, br in enumerate(branches if not budget_exceeded else ()):
         root = None if native_contacts else trees[i]
+        monotone_subarc = None
         for si, sj, kind, point in _self_contact_events(
                 np.asarray(br.Y), root, predicate_tol, sagittae[i]):
             suffix = terminal_suffixes[i]
@@ -2076,8 +2103,9 @@ def audit(m, enumeration, branches, box,
                 # order-preserving arc to the compactification boundary, not
                 # by numerically indistinguishable asymptotic chords.
                 continue
-            if (kind == "ambiguous" and _strictly_monotone_subarc(
-                    br.Y, si, sj)):
+            if kind == "ambiguous" and monotone_subarc is None:
+                monotone_subarc = _monotone_subarc_test(br.Y)
+            if kind == "ambiguous" and monotone_subarc(si, sj):
                 # Exact monotonicity of either polyline coordinate orders the
                 # entire intervening parameter interval, so two nonadjacent
                 # chords cannot meet.  This discharges dense-output chords

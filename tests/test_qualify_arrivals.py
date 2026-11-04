@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from spong import zoo
+
 spec=importlib.util.spec_from_file_location('qualify_arrivals',Path(__file__).resolve().parents[1]/'scripts/qualify_arrivals.py')
 qa=importlib.util.module_from_spec(spec);spec.loader.exec_module(qa)
 
@@ -13,7 +15,7 @@ def test_cohort_is_reproducible_and_retains_all_recorded_calls():
     assert a==qa.cohort(20260925,2,2)
     assert a[:4]!=qa.cohort(20260926,2,2)[:4]
     assert [r['cohort'] for r in a[:4]]==['random','random','directed','directed']
-    assert sum(r['cohort']=='zoo' for r in a)==7
+    assert sum(r['cohort']=='zoo' for r in a)==len(zoo.names())
     assert sum(r['cohort']=='corpus' for r in a)==22
 
 

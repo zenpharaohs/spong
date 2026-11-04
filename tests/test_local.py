@@ -461,3 +461,24 @@ def test_exact_spectral_frame_recovers_large_radius_saddle():
                for s in unstable)
     assert all(dict(s.certificates)["fp64_spectral_resolved"] == 0.0
                for s in unstable)
+
+
+def test_decimal_conversion_matches_exact_division_digit_for_digit():
+    import random
+    from decimal import Decimal, localcontext
+    from fractions import Fraction
+    from spong import local
+    rng = random.Random(20261104)
+    sizes = (1, 5, 20, 64, 300, 2000, 18000)
+    for prec in (28, 100, 250):
+        with localcontext() as context:
+            context.prec = prec
+            for _ in range(400):
+                x = Fraction(rng.getrandbits(rng.choice(sizes))*rng.choice((-1, 1)),
+                             rng.getrandbits(rng.choice(sizes))+1)
+                if rng.random() < .2:
+                    x = Fraction(rng.randrange(-50, 50), 2**rng.randrange(40))
+                if rng.random() < .1:     # exact ties at the last digit
+                    x = Fraction(2*rng.randrange(1, 10**20)+1, 2)*Fraction(10)**-rng.randrange(20)
+                exact = Decimal(x.numerator)/Decimal(x.denominator)
+                assert local._decimal(x).as_tuple() == exact.as_tuple()

@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from fractions import Fraction
 
+from . import _parallel
 from . import _poly as P
 from ._poly import Poly
 from .model import Model
@@ -705,17 +706,19 @@ def enumerate_critical_points(m: Model) -> Enumeration:
     # local normal-form candidates are therefore known and immutable.
     from .local import build_local_jet
     centers = [p.b for p in pts]
-    elaborated = []
-    for i, p in enumerate(pts):
+
+    def elaborate(task):
+        i, p = task
         if p.kind == "degenerate":
-            elaborated.append(p)
-            continue
+            return p
         local = build_local_jet(
             m, p.interval, p.source,
             tuple(x for j, x in enumerate(centers) if j != i),
             root_poly=H if p.source == "H" else None)
-        elaborated.append(replace(p, b=local.b, a=local.a, local=local))
-    pts = elaborated
+        return replace(p, b=local.b, a=local.a, local=local)
+
+    pts = _parallel.map_ordered(elaborate, list(enumerate(pts)),
+                                workers=_parallel.workers())
 
     # Alternation invariant (Theorem 2): the signs of u'' alternate along
     # the complete ordered critical set of the one-dimensional Morse
@@ -737,11 +740,11 @@ def materialize_stubs(m: Model, e: Enumeration,
     portraits use the established level-zero graph grids.
     """
     from .local import build_stubs
-    points = tuple(
-        replace(p, stubs=build_stubs(
+    points = tuple(_parallel.map_ordered(
+        lambda p: (replace(p, stubs=build_stubs(
             m, p, e.minima, resolution_level=resolution_level))
-        if p.kind == "saddle" else p
-        for p in e.points)
+            if p.kind == "saddle" else p),
+        list(e.points), workers=_parallel.workers()))
     return replace(e, points=points)
 
 
