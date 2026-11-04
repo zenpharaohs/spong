@@ -77,6 +77,50 @@ def test_branch_pinned_on_a_tall_ridge_gets_its_pinned_tail(sign, offset):
     assert abs(tail["points"][-1][1]-rho) < 1e-9
 
 
+@pytest.mark.parametrize("name", ["quadratic-stiff", "near-slide-d2"])
+def test_final_stage_reuses_the_preview_and_reaches_the_same_portrait(name, monkeypatch):
+    from spong import atlas, model, portrait, sturm
+
+    z = zoo.get(name)
+    degree = max(len(z.f), len(z.g))-1
+    m = model.build(z.f, z.g, zoo.moments_for(z, 2*degree+1))
+    fresh = portrait.certified_compute(m)
+    enumeration = sturm.materialize_stubs(m, sturm.enumerate_critical_points(m))
+    display = atlas.compute_box(m, enumeration)
+    preview = portrait.compute(m, _enumeration=enumeration, _display_view=display,
+                               _skip_audit=True)
+
+    def no_second_stub_build(*args, **kwargs):
+        raise AssertionError("stubs were already built")
+
+    def no_second_trace(*args, **kwargs):
+        raise AssertionError("branches were already traced")
+
+    monkeypatch.setattr(sturm, "materialize_stubs", no_second_stub_build)
+    monkeypatch.setattr(portrait, "_trace_branches", no_second_trace)
+    reused = portrait.certified_compute(m, _enumeration=enumeration,
+                                        _branches=preview.branches)
+    assert reused.ledger["topology"]["status"] == fresh.ledger["topology"]["status"]
+    assert len(reused.branches) == len(fresh.branches)
+    for a, b in zip(reused.branches, fresh.branches):
+        assert a.kind == b.kind and a.term == b.term
+        assert np.array_equal(a.Y, b.Y)
+
+
+def test_inspector_stages_compute_tails_once(monkeypatch):
+    calls = []
+    tails = serve._j_tails
+    monkeypatch.setattr(serve, "_j_tails",
+                        lambda *a, **k: (calls.append(1), tails(*a, **k))[1])
+    for cache in (serve._CACHE, serve._TAILS, serve._TRACED, serve._ENUM):
+        cache.clear()
+    preview = serve.compute({"zoo": "quadratic-stiff", "stage": "preview"})
+    final = serve.compute({"zoo": "quadratic-stiff", "stage": "final"})
+    assert calls == [1]
+    assert preview["status"] == "not_audited" and final["status"] == "certified"
+    assert final["tails"] == preview["tails"] and final["branches"] == preview["branches"]
+
+
 class _FakeContinuousBernoulliBank:
     def __init__(self, n_arms, seed=0, library=None):
         self.n_arms = n_arms

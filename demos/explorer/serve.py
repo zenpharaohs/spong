@@ -24,6 +24,7 @@ which the founding document keeps out of the library.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -84,6 +85,8 @@ PORT = 8710
 # tracing is not cheap.  Small LRU on the exact request.
 _CACHE: dict = {}
 _CACHE_MAX = 24
+_TAILS: dict = {}
+_TRACED: dict = {}
 
 # Enumeration and materialized stubs are shared between the preview and the
 # final stage of the same model: they are upstream of the geometry ladder and
@@ -765,9 +768,11 @@ def _j_tails(m, p, d_eff: float, enumeration=None, tol: float = 1e-4,
                 # Gaussian-fast to rho while the branch rides the nullcline
                 # at 2B'/(A'' a) from it; once the two agree to tol the
                 # nullcline is the more accurate curve and takes over.
-                bnull = _nullcline_b(aa, b, Ap, App, Bp, Bpp, lo, hi)
-                if bnull is not None and abs(bnull-b) <= tol*math.hypot(aa, b) \
-                        and min(abs(b-lo), abs(b-hi)) < 1e-3*max(1.0, abs(b)):
+                # The trap test goes first: far from a trap this Newton has no
+                # root to find and runs to its iteration limit.
+                near_trap = min(abs(b-lo), abs(b-hi)) < 1e-3*max(1.0, abs(b))
+                bnull = _nullcline_b(aa, b, Ap, App, Bp, Bpp, lo, hi) if near_trap else None
+                if bnull is not None and abs(bnull-b) <= tol*math.hypot(aa, b):
                     rec["handoff_to_nullcline"] = [aa, b]
                     for kk in range(k+1, n_pts+1):
                         aa = a0 + s*step0*(amax/step0)**(kk/n_pts)
@@ -1635,6 +1640,25 @@ def _numerical_connection_portrait(payload):
     return out
 
 
+def _tails_for(key, m, p, enumeration):
+    """_j_tails, once per distinct set of stable branches: the inspector's two
+    stages ordinarily trace the same curves, and the tails depend on no others."""
+    h = hashlib.sha256(repr(tuple(p.box)).encode())
+    for i, br in enumerate(p.branches):
+        if br.kind == "stable":
+            h.update(repr((i, br.term)).encode())
+            h.update(np.asarray(br.Y, dtype=float).tobytes())
+    entry = (key, h.hexdigest())
+    tails = _TAILS.get(entry)
+    if tails is None:
+        tails = _j_tails(m, p, float(atlas.effective_degree(m)),
+                         enumeration=enumeration)
+        _TAILS[entry] = tails
+        if len(_TAILS) > _CACHE_MAX:
+            _TAILS.pop(next(iter(_TAILS)))
+    return tails
+
+
 def compute(payload: dict) -> dict:
     if payload.get("zoo") in zoo.numerical_connection_names():
         return _numerical_connection_portrait(payload)
@@ -1705,9 +1729,16 @@ def compute(payload: dict) -> dict:
             m, view=trace_view, geometry_level=0, _enumeration=enumeration,
             _display_view=display_view, _genericity=atlas.genericity(m),
             _skip_audit=True)
+        if not payload.get("wall_limit"):
+            _TRACED[key] = p.branches
+            if len(_TRACED) > _ENUM_MAX:
+                _TRACED.pop(next(iter(_TRACED)))
     else:
-        p = portrait.certified_compute(m, view=trace_view,
-                                       _enumeration=enumeration)
+        # The preview's geometry is level 0 of this ladder: same model, same
+        # enumeration, same box.  Only the audit is left to do.
+        p = portrait.certified_compute(
+            m, view=trace_view, _enumeration=enumeration,
+            _branches=(None if payload.get("wall_limit") else _TRACED.pop(key, None)))
     # The pair a wall family is about, identified on the ORDINARY portrait
     # before any wall-limit surgery removes one of them.
     wall_pair = _wall_pair(payload, p)
@@ -1775,8 +1806,7 @@ def compute(payload: dict) -> dict:
         "branches": _branches(p),
         # Closed-form stable tails (J level set or b-nullcline), each with
         # the growth that licensed it, for drawing only.
-        "tails": _j_tails(m, p, float(atlas.effective_degree(m)),
-                          enumeration=enumeration),
+        "tails": _tails_for(key, m, p, enumeration),
         "wall_connections": wall_connections,
         "wall_limit": wall_limit,
         "wall_pair": wall_pair,

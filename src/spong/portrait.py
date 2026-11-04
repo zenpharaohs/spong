@@ -197,39 +197,10 @@ def _capture_radius(e: sturm.Enumeration, ds: float) -> float:
     return float(min(4.0*ds, separation/8.0))
 
 
-def compute(m: Model, view=None, geometry_level: int = 0,
-            _enumeration=None, _display_view=None,
-            _genericity=None, _skip_audit: bool = False,
-            pair_contact_policy: str = "order_sweep",
-            _potential_clock=None,
-            _potential_n_levels: int | None = None,
-            arrival_policy: str = 'legacy') -> Portrait:
-    """Compute the certified portrait inside the §8b box contract.
-
-    _skip_audit returns the geometry with NO topology certificate.  It exists
-    for viewers: drawing needs the curves, which the branch tracing already
-    produced, while the audit is what costs -- 714s of an 808s level-0
-    portrait on linear-target-d17-thrash.  The resulting ledger reports status
-    ``not_audited`` and must never be presented as a verdict.
-
-    ``pair_contact_policy`` selects the production loss-level order sweep,
-    its chord-verdict shadow comparison, or the former chord audit; see
-    :func:`spong.topology.audit`.
-
-    ``arrival_policy='checked_native'`` replaces terminal capture connectors
-    with independently checked native analytic arrivals. A refused proposal
-    leaves an explicitly aborted prefix, never an accepted fallback chord.
-    This local sampled check does not promote a portrait certificate.
-    """
-    if arrival_policy not in ('legacy', 'checked_native'):
-        raise ValueError('arrival_policy')
-    e = (_enumeration if _enumeration is not None else
-         sturm.materialize_stubs(m, sturm.enumerate_critical_points(m)))
-    display_view = (_display_view if _display_view is not None else
-                    atlas.compute_box(m, e, view=view))
-    box = _trace_box(m, display_view, scale=1.35*(2.0**geometry_level))
-    gen = _genericity if _genericity is not None else atlas.genericity(m)
-
+def _trace_branches(m: Model, e, box, display_view, geometry_level: int,
+                    arrival_policy: str, _potential_clock=None,
+                    _potential_n_levels=None) -> list:
+    """Every separatrix of the portrait, stable then unstable."""
     branches = []
     # Stable separatrices are computed first for readability of this routine,
     # NOT because unstable branches consume them: the unstable loop below
@@ -414,6 +385,49 @@ def compute(m: Model, view=None, geometry_level: int = 0,
     if arrival_policy == 'checked_native':
         from .native_arrival import refine_branches
         branches = refine_branches(m, e, branches)
+    return branches
+
+
+def compute(m: Model, view=None, geometry_level: int = 0,
+            _enumeration=None, _display_view=None,
+            _genericity=None, _skip_audit: bool = False,
+            pair_contact_policy: str = "order_sweep",
+            _potential_clock=None,
+            _potential_n_levels: int | None = None,
+            arrival_policy: str = 'legacy', _branches=None) -> Portrait:
+    """Compute the certified portrait inside the §8b box contract.
+
+    _skip_audit returns the geometry with NO topology certificate.  It exists
+    for viewers: drawing needs the curves, which the branch tracing already
+    produced, while the audit is what costs -- 714s of an 808s level-0
+    portrait on linear-target-d17-thrash.  The resulting ledger reports status
+    ``not_audited`` and must never be presented as a verdict.
+
+    ``pair_contact_policy`` selects the production loss-level order sweep,
+    its chord-verdict shadow comparison, or the former chord audit; see
+    :func:`spong.topology.audit`.
+
+    ``arrival_policy='checked_native'`` replaces terminal capture connectors
+    with independently checked native analytic arrivals. A refused proposal
+    leaves an explicitly aborted prefix, never an accepted fallback chord.
+    This local sampled check does not promote a portrait certificate.
+    """
+    if arrival_policy not in ('legacy', 'checked_native'):
+        raise ValueError('arrival_policy')
+    e = (_enumeration if _enumeration is not None else
+         sturm.materialize_stubs(m, sturm.enumerate_critical_points(m)))
+    display_view = (_display_view if _display_view is not None else
+                    atlas.compute_box(m, e, view=view))
+    box = _trace_box(m, display_view, scale=1.35*(2.0**geometry_level))
+    gen = _genericity if _genericity is not None else atlas.genericity(m)
+
+    # _branches: separatrices already traced for this same model, enumeration,
+    # box and geometry level.  Tracing is deterministic, so a caller holding
+    # them (the inspector, between its two stages) need not trace again.
+    branches = (list(_branches) if _branches is not None else
+                _trace_branches(m, e, box, display_view, geometry_level,
+                                arrival_policy, _potential_clock,
+                                _potential_n_levels))
 
     p = Portrait(m, e, branches, box,
                  view if view is not None else display_view)
@@ -488,8 +502,12 @@ def compute(m: Model, view=None, geometry_level: int = 0,
 def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
                       _enumeration=None,
                       pair_contact_policy: str = "order_sweep",
-                      arrival_policy: str = 'legacy') -> Portrait:
-    """Step up the portraitist until topology certifies or explicitly refuse."""
+                      arrival_policy: str = 'legacy',
+                      _branches=None) -> Portrait:
+    """Step up the portraitist until topology certifies or explicitly refuse.
+
+    _branches, when given, are the separatrices at geometry level 0.
+    """
     # Geometry escalation must not redo the exact zero-dimensional Morse
     # skeleton, its conditioned critical jets, or its materialized stubs.
     # Those are properties of the model and are deliberately upstream of the
@@ -498,7 +516,8 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
     enumeration = (_enumeration if _enumeration is not None else
                    sturm.enumerate_critical_points(m))
     enumerated = time.perf_counter()
-    enumeration = sturm.materialize_stubs(m, enumeration)
+    if not all(q.stubs for q in enumeration.saddles):
+        enumeration = sturm.materialize_stubs(m, enumeration)
     stubbed = time.perf_counter()
     display_view = atlas.compute_box(m, enumeration, view=view)
     genericity = atlas.genericity(m)
@@ -509,7 +528,8 @@ def certified_compute(m: Model, view=None, max_geometry_level: int = 2,
         result = compute(
             m, view=view, geometry_level=level, _enumeration=enumeration,
             _display_view=display_view, _genericity=genericity,
-            pair_contact_policy=pair_contact_policy, arrival_policy=arrival_policy)
+            pair_contact_policy=pair_contact_policy, arrival_policy=arrival_policy,
+            _branches=(_branches if level == 0 else None))
         top = result.ledger["topology"]
         attempts.append({
             "geometry_level": level, "status": top["status"],
