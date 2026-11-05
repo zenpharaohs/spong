@@ -41,7 +41,7 @@ def test_native_exact_and_geometry_terminal_states_are_stable():
     # are unchanged across that bump; this pin exists so an ABI change is
     # a deliberate edit here, not a silent drift.
     # ABI 11 requires oriented topology identities without changing these enums.
-    assert _native.SPONG_ABI_VERSION == 11
+    assert _native.SPONG_ABI_VERSION == 12
     none = 0.0
     exact_non_morse = _native.resolution_preflight(
         False, True, True, False, none, False, none, False, none,

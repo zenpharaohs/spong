@@ -524,3 +524,17 @@ def test_monotone_subarc_query_matches_the_direct_check():
         for _ in range(200):
             i, j = rng.integers(0, 70, size=2)
             assert query(i, j) == topology._strictly_monotone_subarc(Y, i, j)
+
+
+def test_monotone_discharge_removes_only_what_the_audit_would_discharge():
+    from spong import _native
+    rng = np.random.default_rng(20261104)
+    for _ in range(25):
+        # Many near-coincident points, some in strictly monotone stretches.
+        steps = rng.choice([0.0, 1e-12, -1e-12, 1e-3, -1e-3], size=(400, 2))
+        Y = np.ascontiguousarray(np.cumsum(steps, axis=0), dtype=np.float64)
+        full = list(_native.ContactScan(Y, None, 1e-9, True))
+        kept = list(_native.ContactScan(Y, None, 1e-9, True, True))
+        query = topology._monotone_subarc_test(Y)
+        assert kept == [e for e in full
+                        if not (e[2] == "ambiguous" and query(e[0], e[1]))]

@@ -32,6 +32,9 @@ struct spong_contact_scan {
     size_t stack_size, stack_capacity;
     int leaf_active;
     size_t ilo, ihi, jlo, jhi, i, j;
+    /* For each coordinate and direction, the first step at or after k that
+     * breaks strict monotonicity; NULL unless discharge was requested. */
+    size_t *monotone_break[4];
 };
 
 int spong_topology_decide(const spong_topology_analysis *analysis,
@@ -278,6 +281,46 @@ fail:
     return NULL;
 }
 
+static int monotone_subarc(const spong_contact_scan *scan, size_t i, size_t j) {
+    if (scan->monotone_break[0] == NULL)
+        return 0;
+    for (int k = 0; k < 4; ++k)
+        if (scan->monotone_break[k][i] > j)
+            return 1;
+    return 0;
+}
+
+int spong_contact_scan_discharge_monotone(spong_contact_scan *scan,
+                                          size_t point_count) {
+    if (scan == NULL || !scan->self_scan || point_count < 2)
+        return -1;
+    size_t steps = point_count-1;
+    for (int k = 0; k < 4; ++k) {
+        free(scan->monotone_break[k]);
+        scan->monotone_break[k] = (size_t *)malloc(steps*sizeof(size_t));
+        if (scan->monotone_break[k] == NULL) {
+            for (int m = 0; m <= k; ++m) {
+                free(scan->monotone_break[m]);
+                scan->monotone_break[m] = NULL;
+            }
+            return -2;
+        }
+    }
+    size_t next[4] = {steps, steps, steps, steps};
+    for (size_t s = steps; s-- > 0;) {
+        const double *p = point_at(scan->points1, s);
+        const double *q = point_at(scan->points1, s+1);
+        double dx = q[0]-p[0], dy = q[1]-p[1];
+        if (!(dx > 0.0)) next[0] = s;
+        if (!(dx < 0.0)) next[1] = s;
+        if (!(dy > 0.0)) next[2] = s;
+        if (!(dy < 0.0)) next[3] = s;
+        for (int k = 0; k < 4; ++k)
+            scan->monotone_break[k][s] = next[k];
+    }
+    return 0;
+}
+
 static int next_leaf_event(spong_contact_scan *scan,
                            spong_contact_event *event) {
     while (scan->i < scan->ihi) {
@@ -300,6 +343,11 @@ static int next_leaf_event(spong_contact_scan *scan,
             if (amax+tol < cmin || cmax+tol < amin
                     || bmax+tol < dmin || dmax+tol < bmin) continue;
             if (segment_event(a, b, c, d, tol, event)) {
+                /* One coordinate strictly orders the whole subarc, so these
+                 * two chords have disjoint ranges in it and cannot meet. */
+                if (event->kind == SPONG_CONTACT_AMBIGUOUS
+                        && monotone_subarc(scan, i, j))
+                    continue;
                 event->first_segment = (uint64_t)i;
                 event->second_segment = (uint64_t)j;
                 return 1;
@@ -351,6 +399,9 @@ int spong_contact_scan_next(spong_contact_scan *scan,
 }
 
 void spong_contact_scan_destroy(spong_contact_scan *scan) {
+    if (scan != NULL)
+        for (int k = 0; k < 4; ++k)
+            free(scan->monotone_break[k]);
     if (scan == NULL) return;
     free(scan->nodes1);
     if (scan->nodes2 != scan->nodes1) free(scan->nodes2);

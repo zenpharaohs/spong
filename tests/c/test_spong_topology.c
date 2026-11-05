@@ -69,5 +69,18 @@ int main(void) {
     assert(event.first_segment == 0 && event.second_segment == 2);
     assert(spong_contact_scan_next(self, &event) == 0);
     spong_contact_scan_destroy(self);
+
+    /* Collinear and strictly monotone in x: every nonadjacent pair within the
+     * tolerance is ambiguous, and discharge removes them all. */
+    const double line[] = {0.0, 0.0, 1e-13, 0.0, 2e-13, 0.0, 3e-13, 0.0, 4e-13, 0.0};
+    spong_contact_scan *crawl = spong_contact_scan_create(line, 5, NULL, 0, 1e-12, 1);
+    assert(crawl != NULL);
+    assert(spong_contact_scan_next(crawl, &event) == 1);
+    assert(event.kind == SPONG_CONTACT_AMBIGUOUS);
+    spong_contact_scan_destroy(crawl);
+    crawl = spong_contact_scan_create(line, 5, NULL, 0, 1e-12, 1);
+    assert(spong_contact_scan_discharge_monotone(crawl, 5) == 0);
+    assert(spong_contact_scan_next(crawl, &event) == 0);
+    spong_contact_scan_destroy(crawl);
     return 0;
 }

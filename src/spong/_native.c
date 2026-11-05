@@ -1998,10 +1998,11 @@ static int NativeContactScan_init(NativeContactScan *self, PyObject *args,
                                   PyObject *kwds) {
     PyObject *first, *second;
     double tolerance;
-    int self_scan = 0;
-    static char *kwlist[] = {"first", "second", "tolerance", "self_scan", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOd|p", kwlist, &first, &second,
-                                     &tolerance, &self_scan))
+    int self_scan = 0, discharge_monotone = 0;
+    static char *kwlist[] = {"first",     "second", "tolerance",
+                             "self_scan", "discharge_monotone", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOd|pp", kwlist, &first, &second,
+                                     &tolerance, &self_scan, &discharge_monotone))
         return -1;
     if (contact_buffer(first, &self->first) < 0)
         return -1;
@@ -2021,6 +2022,12 @@ static int NativeContactScan_init(NativeContactScan *self, PyObject *args,
         memset(&self->first, 0, sizeof(self->first));
         memset(&self->second, 0, sizeof(self->second));
         PyErr_SetString(PyExc_ValueError, "could not initialize contact scan");
+        return -1;
+    }
+    if (discharge_monotone &&
+        spong_contact_scan_discharge_monotone(self->scan,
+                                              (size_t)self->first.shape[0]) != 0) {
+        PyErr_SetString(PyExc_ValueError, "could not prepare monotone discharge");
         return -1;
     }
     return 0;

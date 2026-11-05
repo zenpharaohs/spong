@@ -513,12 +513,17 @@ def _pair_contact_events(Y1, root1, Y2, root2, tol, sag1=None, sag2=None):
     yield from _drop_removable(scanner, Y1, Y2, sag1, sag2)
 
 
-def _self_contact_events(Y, root, tol, sag=None):
-    """Production self-contact stream, with the Python BVH as oracle."""
+def _self_contact_events(Y, root, tol, sag=None, discharge_monotone=False):
+    """Production self-contact stream, with the Python BVH as oracle.
+
+    discharge_monotone leaves out, in the scan itself, ambiguous contacts the
+    caller would discharge by _monotone_subarc_test.
+    """
     try:
         from . import _native
         scanner = _native.ContactScan(
-            np.ascontiguousarray(Y, dtype=np.float64), None, tol, True)
+            np.ascontiguousarray(Y, dtype=np.float64), None, tol, True,
+            discharge_monotone)
     except (ImportError, AttributeError):
         yield from _self_events(Y, root, tol, sag)
         return
@@ -2091,7 +2096,8 @@ def audit(m, enumeration, branches, box,
         root = None if native_contacts else trees[i]
         monotone_subarc = None
         for si, sj, kind, point in _self_contact_events(
-                np.asarray(br.Y), root, predicate_tol, sagittae[i]):
+                np.asarray(br.Y), root, predicate_tol, sagittae[i],
+                discharge_monotone=True):
             suffix = terminal_suffixes[i]
             completed_stable_tail = (
                 suffix["kind"] == "stable_infinity"

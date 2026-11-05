@@ -129,6 +129,8 @@ balanced bounding-volume hierarchy used by the Python oracle, while
 `spong_contact_scan_next` streams transverse and FP64-ambiguous segment events
 without allocating a potentially enormous result list.  Pair scans compare
 two invariant manifolds; self scans visit every nonadjacent segment pair once.
+`spong_contact_scan_discharge_monotone` makes a self scan omit ambiguous
+contacts whose subarc is strictly monotone in a coordinate, which cannot meet.
 The caller retains the packed `(a,b)` arrays until
 `spong_contact_scan_destroy` and can stop immediately when its event budget is
 exhausted.  The standalone C test and randomized Python differential test

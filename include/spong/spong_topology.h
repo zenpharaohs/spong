@@ -95,6 +95,13 @@ SPONG_API int spong_contact_scan_next(
 
 SPONG_API void spong_contact_scan_destroy(spong_contact_scan *scan);
 
+/* Optional, for a self scan: do not report an ambiguous contact whose subarc is
+ * strictly monotone in a coordinate, since such chords cannot meet.  A polyline
+ * crawling below the predicate floor can otherwise report millions.  point_count
+ * is the count given to create.  0 on success, -1 invalid, -2 no memory. */
+SPONG_API int spong_contact_scan_discharge_monotone(spong_contact_scan *scan,
+                                                    size_t point_count);
+
 #ifdef __cplusplus
 }
 #endif
