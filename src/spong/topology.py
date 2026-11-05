@@ -693,8 +693,13 @@ def _polyval(coefficients, x):
     return value
 
 
-def _centered_combination_bound(terms, center, radius):
-    """Taylor-majorant bound retaining cancellations at a nonzero center."""
+def _centered_combination_bound(terms, center, radius, memo=None):
+    """Taylor-majorant bound retaining cancellations at a nonzero center.
+
+    memo holds derivative coefficients between calls on the same polynomials:
+    converting exact coefficients to floats is the cost here, not the Horner.
+    """
+    memo = {} if memo is None else memo
     max_degree = max((len(p)-1-order for p, order, _ in terms), default=0)
     total, factorial, power = 0.0, 1.0, 1.0
     for n in range(max_degree+1):
@@ -703,8 +708,11 @@ def _centered_combination_bound(terms, center, radius):
             power *= radius
         coefficient = 0.0
         for p, order, multiplier in terms:
-            coefficient += multiplier*_polyval(
-                _derivative_coefficients(p, order+n), center)/factorial
+            key = (id(p), order+n)
+            derivative = memo.get(key)
+            if derivative is None:
+                derivative = memo[key] = _derivative_coefficients(p, order+n)
+            coefficient += multiplier*_polyval(derivative, center)/factorial
         total += abs(coefficient)*power
     return total*(1.0+64*np.finfo(float).eps)
 
@@ -722,6 +730,7 @@ def _minimum_basin_radii(m, enumeration):
     """
     points = np.asarray([(p.a, p.b) for p in enumeration.points], dtype=float)
     radii = {}
+    memo = {}
     for q in enumeration.minima:
         center = np.array([q.a, q.b], dtype=float)
         distances = _row_norm2(points-center)
@@ -735,20 +744,20 @@ def _minimum_basin_radii(m, enumeration):
         certified = 0.0
         for _ in range(60):
             Ap = _centered_combination_bound(
-                [(m.alpha, 1, 1.0)], q.b, r)
+                [(m.alpha, 1, 1.0)], q.b, r, memo)
             App = _centered_combination_bound(
-                [(m.alpha, 2, 1.0)], q.b, r)
+                [(m.alpha, 2, 1.0)], q.b, r, memo)
             Appp = _centered_combination_bound(
-                [(m.alpha, 3, 1.0)], q.b, r)
+                [(m.alpha, 3, 1.0)], q.b, r, memo)
             q0 = _centered_combination_bound([
-                (m.beta, 2, -2.0), (m.alpha, 2, 2.0*q.a)], q.b, r)
+                (m.beta, 2, -2.0), (m.alpha, 2, 2.0*q.a)], q.b, r, memo)
             qbound = q0 + 2.0*r*App
             r0 = _centered_combination_bound([
                 (m.beta, 3, -2.0*q.a),
-                (m.alpha, 3, q.a*q.a)], q.b, r)
+                (m.alpha, 3, q.a*q.a)], q.b, r, memo)
             r1 = _centered_combination_bound([
                 (m.beta, 3, -2.0),
-                (m.alpha, 3, 2.0*q.a)], q.b, r)
+                (m.alpha, 3, 2.0*q.a)], q.b, r, memo)
             rbound = r0 + r*r1 + r*r*Appp
             Ha = np.sqrt(2.0*(2.0*Ap)**2 + qbound*qbound)
             Hb = np.sqrt((2.0*Ap)**2 + 2.0*qbound*qbound

@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from decimal import (Context, Decimal, MAX_EMAX, MAX_PREC, MIN_EMIN, getcontext,
                      localcontext)
 from fractions import Fraction
-from math import comb
+from math import comb, lcm
 
 import numpy as np
 
@@ -25,19 +25,36 @@ from .model import Model
 
 
 def _shift(p: Poly, c: Fraction) -> tuple[Fraction, ...]:
-    """Coefficients of p(c+x), exactly over Q."""
+    """Coefficients of p(c+x), exactly over Q.
+
+    Over the one denominator D*s^(n-1-j), for c = r/s and D the lcm of the
+    denominators of p: Fractions would run a gcd on every term, and these terms
+    have thousands of bits.
+    """
+    n = len(p)
+    D = lcm(*(x.denominator for x in p))
+    ints = [x.numerator*(D//x.denominator) for x in p]
+    r, s = c.numerator, c.denominator
+    rp, sp = [1]*max(n, 1), [1]*max(n, 1)
+    for k in range(1, n):
+        rp[k], sp[k] = rp[k-1]*r, sp[k-1]*s
     return tuple(
-        sum((p[k] * comb(k, j) * c ** (k - j)
-             for k in range(j, len(p))), Fraction(0))
-        for j in range(len(p))
-    )
+        Fraction(sum(ints[k]*comb(k, j)*rp[k-j]*sp[n-1-k] for k in range(j, n)),
+                 D*sp[n-1-j])
+        for j in range(n))
 
 
 def _lincomb(*terms: tuple[Fraction, tuple[Fraction, ...]]
              ) -> tuple[Fraction, ...]:
+    """Each coefficient over one common denominator, for one gcd apiece."""
     n = max((len(p) for _, p in terms), default=1)
-    return tuple(sum((s * p[k] for s, p in terms if k < len(p)),
-                     Fraction(0)) for k in range(n))
+    out = []
+    for k in range(n):
+        pieces = [(s.numerator*p[k].numerator, s.denominator*p[k].denominator)
+                  for s, p in terms if k < len(p)]
+        D = lcm(*(d for _, d in pieces))
+        out.append(Fraction(sum(v*(D//d) for v, d in pieces), D))
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -625,8 +642,9 @@ def _poincare_candidates(jet: LocalJet, nearby_b: tuple[float, ...],
             str(chart_eigenvalues[0]), str(chart_eigenvalues[1]),
             max(192, 4*jet.spectral.decimal_precision))
         return _native.LocalKernel(rounded)
-    out = []
-    for manifold, depart in (("unstable", 0), ("stable", 1)):
+
+    def candidate(task):
+        manifold, depart = task
         transverse = 1-depart
         R = np.column_stack((eig[:, depart], eig[:, transverse]))
         decimal_columns = jet.spectral.decimal_frame
@@ -685,14 +703,19 @@ def _poincare_candidates(jet: LocalJet, nearby_b: tuple[float, ...],
             normal_decimal, selected_decimal,
             (jet.spectral.decimal_eigenvalues[depart],
              jet.spectral.decimal_eigenvalues[transverse]))
-        out.append(PoincareData(
+        return PoincareData(
             manifold, tuple(map(tuple, R)),
             (ld, lt), tuple(map(tuple, full)), tuple(map(tuple, selected)),
             tuple(map(tuple, D - divisors*selected)),
             tuple(map(tuple, divisors)), tuple(map(tuple, retained)),
             float(reach), coordinate_budget, normal_native,
-            conditioned_native))
-    return tuple(out)
+            conditioned_native)
+
+    # The two pullbacks are independent, and together they are the whole cost of
+    # the slowest jet.  The C core releases the GIL.
+    return tuple(_parallel.map_ordered(
+        candidate, (("unstable", 0), ("stable", 1)),
+        workers=min(2, _parallel.workers())))
 
 
 def build_local_jet(m: Model, interval, source: str,

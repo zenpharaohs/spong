@@ -482,3 +482,24 @@ def test_decimal_conversion_matches_exact_division_digit_for_digit():
                     x = Fraction(2*rng.randrange(1, 10**20)+1, 2)*Fraction(10)**-rng.randrange(20)
                 exact = Decimal(x.numerator)/Decimal(x.denominator)
                 assert local._decimal(x).as_tuple() == exact.as_tuple()
+
+
+def test_common_denominator_shift_and_lincomb_are_exact():
+    import random
+    from fractions import Fraction
+    from math import comb
+    from spong.local import _lincomb, _shift
+    rng = random.Random(20261105)
+    def q():
+        return Fraction(rng.randint(-10**30, 10**30), rng.randint(1, 10**12))
+    for n in (0, 1, 2, 3, 9, 18):
+        p, c = tuple(q() for _ in range(n)), q()
+        for shift in (c, Fraction(0)):
+            assert _shift(p, shift) == tuple(
+                sum((p[k]*comb(k, j)*shift**(k-j) for k in range(j, n)), Fraction(0))
+                for j in range(n))
+    a, b = tuple(q() for _ in range(5)), tuple(q() for _ in range(3))
+    s, t = q(), q()
+    assert _lincomb((s, a), (t, b)) == tuple(
+        s*a[k]+(t*b[k] if k < 3 else 0) for k in range(5))
+    assert _lincomb() == (Fraction(0),)
