@@ -8,7 +8,7 @@ import pytest
 
 from demos import cb_sampler, native_adam, thompson_moustaches
 from demos.explorer import serve
-from spong import zoo
+from spong import stable_tails, zoo
 
 
 def test_stable_growth_trims_an_unresolved_chord(monkeypatch):
@@ -37,7 +37,7 @@ def test_aborted_stable_growth_cannot_license_a_tail(monkeypatch):
         diag={"potential_rate_ascent": {"geometric_ds": 0.004}})
     portrait = SimpleNamespace(branches=[branch], box=(-1, 1, -1, 1))
     enumeration = SimpleNamespace(points=[SimpleNamespace(a=0.0, b=0.0)])
-    monkeypatch.setattr(serve, "_grow_stable",
+    monkeypatch.setattr(stable_tails, "_grow_stable",
                         lambda *args, **kwargs:
                         ([(0.002, 0.0)], "abort_step_failure"))
     tail = serve._j_tails(m, portrait, 1.0, enumeration=enumeration)[0]

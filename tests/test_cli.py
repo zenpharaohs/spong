@@ -225,3 +225,23 @@ def test_pause_view_clamps_when_recompute_cannot_cover_view(tmp_path,
     monkeypatch.setattr(cli, "_render_plane_path", fake_render)
     assert cli._pause_loop(p, tmp_path, "clamp", "title", args) == "next"
     assert rendered_views == [(-2.0, 2.0, -3.0, 3.0)]
+
+
+def test_portrait_commands_draw_the_stable_tails_at_true_angle(tmp_path):
+    from spong import render, stable_tails, zoo
+    from spong.portrait import compute
+    from spong import model
+    z = zoo.get("near-slide-d2")
+    degree = max(len(z.f), len(z.g))-1
+    m = model.build(z.f, z.g, zoo.moments_for(z, 2*degree+1))
+    p = compute(m, view=z.default_view)
+    drawn = stable_tails.with_tails(p)
+    for before, after in zip(p.branches, drawn.branches):
+        if before.kind == "stable":
+            assert len(after.Y) > len(before.Y)
+            assert (after.Y[:len(before.Y)] == before.Y).all()
+        else:
+            assert after.Y is before.Y
+    a0, a1, b0, b1 = render.fit_to_skeleton(p.enumeration.points, 1000, 640)
+    assert abs((a1-a0)/(1000-80)-(b1-b0)/(640-80)) < 1e-12*(a1-a0)
+    assert all(a0 < q.a < a1 and b0 < q.b < b1 for q in p.enumeration.points)

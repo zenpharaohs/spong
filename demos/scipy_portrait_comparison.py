@@ -31,13 +31,9 @@ import numpy as np
 from scipy.integrate import RK45, Radau
 from scipy.optimize import root
 
-from spong import atlas, comparison, model, portrait, render, sturm, zoo
+from spong import atlas, comparison, model, portrait, render, stable_tails, sturm, zoo
 from spong.charts import Branch
 from spong.portrait import Portrait
-
-# The stable tails are the inspector's, so its server is the reference.
-sys.path.insert(0, str(Path(__file__).resolve().parent/"explorer"))
-import serve as inspector  # noqa: E402
 
 WIDTH, HEIGHT, PAD = 1000, 640, 40   # render.plane_view's mapping
 
@@ -103,18 +99,6 @@ def for_display(p):
     return Portrait(p.model, p.enumeration, branches, p.box, p.view, p.ledger)
 
 
-def fit_to_skeleton(enum):
-    """The inspector's "fit to skeleton" followed by its "true angle"."""
-    a = [p.a for p in enum.points]
-    b = [p.b for p in enum.points]
-    pad_a, pad_b = .35*(max(a)-min(a)+1), .35*(max(b)-min(b)+1)
-    a0, a1, b0, b1 = min(a)-pad_a, max(a)+pad_a, min(b)-pad_b, max(b)+pad_b
-    w, h = WIDTH-2*PAD, HEIGHT-2*PAD
-    scale = max((a1-a0)/w, (b1-b0)/h)
-    ac, bc = (a0+a1)/2, (b0+b1)/2
-    return (ac-scale*w/2, ac+scale*w/2, bc-scale*h/2, bc+scale*h/2)
-
-
 def inspector_portrait(m):
     """The inspector's final stage: legal trace box, certified portrait, tails."""
     bmax = atlas.legal_max_b(m)
@@ -122,20 +106,10 @@ def inspector_portrait(m):
     enum = sturm.materialize_stubs(m, sturm.enumerate_critical_points(m))
     p = portrait.certified_compute(m, view=(-amax, amax, -bmax, bmax),
                                    _enumeration=enum)
-    tails = inspector._j_tails(m, p, float(atlas.effective_degree(m)),
-                               enumeration=enum)
-    branches = list(p.branches)
-    n_grown = n_tail = 0
-    for tail in tails:    # one unbroken path, as the inspector's SVG export
-        grown, closed = tail.get("grown") or [], tail.get("points") or []
-        n_grown += max(len(grown)-1, 0)
-        n_tail += max(len(closed)-1, 0)
-        br = branches[tail["branch"]]
-        parts = [br.Y]+[np.asarray(x, float)[1:] for x in (grown, closed) if len(x) > 1]
-        branches[tail["branch"]] = Branch(br.kind, np.vstack(parts), br.term,
-                                          certs=br.certs, diag=br.diag)
-    return p, Portrait(m, p.enumeration, branches, p.box, fit_to_skeleton(p.enumeration),
-                       p.ledger), len(tails)
+    drawn = stable_tails.with_tails(p, enum)
+    return p, Portrait(m, p.enumeration, drawn.branches, p.box,
+                       render.fit_to_skeleton(p.enumeration.points, WIDTH, HEIGHT, PAD),
+                       p.ledger)
 
 
 def scipy_portrait(m, reference, solver, args, enum=None, critical_method="spong exact (given)"):
@@ -237,7 +211,7 @@ def main():
     m = model.build(case.f, case.g, zoo.moments_for(case, 2*degree+1))
     print(f"{args.zoo}: computing the certified portrait", file=sys.stderr, flush=True)
     began = time.perf_counter()
-    certified, reference, n_tails = inspector_portrait(m)
+    certified, reference = inspector_portrait(m)
     seconds = time.perf_counter()-began
     view = reference.view
     name = args.zoo
@@ -247,7 +221,7 @@ def main():
     status = certified.ledger.get("topology", {}).get("status", "not reported")
     cards = [("Certified spong", f"{name}_spong.svg",
               f"Exact Morse skeleton: {len(reference.enumeration.points)} critical "
-              f"points, {len(reference.branches)} separatrices with {n_tails} stable "
+              f"points, {len(reference.branches)} separatrices with their stable "
               f"tails; topology status {status}; {seconds:.1f}s.")]
 
     report = {"zoo": name, "exact_critical_points": len(reference.enumeration.points),

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import comparison, engine, model, portrait, render, zoo
+from . import comparison, engine, model, portrait, render, stable_tails, zoo
 
 
 def _zoo_model(case):
@@ -110,6 +110,9 @@ def _main(argv=None):
     parser.add_argument("--width", type=int, default=800)
     parser.add_argument("--height", type=int, default=600)
     parser.add_argument("--no-bottom-zoom", action="store_true")
+    parser.add_argument("--case-view", action="store_true",
+                        help="use the zoo case's default view, not fit to "
+                             "skeleton at true angle")
     parser.add_argument("--output-dir", type=Path,
                         default=Path("out/comparisons"))
     args = parser.parse_args(argv)
@@ -118,7 +121,9 @@ def _main(argv=None):
     case = zoo.get(args.zoo)
     m = _zoo_model(case)
     reference = portrait.certified_compute(m, view=case.default_view)
-    view = reference.view
+    view = (reference.view if args.case_view else render.fit_to_skeleton(
+        reference.enumeration.points, args.width, args.height))
+    drawn_reference = stable_tails.with_tails(reference)
     span = max(view[1]-view[0], view[3]-view[2], 1.0)
     diagnostic_spacing = span/5000.0
     reference_branch_records = [
@@ -131,7 +136,7 @@ def _main(argv=None):
     cards = []
     reference_name = f"{case.name}_certified.svg"
     render.save(render.plane_view(
-        reference, view=view, width=args.width, height=args.height,
+        drawn_reference, view=view, width=args.width, height=args.height,
         n_levels=32, n_grid=801,
         title=f"{case.name}: certified SPONG portrait"),
         str(args.output_dir/reference_name))
@@ -139,7 +144,7 @@ def _main(argv=None):
     if zoom_view is not None:
         reference_zoom = f"{case.name}_certified_zoom.svg"
         render.save(render.plane_view(
-            reference, view=zoom_view, width=args.width, height=args.height,
+            drawn_reference, view=zoom_view, width=args.width, height=args.height,
             n_levels=24, n_grid=801,
             title=f"{case.name}: certified bottom-canyon zoom"),
             str(args.output_dir/reference_zoom))

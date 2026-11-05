@@ -36,8 +36,9 @@ If `gmp.h` is somewhere unusual, set `SPONG_GMP_PREFIX` to its install prefix.
 Add `".[render]"` for the Matplotlib demos and `".[dev]"` for the test suite,
 which then runs with `python -m pytest`.
 
-To look at a portrait, use the inspector, with **true angle** and **fit to
-skeleton**.  It is the complete picture, stable tails included:
+The command-line portraits are drawn with their stable tails, fitted to the
+skeleton at true angle.  For exploring, use the inspector, with **true angle**
+and **fit to skeleton**:
 
 ```sh
 python demos/explorer/serve.py   # http://127.0.0.1:8710

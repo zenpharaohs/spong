@@ -378,6 +378,23 @@ def close_unstable_zooms(p: Portrait, n: int = 2, samples: int = 1800,
     return candidates[:n]
 
 
+def fit_to_skeleton(points, width=1200, height=900, pad=40):
+    """The view around the critical points, true angle at this canvas size.
+
+    The inspector's "fit to skeleton" followed by its "true angle": equal
+    scales in a and b inside plane_view's padding, so angles on the page are
+    angles in the (a, b) plane.
+    """
+    a = [float(q.a) for q in points]
+    b = [float(q.b) for q in points]
+    pad_a, pad_b = .35*(max(a)-min(a)+1), .35*(max(b)-min(b)+1)
+    a0, a1, b0, b1 = min(a)-pad_a, max(a)+pad_a, min(b)-pad_b, max(b)+pad_b
+    w, h = width-2*pad, height-2*pad
+    scale = max((a1-a0)/w, (b1-b0)/h)
+    ac, bc = (a0+a1)/2, (b0+b1)/2
+    return (ac-scale*w/2, ac+scale*w/2, bc-scale*h/2, bc+scale*h/2)
+
+
 def plane_view(p: Portrait, view=None, width=1200, height=900,
                n_levels: int = 48, n_grid: int = 1501, title=None,
                overlays=None) -> str:

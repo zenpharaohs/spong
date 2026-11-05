@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import engine, model, portrait, render, zoo
+from . import engine, model, portrait, render, stable_tails, zoo
 
 
 def _coefficients(rng: np.random.Generator, degree: int,
@@ -171,9 +171,16 @@ def _case_summary(case_seed: int, f, g, p: portrait.Portrait,
 def _render_plane_path(p: portrait.Portrait, path: str, view, args,
                        title: str) -> str:
     svg = render.plane_view(
-        p, view=view, width=args.width, height=args.height,
+        stable_tails.with_tails(p), view=view, width=args.width, height=args.height,
         n_levels=args.levels, n_grid=args.grid, title=title)
     return render.save(svg, path)
+
+
+def _default_view(p, args, render_view):
+    """Fit to skeleton at true angle, unless the command line chose a view."""
+    if args.view is not None or not p.enumeration.points:
+        return render_view
+    return render.fit_to_skeleton(p.enumeration.points, args.width, args.height)
 
 
 def _parse_view_text(text: str):
@@ -274,6 +281,7 @@ def random_phase_portrait(args: argparse.Namespace) -> int:
         plane_path = disk_path = None
         render_view = _fit_view_to_box(args.view, p.box)
         _maybe_report_view_clamp(args.view, render_view)
+        render_view = _default_view(p, args, render_view)
         if args.view_kind in ("plane", "both"):
             plane_path = str(out_dir / f"{stem}_plane.svg")
             _render_plane_path(p, plane_path, render_view, args, title)
@@ -362,6 +370,7 @@ def zoo_phase_portrait(args: argparse.Namespace) -> int:
     plane_path = disk_path = None
     render_view = _fit_view_to_box(view, p.box)
     _maybe_report_view_clamp(view, render_view)
+    render_view = _default_view(p, args, render_view)
     if args.view_kind in ("plane", "both"):
         plane_path = str(out_dir / f"{stem}_plane.svg")
         _render_plane_path(p, plane_path, render_view, args, title)
