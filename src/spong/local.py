@@ -757,6 +757,14 @@ JET_CHECK_ORDER = 10
 JET_ORDER_LADDER = (20, 30, 40, 60)
 
 
+# Coarse grid sizes tried, in order, when extending a graph's reach.  Measured
+# 2026-11-05 on 718 models and 506 stubs whose jet was not ready: 3 were rescued
+# by the grid, and each rescue and its curve were the same at (257,) as with this
+# ladder extended to 2049.  513 is kept as margin; the larger sizes cost about
+# half of all grid time and rescued nothing further.
+_GRID_LADDER = (257, 513)
+
+
 def stub_mode() -> str:
     """Stub representation: 'jet' (production default) or 'grid'.
 
@@ -1494,7 +1502,7 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                 for conditioned in (() if use_jet else modes):
                     # A larger interval may need a finer representation even
                     # though its invariant graph remains perfectly regular.
-                    for coarse_n in map(refined_n, (257, 513, 1025, 2049)):
+                    for coarse_n in map(refined_n, _GRID_LADDER):
                         try:
                             trial = evaluate(
                                 candidate_reach, conditioned, coarse_n,
