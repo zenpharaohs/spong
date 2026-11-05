@@ -134,6 +134,24 @@ def int_primitive(p: Poly) -> tuple[int, ...]:
 
 
 def gcd_poly(p: Poly, q: Poly) -> Poly:
+    """Monic gcd over the rationals, in the exact C core when it is present.
+
+    Monic makes the answer unique, so _gcd_poly_python below is a true oracle.
+    """
+    a, b = int_primitive(trim(p)), int_primitive(trim(q))
+    if a and b:
+        try:
+            from . import _native
+            native = _native.polynomial_gcd
+        except (ImportError, AttributeError):
+            pass
+        else:
+            g = tuple(Fraction(v) for v in native(a, b))
+            return scale(g, Fraction(1) / g[-1])
+    return _gcd_poly_python(p, q)
+
+
+def _gcd_poly_python(p: Poly, q: Poly) -> Poly:
     """Monic gcd over the rationals (exact Euclid, primitive PRS).
 
     Each remainder is rescaled to primitive integer form: gcd is only

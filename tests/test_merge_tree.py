@@ -165,3 +165,20 @@ def test_level_polynomial_sign_is_the_sign_of_u_minus_c(portrait):
         B = merge_tree.P.eval_at(m.beta, b)
         u = Fraction(m.C) - B * B / A
         assert (merge_tree.P.eval_at(R, b) < 0) == (u < c)
+
+
+def test_native_gcd_agrees_with_the_python_oracle():
+    import random
+    from fractions import Fraction
+    from spong import _poly as P
+    rng = random.Random(20261105)
+    def poly(d):
+        return tuple(Fraction(rng.randint(-99, 99), rng.randint(1, 9)) for _ in range(d)) + (Fraction(rng.randint(1, 9)),)
+    for _ in range(200):
+        shared = poly(rng.randint(0, 4))
+        p = P.mul(shared, poly(rng.randint(0, 6)))
+        q = P.mul(shared, poly(rng.randint(0, 6)))
+        assert P.gcd_poly(p, q) == P._gcd_poly_python(p, q)
+    x = (Fraction(1), Fraction(1))
+    assert P.gcd_poly((), x) == P._gcd_poly_python((), x)
+    assert P.gcd_poly((), ()) == P._gcd_poly_python((), ())

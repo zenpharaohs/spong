@@ -507,7 +507,12 @@ def build(m, e) -> MergeTree:
     """
     signs: dict = {}
     seq = separating_levels(m, e, _signs=signs)
-    per_level = tuple(components_at(m, e, c, _signs=signs) for c in seq.levels)
+    # Each level is its own root isolation.  The levels were separated above,
+    # so these only read the memo and the C core, which releases the GIL.
+    per_level = tuple(_parallel.map_ordered(
+        lambda c: components_at(m, e, c, _signs=signs), list(seq.levels),
+        # The optional monotone engine keeps state, so it stays serial.
+        workers=1 if _level_roots(m, e) is not None else _parallel.workers()))
     parents: list[tuple[int | None, ...]] = []
     for k, comps in enumerate(per_level):
         if k + 1 >= len(per_level):

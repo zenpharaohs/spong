@@ -525,6 +525,59 @@ failure:
     return -1;
 }
 
+void spong_polynomial_gcd_free(char **coefficients, size_t count) {
+    if (coefficients == NULL)
+        return;
+    for (size_t i = 0; i < count; ++i)
+        free(coefficients[i]);
+    free(coefficients);
+}
+
+int spong_polynomial_gcd_decimal(
+        const char *const *p_coefficients, size_t p_count,
+        const char *const *q_coefficients, size_t q_count,
+        const spong_exact_policy *policy,
+        char ***coefficients_out, size_t *count_out) {
+    if (coefficients_out == NULL || count_out == NULL || policy == NULL)
+        return SPONG_EXACT_INVALID_ARGUMENT;
+    *coefficients_out = NULL;
+    *count_out = 0;
+    exact_context ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.policy = *policy;
+    qpoly p = {0}, q = {0}, g = {0};
+    int status = SPONG_EXACT_OK;
+    if (parse_integer_poly(p_coefficients, p_count, &ctx, &p) != 0
+            || parse_integer_poly(q_coefficients, q_count, &ctx, &q) != 0
+            || qpoly_gcd(&g, &p, &q, &ctx) != 0) {
+        status = ctx.failed ? ctx.failed : SPONG_EXACT_ALLOCATION_FAILURE;
+        goto done;
+    }
+    qpoly_primitive(&g);
+    char **out = (char **)calloc(g.n ? g.n : 1, sizeof(char *));
+    if (out == NULL) {
+        status = SPONG_EXACT_ALLOCATION_FAILURE;
+        goto done;
+    }
+    for (size_t i = 0; i < g.n; ++i) {
+        /* Our own malloc: whoever frees this need not know GMP's allocator. */
+        out[i] = (char *)malloc(mpz_sizeinbase(mpq_numref(g.c[i]), 10) + 2);
+        if (out[i] == NULL) {
+            spong_polynomial_gcd_free(out, g.n);
+            status = SPONG_EXACT_ALLOCATION_FAILURE;
+            goto done;
+        }
+        mpz_get_str(out[i], 10, mpq_numref(g.c[i]));
+    }
+    *coefficients_out = out;
+    *count_out = g.n;
+done:
+    qpoly_clear(&p);
+    qpoly_clear(&q);
+    qpoly_clear(&g);
+    return status;
+}
+
 int spong_sturm_plan_create_decimal(
         const char *const *coefficients,
         size_t coefficient_count,

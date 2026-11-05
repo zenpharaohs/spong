@@ -1675,8 +1675,12 @@ static int NativeSturmPlan_init(NativeSturmPlan *self, PyObject *args, PyObject 
                                  (uint64_t)max_steps};
     spong_sturm_plan_destroy(self->plan);
     self->plan = NULL;
-    if (spong_sturm_plan_create_decimal(text, (size_t)n, &policy, &self->plan,
-                                        &self->analysis) != 0) {
+    /* Exact GMP work on decimal strings kept alive by owned[]. */
+    int created;
+    Py_BEGIN_ALLOW_THREADS created = spong_sturm_plan_create_decimal(
+        text, (size_t)n, &policy, &self->plan, &self->analysis);
+    Py_END_ALLOW_THREADS
+    if (created != 0) {
         PyErr_Format(PyExc_ArithmeticError, "native Sturm plan refused with status %d",
                      (int)self->analysis.status);
         goto cleanup;
@@ -2088,6 +2092,78 @@ static PyTypeObject NativeSturmPlanType = {
     .tp_init = (initproc)NativeSturmPlan_init,
     .tp_new = PyType_GenericNew,
 };
+
+/* Decimal strings for a sequence of Python ints: text[i] stays valid while
+ * owned[i] does.  Returns the count, or -1 with an exception set. */
+static Py_ssize_t decimal_strings(PyObject *seq, const char ***text, PyObject ***owned) {
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    *text = (const char **)PyMem_Calloc((size_t)(n ? n : 1), sizeof(char *));
+    *owned = (PyObject **)PyMem_Calloc((size_t)(n ? n : 1), sizeof(PyObject *));
+    if (*text == NULL || *owned == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    PyObject **items = PySequence_Fast_ITEMS(seq);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        (*owned)[i] = PyObject_Str(items[i]);
+        if ((*owned)[i] == NULL)
+            return -1;
+        (*text)[i] = PyUnicode_AsUTF8((*owned)[i]);
+        if ((*text)[i] == NULL)
+            return -1;
+    }
+    return n;
+}
+
+static void decimal_strings_free(PyObject *seq, const char **text, PyObject **owned) {
+    if (seq != NULL && owned != NULL)
+        for (Py_ssize_t i = 0; i < PySequence_Fast_GET_SIZE(seq); ++i)
+            Py_XDECREF(owned[i]);
+    PyMem_Free(text);
+    PyMem_Free(owned);
+    Py_XDECREF(seq);
+}
+
+static PyObject *native_polynomial_gcd(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *p_obj, *q_obj, *result = NULL;
+    if (!PyArg_ParseTuple(args, "OO", &p_obj, &q_obj))
+        return NULL;
+    PyObject *p = PySequence_Fast(p_obj, "p must be a sequence");
+    PyObject *q = p == NULL ? NULL : PySequence_Fast(q_obj, "q must be a sequence");
+    const char **pt = NULL, **qt = NULL;
+    PyObject **po = NULL, **qo = NULL;
+    if (q != NULL) {
+        Py_ssize_t np = decimal_strings(p, &pt, &po);
+        Py_ssize_t nq = np < 0 ? -1 : decimal_strings(q, &qt, &qo);
+        if (nq >= 0) {
+            spong_exact_policy policy = {0, 0, 0};
+            char **g = NULL;
+            size_t count = 0;
+            int status;
+            Py_BEGIN_ALLOW_THREADS status = spong_polynomial_gcd_decimal(
+                pt, (size_t)np, qt, (size_t)nq, &policy, &g, &count);
+            Py_END_ALLOW_THREADS
+            if (status != SPONG_EXACT_OK) {
+                PyErr_Format(PyExc_ArithmeticError,
+                             "native polynomial gcd refused with status %d", status);
+            } else {
+                result = PyTuple_New((Py_ssize_t)count);
+                for (size_t i = 0; result != NULL && i < count; ++i) {
+                    PyObject *v = PyLong_FromString(g[i], NULL, 10);
+                    if (v == NULL)
+                        Py_CLEAR(result);
+                    else
+                        PyTuple_SET_ITEM(result, (Py_ssize_t)i, v);
+                }
+                spong_polynomial_gcd_free(g, count);
+            }
+        }
+    }
+    decimal_strings_free(q, qt, qo);
+    decimal_strings_free(p, pt, po);
+    return result;
+}
 
 static PyObject *native_poincare_pullback(PyObject *self, PyObject *args) {
     (void)self;
@@ -3522,6 +3598,8 @@ static PyMethodDef module_methods[] = {
      "Exact GMP Sturm analysis of an integer polynomial."},
     {"sturm_count_interval", native_sturm_count_interval, METH_VARARGS,
      "Exact GMP distinct-root count on a rational interval."},
+    {"polynomial_gcd", native_polynomial_gcd, METH_VARARGS,
+     "Primitive integer gcd of two integer polynomials, exact in GMP."},
     {"poincare_pullback", native_poincare_pullback, METH_VARARGS,
      "Compose a Poincare chart in high precision and round once."},
     {"b_parameter_handoff", (PyCFunction)(void (*)(void))native_b_parameter_handoff,

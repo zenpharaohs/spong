@@ -1539,8 +1539,11 @@ def _sign_at_critical_point(m, point, polynomial):
     return result["sign"]
 
 
+_NOT_COMPUTED = object()
+
+
 def _stable_escape_certificate(m, enumeration, branch, box,
-                               boundary_tolerance):
+                               boundary_tolerance, critical_upper=_NOT_COMPUTED):
     """Certify ascent beyond every finite critical level and out of the box."""
     if branch.kind != "stable" or not _representable(branch):
         return {"certified": False, "reason": "not_stable_representable"}
@@ -1560,7 +1563,8 @@ def _stable_escape_certificate(m, enumeration, branch, box,
     # comparison; the Sturm-plan sign query remains the fallback for a
     # bound that is not decisive.  (Measured: 28 plan constructions at
     # 0.23 s each on tricky-d11 came from this certificate alone.)
-    critical_upper = _critical_value_upper_bound(m, enumeration)
+    if critical_upper is _NOT_COMPUTED:
+        critical_upper = _critical_value_upper_bound(m, enumeration)
 
     def certificate_at(index):
         if index in cache:
@@ -1863,6 +1867,10 @@ def audit(m, enumeration, branches, box,
     # this loop is where concurrency actually pays.  Results are assembled in
     # submission order, so forbidden/ambiguous counts and every certificate
     # are bit-identical to the serial run whatever the worker count.
+    # One bound for the whole portrait; exact interval Horner at every critical
+    # point, and every stable branch asks the same question.
+    critical_upper = _critical_value_upper_bound(m, enumeration)
+
     def _endpoint_certificate(task):
         i, branch = task
         if branch.kind == "unstable":
@@ -1920,7 +1928,8 @@ def audit(m, enumeration, branches, box,
             stable_box = ((*retrace["box_a"], *retrace["box_b"])
                           if retrace is not None else box)
             certificate = _stable_escape_certificate(
-                m, enumeration, branch, stable_box, 16*predicate_tol)
+                m, enumeration, branch, stable_box, 16*predicate_tol,
+                critical_upper)
             asymptote = branch.certs.get("asymptote")
             return i, "stable", {
                 "branch": i,

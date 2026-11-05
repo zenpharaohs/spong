@@ -55,6 +55,19 @@ SPONG_API int spong_sturm_analyze_decimal(
     spong_sturm_analysis *out);
 
 /*
+ * Primitive integer gcd of two ascending-order nonzero integer polynomials,
+ * unique up to sign.  Returns SPONG_EXACT_OK or a status; on success the caller
+ * releases the coefficients with spong_polynomial_gcd_free.
+ */
+SPONG_API int spong_polynomial_gcd_decimal(
+    const char *const *p_coefficients, size_t p_count,
+    const char *const *q_coefficients, size_t q_count,
+    const spong_exact_policy *policy,
+    char ***coefficients_out, size_t *count_out);
+
+SPONG_API void spong_polynomial_gcd_free(char **coefficients, size_t count);
+
+/*
  * Persistent squarefree Sturm chain for bounded rational queries.  A NULL
  * lower numerator denotes -infinity; a NULL upper numerator denotes
  * +infinity.  Denominators must be positive canonical decimal integers.

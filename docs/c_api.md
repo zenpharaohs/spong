@@ -142,6 +142,10 @@ unstable half-branch in each orientation. Duplicate, missing, or invalid slots
 refuse with `branch_inventory_incomplete`, even when aggregate counts agree.
 This state machine is separately compared against the Python oracle.
 
+ABI 13 adds `spong_polynomial_gcd_decimal` and `spong_polynomial_gcd_free`: the
+primitive integer gcd of two integer polynomials, with `_poly._gcd_poly_python`
+as its differential oracle.
+
 ABI 11 extends `spong_topology_analysis` with a required `branch_identities`
 pointer (one `spong_branch_identity` per branch). Topology callers must rebuild
 against this header and populate that field; a null pointer cannot certify a
