@@ -1079,6 +1079,23 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
 
             def evaluate(current_reach, conditioned, coarse_n=None,
                          quick=False):
+                # A candidate reach is a QUESTION, and "no" is an ordinary
+                # answer.  Past the series' radius of convergence the
+                # truncated jet is finite but nowhere near the manifold
+                # (|K| ~ 1e14 from a saddle at b = 0.24: degree 13, normal
+                # moments, first reach 0.1 against a radius near 1e-3), and
+                # the local and global fields evaluated THERE overflow
+                # binary64.  The candidate is rejected on its truncation
+                # error and the reach halved, as intended; the overflow is
+                # not a finding.  Every gate below tests finiteness
+                # explicitly, so silencing the IEEE flags hides no decision.
+                with np.errstate(over="ignore", invalid="ignore",
+                                 divide="ignore"):
+                    return evaluate_candidate(
+                        current_reach, conditioned, coarse_n, quick)
+
+            def evaluate_candidate(current_reach, conditioned, coarse_n,
+                                   quick):
                 if coarse_n is None:
                     coarse_n = refined_n(257)
                 fine_n = 2*coarse_n-1
@@ -1235,10 +1252,14 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                     local.potential(float(da), float(db))
                     for da, db in centered_fine])
                 dL = np.diff(L)
+                # A nonfinite potential difference compares False against
+                # either bound, so it must be counted explicitly: "not
+                # observed to increase" is not "monotone".
                 monotone_failures = int(np.count_nonzero(
-                    dL > 1e-12*(1+np.abs(L[:-1]))
-                    if chart.manifold == "unstable"
-                    else dL < -1e-12*(1+np.abs(L[:-1]))))
+                    ~np.isfinite(dL)
+                    | (dL > 1e-12*(1+np.abs(L[:-1]))
+                       if chart.manifold == "unstable"
+                       else dL < -1e-12*(1+np.abs(L[:-1])))))
                 if conditioned and chart.conditioned_native is not None:
                     graph_u = orientation*np.asarray(df["normal_x"])
                     graph_s = np.asarray(df["normal_h"])
@@ -1276,6 +1297,13 @@ def _build_stubs(m: Model, point, minima, resolution_level: int = 0,
                         invariance_denominator,
                         out=np.full(len(graph_tangent), np.inf),
                         where=invariance_denominator > 1e-300)
+                # An overflowed denominator divides a finite numerator to
+                # zero, and a NaN is dropped by nothing: neither is a
+                # measured small error.
+                invariance_error = np.where(
+                    np.isfinite(invariance_denominator)
+                    & np.isfinite(invariance_error),
+                    invariance_error, np.inf)
                 invariance_direction_error = float(
                     np.max(invariance_error[8:], initial=0.0))
                 accepted = (coarse_change_error < 1e-12
