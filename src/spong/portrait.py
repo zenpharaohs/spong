@@ -159,6 +159,58 @@ def _stable_trace_box(m: Model, display_box, stop_loss):
     return (lo - pad, hi + pad, -bmax, bmax)
 
 
+def _unstable_trace_box(m: Model, box):
+    """The box for UNSTABLE branches in a: the roof's own sublevel set.
+
+    A descending branch from a saddle s stays in {L < u(s)}, and u <= C.
+    With L = u + A(a - a*)^2 and C - u = B^2/A,
+
+        L <= C   <=>   (a - a*)^2 <= (B/A)^2 = a*^2,
+
+    so {L <= C} is exactly the region between the line a = 0 and the curve
+    a = 2a*(b).  Every unstable branch therefore has a between
+    min(0, 2 inf a*) and max(0, 2 sup a*), whatever its saddle and whatever
+    the view.  a* = B/A tends to zero at both ends (deg A > deg B), so its
+    extremes are attained at real roots of A B' - A' B.
+
+    Against this a-extent an unstable branch cannot leave through an a
+    side.  In b there is no such confinement -- a launch component can be
+    unbounded and still hold a minimum -- so the b limits are opened to
+    atlas.legal_max_b, the arithmetic's own edge, and box_exit can then
+    only mean that edge.  Contrast _trace_box, whose extents come from the
+    DISPLAY view in both directions.  Measured on the deg g = 1 family
+    (ordinary linear regression: one roof saddle, one minimum), the branch
+    to the minimum swings out to a ~ 2a* across the flat strip, left the
+    display box there or overshot the minimum in b past the view's edge,
+    and was handed to the escape certificate as an exit -- 21 of 88 such
+    cases lost their certificate that way (unstable_endpoint_unresolved).
+
+    The candidates are evaluated in floating point and padded outward;
+    nothing is certified by this box, so an a-extent that came out too
+    small could only reproduce the refusal.
+    """
+    from fractions import Fraction
+    from . import _poly as P
+
+    A, B = m.alpha, m.beta
+    numerator = P.sub(P.mul(A, P.deriv(B)), P.mul(P.deriv(A), B))
+    cand = [box[0], box[1], 0.0]
+    try:
+        for iv in sturm.isolate_roots(numerator):
+            iv = sturm.refine(numerator, iv, Fraction(1, 2**48))
+            b = Fraction(iv.mid)
+            cand.append(2.0 * float(P.eval_at(B, b) / P.eval_at(A, b)))
+    except Exception:
+        # No exact answer available: keep what the tracer had rather than
+        # substituting a sampled maximum.
+        return box
+    cand = [x for x in cand if np.isfinite(x)]
+    lo, hi = min(cand), max(cand)
+    pad = 1e-9 * max(abs(lo), abs(hi), 1.0)
+    bmax = atlas.legal_max_b(m)
+    return (lo - pad, hi + pad, min(box[2], -bmax), max(box[3], bmax))
+
+
 def _unstable_stub(s, direction):
     return next((stub for stub in s.stubs
                  if stub.manifold == "unstable"
@@ -282,16 +334,17 @@ def _trace_branches(m: Model, e, box, display_view, geometry_level: int,
     discovery_ds = max(display_view[3]-display_view[2],
                        display_view[1]-display_view[0]) / (
                            30000.0*resolution_divisor)
-    def _unstable_branch(task):
+    def _unstable_branch(task, trace_box=None):
         # ---- unstable branches: discover capture, never prescribe it --- #
         t0 = time.perf_counter()
         s, direction = task
+        tbox = box if trace_box is None else trace_box
         stub = _unstable_stub(s, direction)
         feasible = topology.sublevel_component_minima(
             m, e, stub.curve[-1]) if stub is not None else list(e.minima)
         same_side = [
             q for q in feasible if direction*(q.b-s.b) > 0.0]
-        b_exit = box[3] if direction > 0 else box[2]
+        b_exit = tbox[3] if direction > 0 else tbox[2]
         a_exit = float(m.a_star(b_exit))
         direct = same_side[0] if len(same_side) == 1 else None
         nominal = ((direct.a, direct.b) if direct is not None
@@ -305,7 +358,7 @@ def _trace_branches(m: Model, e, box, display_view, geometry_level: int,
                 db_direct/(4000.0*resolution_divisor),
                 chord_direct/(8000.0*resolution_divisor))
         br = engine.trace_unstable(
-            m, s.b, nominal, box=box,
+            m, s.b, nominal, box=tbox,
             ds=trace_ds,
             cap_r=_capture_radius(e, trace_ds),
             critical_local=s.local,
@@ -335,7 +388,7 @@ def _trace_branches(m: Model, e, box, display_view, geometry_level: int,
             refine_ds = max(db/4000.0, chord/8000.0)
             refine_cap_r = _capture_radius(e, refine_ds)
             refined = engine.trace_unstable(
-                m, s.b, (destination.a, destination.b), box=box,
+                m, s.b, (destination.a, destination.b), box=tbox,
                 ds=refine_ds, cap_r=refine_cap_r,
                 critical_local=s.local,
                 critical_stub=_unstable_stub(s, direction),
@@ -377,10 +430,43 @@ def _trace_branches(m: Model, e, box, display_view, geometry_level: int,
         br.diag["branch_sec"] = time.perf_counter() - t0
         return br
 
-    branches.extend(engine.map_ordered(
-        _unstable_branch,
-        [(s, direction) for s in e.saddles for direction in (+1, -1)],
-        workers=n_workers))
+    unstable_tasks = [(s, direction)
+                      for s in e.saddles for direction in (+1, -1)]
+    unstable = engine.map_ordered(
+        _unstable_branch, unstable_tasks, workers=n_workers)
+    # THE BOX IS NOT PART OF THE CERTIFICATE, on this side either.  An
+    # unstable branch whose launch component holds a minimum and which comes
+    # back box_exit may only have left the DISPLAY view: swung wide in a
+    # across the flat strip, or overshot the minimum in b.  Retrace those
+    # against the roof's sublevel set and the legal b limit (see
+    # _unstable_trace_box).  Paid only when it happens: the box needs one
+    # root isolation at degree deg A + deg B - 1.
+    def _display_exit(br):
+        # No minimum in the launch component on this side means the branch
+        # can only escape, and where it left the view does not matter.
+        return (br.term == "box_exit"
+                and bool(br.diag.get("sublevel_candidate_b")))
+
+    if os.environ.get("SPONG_UNSTABLE_DISPLAY_BOX", "") in ("", "0"):
+        redo = [i for i, br in enumerate(unstable) if _display_exit(br)]
+        if redo:
+            ub = _unstable_trace_box(m, box)
+            if ub != tuple(box):
+                again = engine.map_ordered(
+                    lambda t: _unstable_branch(t, trace_box=ub),
+                    [unstable_tasks[i] for i in redo], workers=n_workers)
+                for i, br in zip(redo, again):
+                    # Adopt the retrace only when it found the minimum.  One
+                    # that still leaves is a genuine exit at the legal b
+                    # limit, and the first trace already records an exit in
+                    # the box the audit is given.
+                    if br.term != "capture":
+                        continue
+                    br.diag["unstable_box_retrace"] = {
+                        "from_term": unstable[i].term,
+                        "box_a": [ub[0], ub[1]], "box_b": [ub[2], ub[3]]}
+                    unstable[i] = br
+    branches.extend(unstable)
 
     if arrival_policy == 'checked_native':
         from .native_arrival import refine_branches
