@@ -27,7 +27,7 @@ def test_random_phase_portrait_cli_smoke(tmp_path):
     assert zoom.exists()
     assert summary.exists()
     assert index.exists()
-    data = json.loads(summary.read_text())
+    data = json.loads(summary.read_text(encoding="utf-8"))
     assert data["seed"] == 66316748
     assert data["enumeration"]["n_critical"] >= 1
     assert data["ledger_summary"]["balanced"] is True
@@ -50,7 +50,7 @@ def test_zoo_quadratic_stiff_cli(tmp_path):
     assert svg.exists()
     assert summary.exists()
     assert index.exists()
-    data = json.loads(summary.read_text())
+    data = json.loads(summary.read_text(encoding="utf-8"))
     assert data["zoo"]["name"] == "quadratic-stiff"
     assert data["zoo"]["discovery_seed"] == 2735729614
     assert data["enumeration"]["n_critical"] == 6
@@ -72,7 +72,7 @@ def test_degree_one_cli_smoke(tmp_path):
     assert rc == 0
     summary = tmp_path / "d1_0000_seed_2881021351_summary.json"
     assert summary.exists()
-    data = json.loads(summary.read_text())
+    data = json.loads(summary.read_text(encoding="utf-8"))
     assert data["enumeration"]["n_critical"] == 2
     assert data["enumeration"]["n_min"] == 1
     assert data["enumeration"]["n_saddle"] == 1

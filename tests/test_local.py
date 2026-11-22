@@ -99,7 +99,7 @@ def test_production_np_linalg_calls_are_explicitly_allowlisted():
     calls = []
     forbidden_imports = []
     for path in source_root.glob("*.py"):
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (isinstance(node, ast.ImportFrom)
                     and node.module in {"numpy.linalg", "numpy.linalg.linalg"}):

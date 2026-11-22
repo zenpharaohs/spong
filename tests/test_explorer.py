@@ -140,7 +140,7 @@ class _FakeContinuousBernoulliBank:
 
 
 def test_png_export_redraws_live_portrait_and_backbone_at_two_x():
-    page = serve.PAGE.read_text()
+    page = serve.PAGE.read_text(encoding="utf-8")
     assert 'id="exportPng"' in page
     assert 'id="exportStatus" role="status" aria-live="polite"' in page
     assert "let renderScale = 1;" in page
@@ -156,7 +156,7 @@ def test_png_export_redraws_live_portrait_and_backbone_at_two_x():
 
 
 def test_portrait_has_no_selection_ring_or_gesture_zoom():
-    page = serve.PAGE.read_text()
+    page = serve.PAGE.read_text(encoding="utf-8")
     assert "xP.arc(sx, sy, 5" not in page
     assert 'const p = toModel(e), k = e.deltaY > 0' not in page
     assert '#cPort{touch-action:none}' in page
@@ -166,12 +166,12 @@ def test_portrait_has_no_selection_ring_or_gesture_zoom():
 
 
 def test_wall_slider_starts_at_exact_stored_wall_coordinate():
-    page = serve.PAGE.read_text()
+    page = serve.PAGE.read_text(encoding="utf-8")
     assert 'id="lam" type="range" min="0" max="1" step="any"' in page
     assert page.count('els("lam").value = WALL.wall;') == 2
     assert "Math.round(1000 * t)" not in page
     assert "wall_limit: !!WALL.atWall" in page
-    assert 'kind": "stable_unstable"' in serve.Path(serve.__file__).read_text()
+    assert 'kind": "stable_unstable"' in serve.Path(serve.__file__).read_text(encoding="utf-8")
     assert 'css("--connection")' in page
     assert 'endRadius:equal ? 0 : 1.8' in page
     assert 'markerEndpoint:!equal' in page
@@ -199,7 +199,7 @@ def test_separated_linear_family_is_exactly_resolved_for_the_inspector():
 
 
 def test_separated_linear_family_controls_are_present():
-    page = serve.PAGE.read_text()
+    page = serve.PAGE.read_text(encoding="utf-8")
     assert 'id="advSeparated"' in page
     assert 'id="sepDegree"' in page
     assert 'id="sepScale"' in page

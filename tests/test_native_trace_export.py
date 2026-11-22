@@ -21,7 +21,7 @@ def test_recording_matches_legacy_calls(monkeypatch,api,corpus):
     import potential_corpus as pc
     import arrival_corpus as ac
     import segment_corpus as sc
-    entries=json.loads((root/'tests/corpus'/corpus).read_text())
+    entries=json.loads((root/'tests/corpus'/corpus).read_text(encoding="utf-8"))
     original=getattr(_native,api)
     observed=[]
     methods=set()

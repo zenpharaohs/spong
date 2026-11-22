@@ -214,6 +214,11 @@ def summarize(records, known, top=25):
               "forced prediction:")
         for r in bad:
             print(f"    {r.get('spec')}: {r['forced_disagreements']}")
+    verdicts = collections.Counter(
+        (r["portrait_status"], r.get("portrait_reason"))
+        for r in ok if r.get("portrait_status"))
+    for (status, reason), count in verdicts.most_common():
+        print(f"    {count:5d}  {status}" + (f"  ({reason})" if reason else ""))
     traced = sum(bool(r.get("traced")) for r in ok)
     print(f"portraits computed: {traced} of {n} "
           f"({n - traced} passed over on the backbone alone)")

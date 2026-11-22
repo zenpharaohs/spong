@@ -23,7 +23,7 @@ import segment_corpus  # noqa: E402
 def test_stiff_continuation_keeps_accepted_turns_resolved(index):
     # These examples previously accepted an off-flow step or a failed
     # candidate at the retry floor, including an almost 180-degree reversal.
-    entry = json.loads((ROOT / "tests/corpus/continue_curve.json").read_text())[index]
+    entry = json.loads((ROOT / "tests/corpus/continue_curve.json").read_text(encoding="utf-8"))[index]
     m, enumeration, _ = segment_corpus.context(entry["case"])
     inp = entry["input"]
     local = segment_corpus.find_local(

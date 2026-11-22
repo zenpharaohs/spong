@@ -259,7 +259,7 @@ def test_installed_comparison_command_writes_gallery(monkeypatch, tmp_path):
     assert (tmp_path/"quadratic-stiff_certified.svg").exists()
     assert (tmp_path/"quadratic-stiff_grid-newton_forward-euler.svg").exists()
     report = json.loads(
-        (tmp_path/"quadratic-stiff_comparison.json").read_text())
+        (tmp_path/"quadratic-stiff_comparison.json").read_text(encoding="utf-8"))
     assert report["format"] == "spong-portrait-comparison-v2"
     contact = report["comparisons"][0]["contact_diagnostics"]
     assert contact["method"] == "loss_level_order_sweep"

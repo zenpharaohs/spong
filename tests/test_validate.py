@@ -15,7 +15,7 @@ def test_install_validation_smoke_writes_reproducible_report(tmp_path):
         "--output", str(output),
     ])
     assert status == 0
-    payload = json.loads(output.read_text())
+    payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["format"] == "spong-native-validation-v1"
     assert payload["summary"]["ok"]
     assert payload["summary"]["cases"] == 8

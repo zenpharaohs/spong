@@ -24,7 +24,7 @@ import potential_corpus as pc                                # noqa: E402
 CORPUS = ac.path_for()
 
 if CORPUS.exists():
-    ENTRIES = json.loads(CORPUS.read_text())
+    ENTRIES = json.loads(CORPUS.read_text(encoding="utf-8"))
     IDS = [f"{e['case']}-arrival-{e['index']}" for e in ENTRIES]
 else:
     ENTRIES, IDS = [], []
