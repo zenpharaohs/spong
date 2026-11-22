@@ -58,7 +58,7 @@ root is rounded outward; and the integral is bounded BELOW by a sum of
 
     4 (A(mid) - (h/2) D) / D,     D = |A'(mid)| + (h/2) sup|A''|,
 
-over the cells, with sup|A''| an exact interval-Horner enclosure.  One
+over the cells, with sup|A''| an exact interval-Horner enclosure per cell.  One
 violated inequality, in exact arithmetic, excludes the climb.  The gates
 are the limiting cases: a_n = 0 at a root of B', and a divergent integral
 at a root of A'.  So is an empty fibre of the uphill set, a_n beyond
@@ -126,6 +126,7 @@ class Analysis:
         self.bb = signature.backbone(m, e, self.tree) if bb is None else bb
         self.A, self.B = m.alpha, m.beta
         self.Ap, self.Bp = P.deriv(self.A), P.deriv(self.B)
+        self._App = P.deriv(self.Ap)
         self._c1, self._rhos, self._res = stable_tails._j_invariant(
             m, float(P.degree(self.A))/2.0)
         self._d = float(P.degree(self.A))/2.0
@@ -204,7 +205,8 @@ class Analysis:
 
         On the cell |A'| <= D = |A'(mid)| + (h/2) sup|A''| and
         A >= A(mid) - (h/2) D, so the integrand is at least
-        4 (A(mid) - (h/2) D)/D.  Rounded DOWN to 2^-128.
+        4 (A(mid) - (h/2) D)/D.  Rounded DOWN to 2^-128 ABSOLUTE; a cell
+        smaller than that contributes nothing, which is still a bound.
         """
         D = abs(slope_mid) + h/2*K2
         cell = 4*(A_mid - h/2*D)/D*h
@@ -212,17 +214,27 @@ class Analysis:
             return Fraction(0)
         return Fraction((cell.numerator << 128)//cell.denominator, 1 << 128)
 
+    def _curvature(self, left: Fraction, right: Fraction) -> Fraction:
+        """sup|A''| on one cell: an exact interval-Horner enclosure.
+
+        Per cell, not per stretch: on a stretch reaching out to a far
+        saddle A'' varies by many orders, and one global bound would zero
+        every cell near the small-|b| end.
+        """
+        return lipschitz._abs_max(lipschitz.poly_interval(
+            self._App, lipschitz._iv(left, right)))
+
     def work_lower(self, lo: Fraction, hi: Fraction, cells: int) -> Fraction:
         """Exact lower bound on W over the rational interval [lo, hi]."""
         lo, hi = Fraction(lo), Fraction(hi)
-        K2 = lipschitz._abs_max(lipschitz.poly_interval(
-            P.deriv(self.Ap), lipschitz._iv(lo, hi)))
         h = (hi - lo)/cells
         total = Fraction(0)
         for k in range(cells):
-            c = lo + (k + Fraction(1, 2))*h
-            total += self._cell_lower(P.eval_at(self.A, c),
-                                      P.eval_at(self.Ap, c), h, K2)
+            left = lo + k*h
+            c = left + h/2
+            total += self._cell_lower(
+                P.eval_at(self.A, c), P.eval_at(self.Ap, c), h,
+                self._curvature(left, left + h))
         return total
 
     def prove(self, i_min: int, i_sad: int, level: Fraction,
@@ -246,18 +258,18 @@ class Analysis:
         if sB == 0:
             return False, None, 0, "B vanishes inside the stretch"
         C = Fraction(self.m.C)
-        K2 = lipschitz._abs_max(lipschitz.poly_interval(
-            P.deriv(Ap), lipschitz._iv(lo, hi)))
         for n in budget:
-            k = max(0, math.ceil(math.log2(n/float(hi - lo))))
+            # Step 2^-k, with k NEGATIVE on a long stretch: a far saddle
+            # can sit at |b| ~ 10^5, and a unit step there is 10^5 nodes.
+            k = math.ceil(math.log2(n/float(hi - lo)))
             while True:
-                j0 = -((-lo.numerator << k)//lo.denominator)        # ceil
-                j1 = (hi.numerator << k)//hi.denominator            # floor
+                h = Fraction(1, 1 << k) if k >= 0 else Fraction(1 << -k)
+                j0 = -((-lo)//h)                                    # ceil
+                j1 = hi//h                                          # floor
                 if j1 - j0 >= 4:
                     break
                 k += 1
-            h = Fraction(1, 1 << k)
-            xs = [Fraction(j, 1 << k) for j in range(j0, j1 + 1)]
+            xs = [j*h for j in range(j0, j1 + 1)]
             if direction < 0:
                 xs.reverse()
             # The lower sum is kept DYADIC: each cell's contribution is
@@ -270,7 +282,8 @@ class Analysis:
                 if index:
                     c = (xs[index - 1] + x)/2
                     Ac, Dc = P.eval_at(A, c), abs(P.eval_at(Ap, c))
-                    P_low += self._cell_lower(Ac, Dc, h, K2)
+                    P_low += self._cell_lower(
+                        Ac, Dc, h, self._curvature(xs[index - 1], x))
                     if Dc:
                         P_est += float(4*Ac/Dc*h)
                 Ax, Bx = P.eval_at(A, x), P.eval_at(B, x)
@@ -483,24 +496,46 @@ def uphill_chords(m, branch, stride: int = 20, skip: int = 600) -> dict:
     the ratio |d(a^2)| / (4A/|A'| |db|), which the lemma says is >= 1.
     A polyline is not the orbit, so the ratio is reported, not asserted;
     the stub's logarithmic samples and the terminal connector are skipped.
+
+    WHICH chords are uphill is decided EXACTLY, by comparing the rational
+    values of u at the chord's two binary64 endpoints.  The sign of
+    u' = -B(2AB' - A'B)/A^2 in binary64 is not good enough: when
+    deg B = deg g the leading terms of 2AB' and A'B cancel, and at a far
+    minimum (|b| = 524288 on a directed case) the float difference is zero
+    or of the wrong sign.  That mislabelled one downhill chord as uphill
+    in 74,043 and reported a ratio of 0 for it.
     """
     Y = np.asarray(branch.Y, dtype=float)[skip:-2:stride]
     if len(Y) < 3:
         return {"chords": 0, "min_ratio": None, "below": 0}
     desc = lambda p: np.asarray([float(c) for c in p][::-1])  # noqa: E731
-    A, B = desc(m.alpha), desc(m.beta)
-    Ap, Bp = np.polyder(A), np.polyder(B)
+    A = desc(m.alpha)
+    Ap = np.polyder(A)
     a0, b0, a1, b1 = Y[:-1, 0], Y[:-1, 1], Y[1:, 0], Y[1:, 1]
     bm, db = 0.5*(b0 + b1), b1 - b0
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        fA, fB = np.polyval(A, bm), np.polyval(B, bm)
-        fAp, fBp = np.polyval(Ap, bm), np.polyval(Bp, bm)
-        u_slope = -fB*(2.0*fA*fBp - fAp*fB)             # sign of u'
-        sel = (u_slope*db > 0.0) & (np.abs(db) > 1e-9) & (fAp != 0.0)
+        fA, fAp = np.polyval(A, bm), np.polyval(Ap, bm)
+        sel = (np.abs(db) > 1e-9) & (fAp != 0.0)
         # A chord that straddles a root of A' is not a stretch of the lemma.
         sel &= np.polyval(Ap, b0)*np.polyval(Ap, b1) > 0.0
         ratio = np.abs(a1*a1 - a0*a0)/(4.0*fA/np.abs(fAp)*np.abs(db))
-    ratio = ratio[sel & np.isfinite(ratio)]
+    sel &= np.isfinite(ratio)
+    C = Fraction(m.C)
+
+    def u_exact(b: float) -> Fraction:
+        x = Fraction(float(b))
+        B = P.eval_at(m.beta, x)
+        return C - B*B/P.eval_at(m.alpha, x)
+
+    values = {}
+    keep = []
+    for index in np.flatnonzero(sel):
+        for b in (b0[index], b1[index]):
+            if b not in values:
+                values[b] = u_exact(b)
+        if values[b1[index]] > values[b0[index]]:
+            keep.append(index)
+    ratio = ratio[keep]
     if len(ratio) == 0:
         return {"chords": 0, "min_ratio": None, "below": 0}
     return {"chords": int(len(ratio)), "min_ratio": float(ratio.min()),

@@ -31,7 +31,8 @@ SEEDS
 
 random/directed use scripts/qualify.py's generators with ensemble.py's
 seed protocol, so a seed printed here reproduces with
-``scripts/ensemble.py --case-seed``.  inspector replays the page's own
+``scripts/ensemble.py --case-seed``, and with ``--case-seed`` here, which
+reruns the one case and prints its full record.  inspector replays the page's own
 "draw random" (same generator, same rounding), so a case found here opens
 in the inspector by typing its seed, degrees and distributions.
 """
@@ -388,6 +389,10 @@ def main() -> int:
     ap.add_argument("--summarize", action="append", default=[],
                     metavar="JSONL",
                     help="summarize existing output instead of running")
+    ap.add_argument("--case-seed", type=int, default=None,
+                    help="random/directed: run ONE case from the seed "
+                         "printed in a summary, print its record, and "
+                         "write nothing")
     ap.add_argument("--out", default=None)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--jobs", type=int, default=1)
@@ -403,6 +408,13 @@ def main() -> int:
 
     common = {"source": args.source, "trace": args.trace,
               "assume_funnel": args.assume_funnel}
+    if args.case_seed is not None:
+        if args.source not in ("random", "directed"):
+            ap.error("--case-seed needs --source random or directed")
+        record = run_case(dict(common, case=-1, seed=args.case_seed,
+                               max_degree=args.max_degree))
+        print(json.dumps(record, indent=1, default=str))
+        return 0
     tasks = []
     if args.source == "zoo":
         tasks = [dict(common, case=i, name=name)
