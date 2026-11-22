@@ -51,7 +51,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from spong import model, portrait, signature, sturm, zoo      # noqa: E402
+from spong import (climb, model, portrait, signature,       # noqa: E402
+                   sturm, zoo)
 
 _M32 = 0xFFFFFFFF
 
@@ -155,10 +156,25 @@ def run_case(task):
         funnel = task["assume_funnel"]
         sig = signature.of_model(m, e, funnel=funnel)
         trace = task["trace"]
+        certified_ends = None
         if trace == "always" or (trace == "open" and sig.key2 is None):
             p = portrait.certified_compute(m)
             top = p.ledger["topology"]
             traced = signature.of_portrait(p)
+            certified_ends = signature.attachments(p)
+            # The uphill lemma's inequality, read off the traced branches.
+            chords, low, worst = 0, 0, None
+            for br in p.branches:
+                if br.kind != "unstable":
+                    continue
+                got = climb.uphill_chords(m, br)
+                chords += got["chords"]
+                low += got["below"]
+                if got["min_ratio"] is not None and (
+                        worst is None or got["min_ratio"] < worst):
+                    worst = got["min_ratio"]
+            record["uphill"] = {"chords": chords, "below": low,
+                                "min_ratio": worst}
             record.update(
                 portrait_status=top.get("status"),
                 portrait_reason=top.get("resolution_reason"),
@@ -168,6 +184,9 @@ def run_case(task):
                     and not traced.grades.get("unknown"):
                 record["forced_key2"] = sig.key2
             sig = traced
+        # Gates and the climb test, checked against the certified ends
+        # when there are any.  Reporting only: see spong.climb.
+        record["climb"] = climb.report(m, e, certified_ends)
         record.update(sig.as_dict(), status="ok")
     except Exception as exc:                    # noqa: BLE001 - recorded
         record.update(status="ERROR", error=f"{type(exc).__name__}: {exc}")
@@ -198,6 +217,70 @@ def _class_key(r):
     return r["key1"] + "+?"
 
 
+def _summarize_climb(ok):
+    """What the gates and the climb test pruned, and whether they held."""
+    with_climb = [r for r in ok if r.get("climb")]
+    if not with_climb:
+        return
+    total = collections.Counter()
+    for r in with_climb:
+        for key, value in r["climb"].items():
+            if isinstance(value, int):
+                total[key] += value
+    print(f"\nclimb test over {total['branches']} unstable branches")
+    print(f"    open branches:          merge tree {total['open_tree']:6d}"
+          f"   proved {total['open_proved']:6d}"
+          f"   with proposals {total['open_climb']:6d}")
+    print(f"    candidate connections:  merge tree "
+          f"{total['connections_tree']:6d}   proved "
+          f"{total['connections_proved']:6d}   with proposals "
+          f"{total['connections_climb']:6d}")
+    print(f"    exact exclusions: gate {total['gate']}, work inequality "
+          f"{total['proved_work']}, empty fibre "
+          f"{total['proved_empty_fibre'] + total['proved_gate_node']}; "
+          f"of these {total['proved_beyond_proposal']} the binary64 "
+          f"proposal had passed")
+    print(f"    binary64 blocks left unproved: {total['blocked_unproved']}"
+          f"   lemma alarms: {total['alarms']}")
+    decided = sum(r["climb"].get("open_proved", 1) == 0 for r in with_climb)
+    print(f"    portraits with every branch decided exactly, untraced: "
+          f"{decided} of {len(with_climb)}")
+    print(f"    climbs examined {total['climbs']}: gate {total['gate']}, "
+          f"type 1 blocked/passed {total['type1_blocked']}/"
+          f"{total['type1_pass']}, type 2 blocked/passed "
+          f"{total['type2_blocked']}/{total['type2_pass']}")
+    tight = [r["climb"]["tightest_pass"] for r in with_climb
+             if r["climb"].get("tightest_pass") is not None]
+    if tight:
+        print(f"    tightest passed climb: W/bound = {max(tight):.4f}")
+    wrong = [r for r in with_climb if r["climb"]["contradicted"]]
+    print(f"    certified ends checked {total['checked']}, "
+          f"excluded by the test: "
+          f"{sum(len(r['climb']['contradicted']) for r in wrong)}")
+    for r in wrong:
+        print(f"!!! {r.get('spec')}"
+              + (f" (seed {r['seed']})" if "seed" in r else "")
+              + f"  {r['backbone']} | {r.get('attachments')}")
+        for item in r["climb"]["contradicted"]:
+            print(f"      {item}")
+    chords = sum(r["uphill"]["chords"] for r in ok if r.get("uphill"))
+    if chords:
+        below = sum(r["uphill"]["below"] for r in ok if r.get("uphill"))
+        ratios = [(r["uphill"]["min_ratio"], r) for r in ok
+                  if r.get("uphill")
+                  and r["uphill"]["min_ratio"] is not None]
+        worst, where = min(ratios, key=lambda t: t[0])
+        print(f"uphill lemma on traced branches: {chords} uphill chords, "
+              f"smallest ratio {worst:.6f}, below 0.98: {below}")
+        if below:
+            for ratio, r in sorted(ratios, key=lambda t: t[0])[:10]:
+                if r["uphill"]["below"]:
+                    print(f"!!! ratio {ratio:.4f} x{r['uphill']['below']}"
+                          f"  {r.get('spec')}"
+                          + (f" (seed {r['seed']})" if "seed" in r else "")
+                          + f"  {r['backbone']}")
+
+
 def summarize(records, known, top=25):
     ok = [r for r in records if r.get("status") == "ok"]
     n = len(ok)
@@ -222,6 +305,8 @@ def summarize(records, known, top=25):
     traced = sum(bool(r.get("traced")) for r in ok)
     print(f"portraits computed: {traced} of {n} "
           f"({n - traced} passed over on the backbone alone)")
+
+    _summarize_climb(ok)
 
     layer1 = collections.Counter(r["key1"] for r in ok)
     classes = collections.defaultdict(list)
